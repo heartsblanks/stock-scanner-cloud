@@ -12,6 +12,7 @@ def trade_to_dict(eval_result: dict) -> dict:
         "symbol": m["symbol"],
         "confidence": m["final_confidence"],
         "direction": m["direction"],
+        "current_price": round(m["price"], 4),
         "entry": round(m["entry"], 4),
         "stop": round(m["stop"], 4),
         "target": round(m["target"], 4),
@@ -54,7 +55,13 @@ def scan():
 
     account_size = payload.get("account_size")
     mode = str(payload.get("mode", "primary")).lower()
-    debug = bool(payload.get("debug", False))
+    debug_raw = payload.get("debug", False)
+    if isinstance(debug_raw, bool):
+        debug = debug_raw
+    elif isinstance(debug_raw, str):
+        debug = debug_raw.strip().lower() in {"true", "1", "yes", "y", "on"}
+    else:
+        debug = bool(debug_raw)
 
     if account_size is None:
         return jsonify({"ok": False, "error": "account_size is required"}), 400
@@ -64,8 +71,8 @@ def scan():
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "account_size must be numeric"}), 400
 
-    if mode not in {"primary", "secondary", "third"}:
-        return jsonify({"ok": False, "error": "mode must be primary, secondary, or third"}), 400
+    if mode not in {"primary", "secondary", "third", "fourth"}:
+        return jsonify({"ok": False, "error": "mode must be primary, secondary, third, or fourth"}), 400
 
     ok, timing_msg = market_time_check()
     if not ok:
