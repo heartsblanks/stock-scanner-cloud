@@ -41,6 +41,7 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
     max_notional = ALPACA_MAX_NOTIONAL if max_notional is None else float(max_notional)
     metrics = trade.get("metrics", {})
     symbol = str(metrics.get("symbol", "")).strip().upper()
+    direction = str(metrics.get("direction", "BUY")).strip().upper() or "BUY"
     entry = _to_float(metrics.get("entry"))
     stop = _to_float(metrics.get("stop"))
     target = _to_float(metrics.get("target"))
@@ -52,10 +53,18 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
         return {"attempted": False, "placed": False, "symbol": symbol, "reason": "invalid_entry_price"}
     if stop <= 0 or target <= 0:
         return {"attempted": False, "placed": False, "symbol": symbol, "reason": "invalid_stop_or_target"}
-    if stop >= entry:
-        return {"attempted": False, "placed": False, "symbol": symbol, "reason": "stop_must_be_below_entry"}
-    if target <= entry:
-        return {"attempted": False, "placed": False, "symbol": symbol, "reason": "target_must_be_above_entry"}
+    if direction == "BUY":
+        if stop >= entry:
+            return {"attempted": False, "placed": False, "symbol": symbol, "reason": "stop_must_be_below_entry"}
+        if target <= entry:
+            return {"attempted": False, "placed": False, "symbol": symbol, "reason": "target_must_be_above_entry"}
+    elif direction == "SELL":
+        if stop <= entry:
+            return {"attempted": False, "placed": False, "symbol": symbol, "reason": "short_stop_must_be_above_entry"}
+        if target >= entry:
+            return {"attempted": False, "placed": False, "symbol": symbol, "reason": "short_target_must_be_below_entry"}
+    else:
+        return {"attempted": False, "placed": False, "symbol": symbol, "reason": "invalid_direction"}
     if scanner_shares <= 0:
         return {"attempted": False, "placed": False, "symbol": symbol, "reason": "invalid_scanner_share_size"}
 
@@ -103,7 +112,7 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
     payload = {
         "symbol": symbol,
         "qty": str(final_shares),
-        "side": "buy",
+        "side": "buy" if direction == "BUY" else "sell",
         "type": "market",
         "time_in_force": "day",
         "order_class": "bracket",
@@ -145,6 +154,7 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
         "attempted": True,
         "placed": True,
         "symbol": symbol,
+        "direction": direction,
         "shares": final_shares,
         "estimated_notional": estimated_notional,
         "entry": round(entry, 4),

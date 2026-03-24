@@ -54,6 +54,8 @@ def trade_to_dict(eval_result: dict) -> dict:
         "symbol": m["symbol"],
         "confidence": m["final_confidence"],
         "direction": m["direction"],
+        "manual_eligible": m.get("manual_eligible", m["direction"] == "BUY"),
+        "paper_eligible": m.get("paper_eligible", False),
         "current_price": round(m["price"], 4),
         "entry": round(m["entry"], 4),
         "stop": round(m["stop"], 4),
@@ -645,7 +647,11 @@ def scan():
             "paper_trade_enabled": paper_trade,
         })
 
-    trades, evaluations, _fetch_ok, _fetch_fail, benchmark_directions, source = run_scan(account_size, mode)
+    all_trades, evaluations, _fetch_ok, _fetch_fail, benchmark_directions, source = run_scan(account_size, mode)
+    trades = [t for t in all_trades if t["metrics"].get("direction") == "BUY"]
+    paper_trades = [t for t in all_trades if t["metrics"].get("final_confidence", 0) > 90]
+    paper_long_candidates = [t for t in paper_trades if t["metrics"].get("direction") == "BUY"]
+    paper_short_candidates = [t for t in paper_trades if t["metrics"].get("direction") == "SELL"]
 
     response = {
         "ok": True,
@@ -655,6 +661,9 @@ def scan():
         "benchmark_directions": benchmark_directions,
         "min_confidence": MIN_CONFIDENCE,
         "trade_count": len(trades),
+        "paper_trade_candidate_count": len(paper_trades),
+        "paper_trade_long_candidate_count": len(paper_long_candidates),
+        "paper_trade_short_candidate_count": len(paper_short_candidates),
         "trades": [trade_to_dict(t) for t in trades],
         "paper_trade_enabled": paper_trade,
     }
@@ -665,60 +674,89 @@ def scan():
     top_trade = trades[0] if trades else None
 
     if paper_trade:
-        if top_trade is None:
+        if not paper_trades:
             response["paper_trade_result"] = {
                 "attempted": False,
                 "placed": False,
-                "reason": "no_valid_trade",
+                "reason": "no_paper_trade_candidates_above_90",
+                "candidate_count": 0,
+                "long_candidate_count": 0,
+                "short_candidate_count": 0,
+                "placed_long_count": 0,
+                "placed_short_count": 0,
             }
         else:
-            try:
-                paper_trade_result = place_paper_bracket_order_from_trade(top_trade)
-                response["paper_trade_result"] = paper_trade_result
+            paper_results = []
+            placed_count = 0
+            placed_long_count = 0
+            placed_short_count = 0
 
-                if paper_trade_result.get("placed"):
-                    top_metrics = top_trade["metrics"]
-                    append_trade_log({
-                        "timestamp_utc": timestamp_utc,
-                        "event_type": "OPEN",
-                        "symbol": top_metrics.get("symbol", ""),
-                        "name": top_trade.get("name", ""),
-                        "mode": mode,
-                        "trade_source": "ALPACA_PAPER",
-                        "broker": "ALPACA",
-                        "broker_order_id": paper_trade_result.get("alpaca_order_id", ""),
-                        "broker_parent_order_id": paper_trade_result.get("alpaca_order_id", ""),
-                        "broker_status": paper_trade_result.get("alpaca_order_status", ""),
-                        "broker_filled_qty": "",
-                        "broker_filled_avg_price": "",
-                        "broker_exit_order_id": "",
-                        "shares": paper_trade_result.get("shares", ""),
-                        "entry_price": top_metrics.get("entry", ""),
-                        "stop_price": top_metrics.get("stop", ""),
-                        "target_price": top_metrics.get("target", ""),
-                        "exit_price": "",
-                        "exit_reason": "",
-                        "status": "OPEN",
-                        "notes": f"Paper bracket order submitted. client_order_id={paper_trade_result.get('client_order_id', '')}",
-                        "linked_signal_timestamp_utc": timestamp_utc,
-                        "linked_signal_entry": top_metrics.get("entry", ""),
-                        "linked_signal_stop": top_metrics.get("stop", ""),
-                        "linked_signal_target": top_metrics.get("target", ""),
-                        "linked_signal_confidence": top_metrics.get("final_confidence", ""),
-                        "inferred_stop_hit": "",
-                        "inferred_target_hit": "",
-                        "inferred_first_level_hit": "",
-                        "inferred_analysis_start_utc": "",
-                        "inferred_analysis_end_utc": "",
+            for paper_trade_candidate in paper_trades:
+                try:
+                    paper_trade_result = place_paper_bracket_order_from_trade(paper_trade_candidate)
+                    paper_results.append(paper_trade_result)
+
+                    if paper_trade_result.get("placed"):
+                        placed_count += 1
+                        if paper_trade_candidate["metrics"].get("direction") == "BUY":
+                            placed_long_count += 1
+                        elif paper_trade_candidate["metrics"].get("direction") == "SELL":
+                            placed_short_count += 1
+                        paper_metrics = paper_trade_candidate["metrics"]
+                        append_trade_log({
+                            "timestamp_utc": timestamp_utc,
+                            "event_type": "OPEN",
+                            "symbol": paper_metrics.get("symbol", ""),
+                            "name": paper_trade_candidate.get("name", ""),
+                            "mode": mode,
+                            "trade_source": "ALPACA_PAPER",
+                            "broker": "ALPACA",
+                            "broker_order_id": paper_trade_result.get("alpaca_order_id", ""),
+                            "broker_parent_order_id": paper_trade_result.get("alpaca_order_id", ""),
+                            "broker_status": paper_trade_result.get("alpaca_order_status", ""),
+                            "broker_filled_qty": "",
+                            "broker_filled_avg_price": "",
+                            "broker_exit_order_id": "",
+                            "shares": paper_trade_result.get("shares", ""),
+                            "entry_price": paper_metrics.get("entry", ""),
+                            "stop_price": paper_metrics.get("stop", ""),
+                            "target_price": paper_metrics.get("target", ""),
+                            "exit_price": "",
+                            "exit_reason": "",
+                            "status": "OPEN",
+                            "notes": f"Paper {paper_metrics.get('direction', '')} bracket order submitted. client_order_id={paper_trade_result.get('client_order_id', '')}",
+                            "linked_signal_timestamp_utc": timestamp_utc,
+                            "linked_signal_entry": paper_metrics.get("entry", ""),
+                            "linked_signal_stop": paper_metrics.get("stop", ""),
+                            "linked_signal_target": paper_metrics.get("target", ""),
+                            "linked_signal_confidence": paper_metrics.get("final_confidence", ""),
+                            "inferred_stop_hit": "",
+                            "inferred_target_hit": "",
+                            "inferred_first_level_hit": "",
+                            "inferred_analysis_start_utc": "",
+                            "inferred_analysis_end_utc": "",
+                        })
+                except Exception as e:
+                    print(f"Paper trade placement failed: {e}", flush=True)
+                    paper_results.append({
+                        "attempted": True,
+                        "placed": False,
+                        "reason": "paper_trade_exception",
+                        "details": str(e),
+                        "symbol": paper_trade_candidate.get("metrics", {}).get("symbol", ""),
                     })
-            except Exception as e:
-                print(f"Paper trade placement failed: {e}", flush=True)
-                response["paper_trade_result"] = {
-                    "attempted": True,
-                    "placed": False,
-                    "reason": "paper_trade_exception",
-                    "details": str(e),
-                }
+
+            response["paper_trade_result"] = {
+                "attempted": True,
+                "placed": placed_count > 0,
+                "candidate_count": len(paper_trades),
+                "long_candidate_count": len(paper_long_candidates),
+                "short_candidate_count": len(paper_short_candidates),
+                "placed_count": placed_count,
+                "placed_long_count": placed_long_count,
+                "placed_short_count": placed_short_count,
+                "results": paper_results,
+            }
 
     try:
         top_metrics = top_trade["metrics"] if top_trade else {}
