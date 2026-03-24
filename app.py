@@ -90,50 +90,73 @@ def debug_to_dict(eval_result: dict) -> dict:
 def paper_candidate_from_evaluation(eval_result: dict) -> dict | None:
     metrics = eval_result.get("metrics") or {}
     direction = str(metrics.get("direction", "")).strip().upper()
-    confidence = metrics.get("final_confidence")
 
     if direction not in {"BUY", "SELL"}:
         return None
 
+    entry = to_float_or_none(metrics.get("entry"))
+    price = to_float_or_none(metrics.get("price"))
+    stop = to_float_or_none(metrics.get("stop"))
+    target = to_float_or_none(metrics.get("target"))
+
+    entry_value = entry if entry is not None else price
+    if entry_value is None or stop is None or target is None:
+        return None
+
+    confidence = metrics.get("final_confidence")
+    confidence_value = None
     try:
         confidence_value = float(confidence)
     except (TypeError, ValueError):
+        priority = to_float_or_none(metrics.get("priority"))
+        if priority is not None:
+            confidence_value = float(priority) * 10.0
+
+    if confidence_value is None or confidence_value < PAPER_TRADE_MIN_CONFIDENCE:
         return None
 
-    if confidence_value < PAPER_TRADE_MIN_CONFIDENCE:
-        return None
+    shares = metrics.get("shares")
+    if shares in (None, ""):
+        shares = 1
 
-    required_metric_keys = [
-        "symbol",
-        "price",
-        "entry",
-        "stop",
-        "target",
-        "shares",
-        "actual_position_cost",
-        "risk_per_share",
-        "actual_risk",
-        "risk_amount",
-        "or_high",
-        "or_low",
-        "vwap",
-        "final_confidence",
-        "direction",
-    ]
-    for key in required_metric_keys:
-        if key not in metrics:
-            return None
+    risk_per_share = to_float_or_none(metrics.get("risk_per_share"))
+    if risk_per_share is None:
+        risk_per_share = abs(entry_value - stop)
+
+    actual_position_cost = to_float_or_none(metrics.get("actual_position_cost"))
+    if actual_position_cost is None:
+        actual_position_cost = entry_value * float(shares)
+
+    actual_risk = to_float_or_none(metrics.get("actual_risk"))
+    if actual_risk is None:
+        actual_risk = risk_per_share * float(shares)
+
+    risk_amount = to_float_or_none(metrics.get("risk_amount"))
+    if risk_amount is None:
+        risk_amount = actual_risk
+
+    normalized_metrics = {
+        **metrics,
+        "entry": entry_value,
+        "price": price if price is not None else entry_value,
+        "stop": stop,
+        "target": target,
+        "shares": int(float(shares)),
+        "actual_position_cost": actual_position_cost,
+        "risk_per_share": risk_per_share,
+        "actual_risk": actual_risk,
+        "risk_amount": risk_amount,
+        "final_confidence": confidence_value,
+        "manual_eligible": direction == "BUY" and str(eval_result.get("decision", "")).strip().upper() == "VALID",
+        "paper_eligible": True,
+    }
 
     return {
         "name": eval_result.get("name", ""),
         "final_reason": eval_result.get("final_reason", ""),
         "decision": "PAPER_CANDIDATE",
         "checks": eval_result.get("checks", {}),
-        "metrics": {
-            **metrics,
-            "manual_eligible": direction == "BUY" and str(eval_result.get("decision", "")).strip().upper() == "VALID",
-            "paper_eligible": True,
-        },
+        "metrics": normalized_metrics,
     }
 
 
