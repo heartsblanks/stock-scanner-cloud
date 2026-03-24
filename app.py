@@ -20,6 +20,7 @@ from trade_scan import (
     THIRD_INSTRUMENTS,
     FOURTH_INSTRUMENTS,
 )
+PAPER_TRADE_MIN_CONFIDENCE = 70
 
 app = Flask(__name__)
 
@@ -649,7 +650,7 @@ def scan():
 
     all_trades, evaluations, _fetch_ok, _fetch_fail, benchmark_directions, source = run_scan(account_size, mode)
     trades = [t for t in all_trades if t["metrics"].get("direction") == "BUY"]
-    paper_trades = [t for t in all_trades if t["metrics"].get("final_confidence", 0) > 90]
+    paper_trades = [t for t in all_trades if t["metrics"].get("final_confidence", 0) > PAPER_TRADE_MIN_CONFIDENCE]
     paper_long_candidates = [t for t in paper_trades if t["metrics"].get("direction") == "BUY"]
     paper_short_candidates = [t for t in paper_trades if t["metrics"].get("direction") == "SELL"]
 
