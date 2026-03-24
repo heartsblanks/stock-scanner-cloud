@@ -12,6 +12,7 @@ app = Flask(__name__)
 
 LOG_BUCKET = os.getenv("LOG_BUCKET", "stock-scanner-490821-logs")
 SIGNALS_CSV_PATH = os.getenv("SIGNALS_CSV_PATH", "signals/signals.csv")
+TRADES_CSV_PATH = os.getenv("TRADES_CSV_PATH", "trades/trades.csv")
 
 
 def trade_to_dict(eval_result: dict) -> dict:
@@ -49,30 +50,10 @@ def debug_to_dict(eval_result: dict) -> dict:
     }
 
 
-def append_signal_log(row: dict) -> None:
+def append_csv_row(path: str, headers: list[str], row: dict) -> None:
     client = storage.Client()
     bucket = client.bucket(LOG_BUCKET)
-    blob = bucket.blob(SIGNALS_CSV_PATH)
-
-    headers = [
-        "timestamp_utc",
-        "mode",
-        "account_size",
-        "timing_ok",
-        "source",
-        "trade_count",
-        "top_name",
-        "top_symbol",
-        "current_price",
-        "entry",
-        "stop",
-        "target",
-        "shares",
-        "confidence",
-        "reason",
-        "benchmark_sp500",
-        "benchmark_nasdaq",
-    ]
+    blob = bucket.blob(path)
 
     existing = ""
     if blob.exists():
@@ -92,12 +73,54 @@ def append_signal_log(row: dict) -> None:
     blob.upload_from_string(output.getvalue(), content_type="text/csv")
 
 
+def append_signal_log(row: dict) -> None:
+    headers = [
+        "timestamp_utc",
+        "mode",
+        "account_size",
+        "timing_ok",
+        "source",
+        "trade_count",
+        "top_name",
+        "top_symbol",
+        "current_price",
+        "entry",
+        "stop",
+        "target",
+        "shares",
+        "confidence",
+        "reason",
+        "benchmark_sp500",
+        "benchmark_nasdaq",
+    ]
+    append_csv_row(SIGNALS_CSV_PATH, headers, row)
+
+
+def append_trade_log(row: dict) -> None:
+    headers = [
+        "timestamp_utc",
+        "event_type",
+        "symbol",
+        "name",
+        "mode",
+        "shares",
+        "entry_price",
+        "stop_price",
+        "target_price",
+        "exit_price",
+        "exit_reason",
+        "status",
+        "notes",
+    ]
+    append_csv_row(TRADES_CSV_PATH, headers, row)
+
+
 @app.get("/")
 def home():
     return jsonify({
         "ok": True,
         "service": "stock-scanner",
-        "endpoints": ["/scan"]
+        "endpoints": ["/scan", "/log-trade"]
     })
 
 
@@ -205,6 +228,59 @@ def scan():
         print(f"Signal log write failed: {e}", flush=True)
 
     return jsonify(response)
+
+
+@app.post("/log-trade")
+def log_trade():
+    payload = request.get_json(silent=True) or {}
+
+    event_type = str(payload.get("event_type", "")).strip().upper()
+    symbol = str(payload.get("symbol", "")).strip().upper()
+    name = str(payload.get("name", "")).strip()
+    mode = str(payload.get("mode", "")).strip().lower()
+    shares = payload.get("shares", "")
+    entry_price = payload.get("entry_price", "")
+    stop_price = payload.get("stop_price", "")
+    target_price = payload.get("target_price", "")
+    exit_price = payload.get("exit_price", "")
+    exit_reason = str(payload.get("exit_reason", "")).strip().upper()
+    status = str(payload.get("status", "")).strip().upper()
+    notes = str(payload.get("notes", "")).strip()
+
+    if event_type not in {"OPEN", "CLOSE", "UPDATE"}:
+        return jsonify({"ok": False, "error": "event_type must be OPEN, CLOSE, or UPDATE"}), 400
+
+    if not symbol:
+        return jsonify({"ok": False, "error": "symbol is required"}), 400
+
+    timestamp_utc = datetime.now(timezone.utc).isoformat()
+
+    try:
+        append_trade_log({
+            "timestamp_utc": timestamp_utc,
+            "event_type": event_type,
+            "symbol": symbol,
+            "name": name,
+            "mode": mode,
+            "shares": shares,
+            "entry_price": entry_price,
+            "stop_price": stop_price,
+            "target_price": target_price,
+            "exit_price": exit_price,
+            "exit_reason": exit_reason,
+            "status": status,
+            "notes": notes,
+        })
+    except Exception as e:
+        print(f"Trade log write failed: {e}", flush=True)
+        return jsonify({"ok": False, "error": f"trade log write failed: {e}"}), 500
+
+    return jsonify({
+        "ok": True,
+        "message": "Trade event logged",
+        "event_type": event_type,
+        "symbol": symbol,
+    })
 
 
 if __name__ == "__main__":
