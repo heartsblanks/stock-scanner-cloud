@@ -1,8 +1,17 @@
 import os
+import io
+import csv
+from datetime import datetime, timezone
+
 from flask import Flask, request, jsonify
+from google.cloud import storage
+
 from trade_scan import run_scan, market_time_check, MIN_CONFIDENCE
 
 app = Flask(__name__)
+
+LOG_BUCKET = os.getenv("LOG_BUCKET", "stock-scanner-490821-logs")
+SIGNALS_CSV_PATH = os.getenv("SIGNALS_CSV_PATH", "signals/signals.csv")
 
 
 def trade_to_dict(eval_result: dict) -> dict:
@@ -40,6 +49,49 @@ def debug_to_dict(eval_result: dict) -> dict:
     }
 
 
+def append_signal_log(row: dict) -> None:
+    client = storage.Client()
+    bucket = client.bucket(LOG_BUCKET)
+    blob = bucket.blob(SIGNALS_CSV_PATH)
+
+    headers = [
+        "timestamp_utc",
+        "mode",
+        "account_size",
+        "timing_ok",
+        "source",
+        "trade_count",
+        "top_name",
+        "top_symbol",
+        "current_price",
+        "entry",
+        "stop",
+        "target",
+        "shares",
+        "confidence",
+        "reason",
+        "benchmark_sp500",
+        "benchmark_nasdaq",
+    ]
+
+    existing = ""
+    if blob.exists():
+        existing = blob.download_as_text()
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=headers)
+
+    if not existing.strip():
+        writer.writeheader()
+    else:
+        output.write(existing)
+        if not existing.endswith("\n"):
+            output.write("\n")
+
+    writer.writerow(row)
+    blob.upload_from_string(output.getvalue(), content_type="text/csv")
+
+
 @app.get("/")
 def home():
     return jsonify({
@@ -75,7 +127,32 @@ def scan():
         return jsonify({"ok": False, "error": "mode must be primary, secondary, third, or fourth"}), 400
 
     ok, timing_msg = market_time_check()
+    timestamp_utc = datetime.now(timezone.utc).isoformat()
+
     if not ok:
+        try:
+            append_signal_log({
+                "timestamp_utc": timestamp_utc,
+                "mode": mode,
+                "account_size": account_size,
+                "timing_ok": False,
+                "source": mode.upper(),
+                "trade_count": 0,
+                "top_name": "",
+                "top_symbol": "",
+                "current_price": "",
+                "entry": "",
+                "stop": "",
+                "target": "",
+                "shares": "",
+                "confidence": "",
+                "reason": timing_msg.replace("\n", " "),
+                "benchmark_sp500": "",
+                "benchmark_nasdaq": "",
+            })
+        except Exception as e:
+            print(f"Signal log write failed: {e}", flush=True)
+
         return jsonify({
             "ok": True,
             "timing_ok": False,
@@ -100,6 +177,32 @@ def scan():
 
     if debug:
         response["evaluations"] = [debug_to_dict(ev) for ev in evaluations]
+
+    try:
+        top_trade = trades[0] if trades else None
+        top_metrics = top_trade["metrics"] if top_trade else {}
+
+        append_signal_log({
+            "timestamp_utc": timestamp_utc,
+            "mode": mode,
+            "account_size": account_size,
+            "timing_ok": True,
+            "source": source,
+            "trade_count": len(trades),
+            "top_name": top_trade["name"] if top_trade else "",
+            "top_symbol": top_metrics.get("symbol", ""),
+            "current_price": top_metrics.get("price", ""),
+            "entry": top_metrics.get("entry", ""),
+            "stop": top_metrics.get("stop", ""),
+            "target": top_metrics.get("target", ""),
+            "shares": top_metrics.get("shares", ""),
+            "confidence": top_metrics.get("final_confidence", ""),
+            "reason": top_trade["final_reason"] if top_trade else "No trade today",
+            "benchmark_sp500": benchmark_directions.get("SP500", ""),
+            "benchmark_nasdaq": benchmark_directions.get("NASDAQ", ""),
+        })
+    except Exception as e:
+        print(f"Signal log write failed: {e}", flush=True)
 
     return jsonify(response)
 
