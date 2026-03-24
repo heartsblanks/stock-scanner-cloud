@@ -8,6 +8,8 @@ from zoneinfo import ZoneInfo
 
 from flask import Flask, request, jsonify
 from google.cloud import storage
+from paper_alpaca import place_paper_bracket_order_from_trade
+from alpaca_sync import sync_order_by_id
 
 from trade_scan import (
     run_scan,
@@ -133,6 +135,14 @@ def append_trade_log(row: dict) -> None:
         "symbol",
         "name",
         "mode",
+        "trade_source",
+        "broker",
+        "broker_order_id",
+        "broker_parent_order_id",
+        "broker_status",
+        "broker_filled_qty",
+        "broker_filled_avg_price",
+        "broker_exit_order_id",
         "shares",
         "entry_price",
         "stop_price",
@@ -191,6 +201,47 @@ def read_all_trade_rows() -> list[dict]:
 
     reader = csv.DictReader(io.StringIO(content))
     return list(reader)
+
+
+# --- Helper functions for paper trade syncing ---
+
+def paper_trade_exit_already_logged(parent_order_id: str, exit_event: str) -> bool:
+    parent_order_id = str(parent_order_id).strip()
+    exit_event = str(exit_event).strip().upper()
+    if not parent_order_id or not exit_event:
+        return False
+
+    rows = read_all_trade_rows()
+    for row in rows:
+        if str(row.get("trade_source", "")).strip().upper() != "ALPACA_PAPER":
+            continue
+        if str(row.get("broker_parent_order_id", "")).strip() != parent_order_id:
+            continue
+        if str(row.get("event_type", "")).strip().upper() == exit_event:
+            return True
+    return False
+
+
+def get_open_paper_trades() -> list[dict]:
+    rows = read_all_trade_rows()
+    latest_by_parent_order_id: dict[str, dict] = {}
+
+    for row in rows:
+        if str(row.get("trade_source", "")).strip().upper() != "ALPACA_PAPER":
+            continue
+
+        parent_order_id = str(row.get("broker_parent_order_id", "")).strip()
+        if not parent_order_id:
+            continue
+
+        latest_by_parent_order_id[parent_order_id] = row
+
+    open_rows = []
+    for row in latest_by_parent_order_id.values():
+        if str(row.get("status", "")).strip().upper() == "OPEN":
+            open_rows.append(row)
+
+    return open_rows
 
 
 def read_all_signal_rows() -> list[dict]:
@@ -387,7 +438,140 @@ def home():
     return jsonify({
         "ok": True,
         "service": "stock-scanner",
-        "endpoints": ["/scan", "/log-trade", "/read-trades-by-date"]
+        "endpoints": ["/scan", "/log-trade", "/sync-paper-trades", "/read-trades-by-date"]
+    })
+
+# --- Sync paper trades endpoint ---
+
+@app.post("/sync-paper-trades")
+def sync_paper_trades():
+    try:
+        open_rows = get_open_paper_trades()
+    except Exception as e:
+        print(f"Open paper trade read failed: {e}", flush=True)
+        return jsonify({"ok": False, "error": f"open paper trade read failed: {e}"}), 500
+
+    results = []
+    synced_count = 0
+    skipped_count = 0
+
+    for open_row in open_rows:
+        parent_order_id = str(open_row.get("broker_parent_order_id", "")).strip()
+        symbol = str(open_row.get("symbol", "")).strip().upper()
+
+        if not parent_order_id:
+            results.append({
+                "symbol": symbol,
+                "synced": False,
+                "reason": "missing_parent_order_id",
+            })
+            skipped_count += 1
+            continue
+
+        try:
+            sync_result = sync_order_by_id(parent_order_id)
+        except Exception as e:
+            print(f"Paper trade sync failed for {symbol} / {parent_order_id}: {e}", flush=True)
+            results.append({
+                "symbol": symbol,
+                "parent_order_id": parent_order_id,
+                "synced": False,
+                "reason": "sync_exception",
+                "details": str(e),
+            })
+            skipped_count += 1
+            continue
+
+        exit_event = str(sync_result.get("exit_event", "")).strip().upper()
+        if not exit_event:
+            results.append({
+                "symbol": symbol,
+                "parent_order_id": parent_order_id,
+                "synced": False,
+                "reason": "still_open",
+                "parent_status": sync_result.get("parent_status", ""),
+                "take_profit_status": sync_result.get("take_profit_status", ""),
+                "stop_loss_status": sync_result.get("stop_loss_status", ""),
+            })
+            skipped_count += 1
+            continue
+
+        if paper_trade_exit_already_logged(parent_order_id, exit_event):
+            results.append({
+                "symbol": symbol,
+                "parent_order_id": parent_order_id,
+                "synced": False,
+                "reason": "exit_already_logged",
+                "exit_event": exit_event,
+            })
+            skipped_count += 1
+            continue
+
+        timestamp_utc = datetime.now(timezone.utc).isoformat()
+
+        try:
+            append_trade_log({
+                "timestamp_utc": timestamp_utc,
+                "event_type": exit_event,
+                "symbol": symbol,
+                "name": open_row.get("name", ""),
+                "mode": open_row.get("mode", ""),
+                "trade_source": "ALPACA_PAPER",
+                "broker": "ALPACA",
+                "broker_order_id": parent_order_id,
+                "broker_parent_order_id": parent_order_id,
+                "broker_status": sync_result.get("parent_status", ""),
+                "broker_filled_qty": sync_result.get("entry_filled_qty", ""),
+                "broker_filled_avg_price": sync_result.get("entry_filled_avg_price", ""),
+                "broker_exit_order_id": sync_result.get("exit_order_id", ""),
+                "shares": open_row.get("shares", ""),
+                "entry_price": open_row.get("entry_price", ""),
+                "stop_price": open_row.get("stop_price", ""),
+                "target_price": open_row.get("target_price", ""),
+                "exit_price": sync_result.get("exit_price", ""),
+                "exit_reason": sync_result.get("exit_reason", exit_event),
+                "status": "CLOSED",
+                "notes": f"Paper trade exit synced from Alpaca. exit_event={exit_event}",
+                "linked_signal_timestamp_utc": open_row.get("linked_signal_timestamp_utc", ""),
+                "linked_signal_entry": open_row.get("linked_signal_entry", ""),
+                "linked_signal_stop": open_row.get("linked_signal_stop", ""),
+                "linked_signal_target": open_row.get("linked_signal_target", ""),
+                "linked_signal_confidence": open_row.get("linked_signal_confidence", ""),
+                "inferred_stop_hit": "",
+                "inferred_target_hit": "",
+                "inferred_first_level_hit": "",
+                "inferred_analysis_start_utc": "",
+                "inferred_analysis_end_utc": "",
+            })
+        except Exception as e:
+            print(f"Paper trade exit log write failed for {symbol} / {parent_order_id}: {e}", flush=True)
+            results.append({
+                "symbol": symbol,
+                "parent_order_id": parent_order_id,
+                "synced": False,
+                "reason": "log_write_failed",
+                "details": str(e),
+            })
+            skipped_count += 1
+            continue
+
+        synced_count += 1
+        results.append({
+            "symbol": symbol,
+            "parent_order_id": parent_order_id,
+            "synced": True,
+            "exit_event": exit_event,
+            "exit_price": sync_result.get("exit_price", ""),
+            "exit_order_id": sync_result.get("exit_order_id", ""),
+            "parent_status": sync_result.get("parent_status", ""),
+        })
+
+    return jsonify({
+        "ok": True,
+        "open_paper_trade_count": len(open_rows),
+        "synced_count": synced_count,
+        "skipped_count": skipped_count,
+        "results": results,
     })
 
 
@@ -404,6 +588,14 @@ def scan():
         debug = debug_raw.strip().lower() in {"true", "1", "yes", "y", "on"}
     else:
         debug = bool(debug_raw)
+
+    paper_trade_raw = payload.get("paper_trade", False)
+    if isinstance(paper_trade_raw, bool):
+        paper_trade = paper_trade_raw
+    elif isinstance(paper_trade_raw, str):
+        paper_trade = paper_trade_raw.strip().lower() in {"true", "1", "yes", "y", "on"}
+    else:
+        paper_trade = bool(paper_trade_raw)
 
     if account_size is None:
         return jsonify({"ok": False, "error": "account_size is required"}), 400
@@ -450,6 +642,7 @@ def scan():
             "source": mode.upper(),
             "trades": [],
             "min_confidence": MIN_CONFIDENCE,
+            "paper_trade_enabled": paper_trade,
         })
 
     trades, evaluations, _fetch_ok, _fetch_fail, benchmark_directions, source = run_scan(account_size, mode)
@@ -463,13 +656,71 @@ def scan():
         "min_confidence": MIN_CONFIDENCE,
         "trade_count": len(trades),
         "trades": [trade_to_dict(t) for t in trades],
+        "paper_trade_enabled": paper_trade,
     }
 
     if debug:
         response["evaluations"] = [debug_to_dict(ev) for ev in evaluations]
 
+    top_trade = trades[0] if trades else None
+
+    if paper_trade:
+        if top_trade is None:
+            response["paper_trade_result"] = {
+                "attempted": False,
+                "placed": False,
+                "reason": "no_valid_trade",
+            }
+        else:
+            try:
+                paper_trade_result = place_paper_bracket_order_from_trade(top_trade)
+                response["paper_trade_result"] = paper_trade_result
+
+                if paper_trade_result.get("placed"):
+                    top_metrics = top_trade["metrics"]
+                    append_trade_log({
+                        "timestamp_utc": timestamp_utc,
+                        "event_type": "OPEN",
+                        "symbol": top_metrics.get("symbol", ""),
+                        "name": top_trade.get("name", ""),
+                        "mode": mode,
+                        "trade_source": "ALPACA_PAPER",
+                        "broker": "ALPACA",
+                        "broker_order_id": paper_trade_result.get("alpaca_order_id", ""),
+                        "broker_parent_order_id": paper_trade_result.get("alpaca_order_id", ""),
+                        "broker_status": paper_trade_result.get("alpaca_order_status", ""),
+                        "broker_filled_qty": "",
+                        "broker_filled_avg_price": "",
+                        "broker_exit_order_id": "",
+                        "shares": paper_trade_result.get("shares", ""),
+                        "entry_price": top_metrics.get("entry", ""),
+                        "stop_price": top_metrics.get("stop", ""),
+                        "target_price": top_metrics.get("target", ""),
+                        "exit_price": "",
+                        "exit_reason": "",
+                        "status": "OPEN",
+                        "notes": f"Paper bracket order submitted. client_order_id={paper_trade_result.get('client_order_id', '')}",
+                        "linked_signal_timestamp_utc": timestamp_utc,
+                        "linked_signal_entry": top_metrics.get("entry", ""),
+                        "linked_signal_stop": top_metrics.get("stop", ""),
+                        "linked_signal_target": top_metrics.get("target", ""),
+                        "linked_signal_confidence": top_metrics.get("final_confidence", ""),
+                        "inferred_stop_hit": "",
+                        "inferred_target_hit": "",
+                        "inferred_first_level_hit": "",
+                        "inferred_analysis_start_utc": "",
+                        "inferred_analysis_end_utc": "",
+                    })
+            except Exception as e:
+                print(f"Paper trade placement failed: {e}", flush=True)
+                response["paper_trade_result"] = {
+                    "attempted": True,
+                    "placed": False,
+                    "reason": "paper_trade_exception",
+                    "details": str(e),
+                }
+
     try:
-        top_trade = trades[0] if trades else None
         top_metrics = top_trade["metrics"] if top_trade else {}
 
         append_signal_log({
@@ -503,12 +754,25 @@ def log_trade():
 
     event_type = str(payload.get("event_type", "")).strip().upper()
     symbol = str(payload.get("symbol", "")).strip().upper()
+    trade_source = str(payload.get("trade_source", "MANUAL")).strip().upper() or "MANUAL"
+    broker = str(payload.get("broker", "")).strip().upper()
+    broker_order_id = str(payload.get("broker_order_id", "")).strip()
+    broker_parent_order_id = str(payload.get("broker_parent_order_id", "")).strip()
+    broker_status = str(payload.get("broker_status", "")).strip().upper()
+    broker_filled_qty = payload.get("broker_filled_qty", "")
+    broker_filled_avg_price = payload.get("broker_filled_avg_price", "")
+    broker_exit_order_id = str(payload.get("broker_exit_order_id", "")).strip()
     notes = str(payload.get("notes", "")).strip()
 
     if event_type not in {"OPEN", "STOP_HIT", "TARGET_HIT", "MANUAL_CLOSE"}:
         return jsonify({
             "ok": False,
             "error": "event_type must be OPEN, STOP_HIT, TARGET_HIT, or MANUAL_CLOSE"
+        }), 400
+    if trade_source not in {"MANUAL", "ALPACA_PAPER"}:
+        return jsonify({
+            "ok": False,
+            "error": "trade_source must be MANUAL or ALPACA_PAPER"
         }), 400
 
     if not symbol:
@@ -569,7 +833,7 @@ def log_trade():
         target_price = linked_signal_target
         exit_price = price
         exit_reason = "STOP_HIT"
-        status = "OPEN"
+        status = "CLOSED"
 
     elif event_type == "TARGET_HIT":
         open_row = find_latest_open_trade(symbol)
@@ -590,7 +854,7 @@ def log_trade():
         target_price = linked_signal_target
         exit_price = price
         exit_reason = "TARGET_HIT"
-        status = "OPEN"
+        status = "CLOSED"
 
     else:  # MANUAL_CLOSE
         open_row = find_latest_open_trade(symbol)
@@ -620,6 +884,14 @@ def log_trade():
             "symbol": symbol,
             "name": inferred_name,
             "mode": inferred_mode,
+            "trade_source": trade_source,
+            "broker": broker,
+            "broker_order_id": broker_order_id,
+            "broker_parent_order_id": broker_parent_order_id,
+            "broker_status": broker_status,
+            "broker_filled_qty": broker_filled_qty,
+            "broker_filled_avg_price": broker_filled_avg_price,
+            "broker_exit_order_id": broker_exit_order_id,
             "shares": shares,
             "entry_price": entry_price,
             "stop_price": stop_price,
@@ -651,6 +923,16 @@ def log_trade():
         "name": inferred_name,
         "mode": inferred_mode,
         "status": status,
+        "broker_context": {
+            "trade_source": trade_source,
+            "broker": broker,
+            "broker_order_id": broker_order_id,
+            "broker_parent_order_id": broker_parent_order_id,
+            "broker_status": broker_status,
+            "broker_filled_qty": broker_filled_qty,
+            "broker_filled_avg_price": broker_filled_avg_price,
+            "broker_exit_order_id": broker_exit_order_id,
+        },
         "linked_signal": {
             "timestamp_utc": linked_signal_timestamp_utc,
             "entry": linked_signal_entry,
@@ -689,6 +971,7 @@ def read_trades_by_date():
                 f"{row.get('event_type', '')} | "
                 f"{row.get('symbol', '')} | "
                 f"{row.get('mode', '')} | "
+                f"{row.get('trade_source', 'MANUAL')} | "
                 f"shares {row.get('shares', '')} | "
                 f"entry {row.get('entry_price', '')} | "
                 f"exit {row.get('exit_price', '')} | "

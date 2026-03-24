@@ -24,9 +24,12 @@ steps:
       - '--platform'
       - 'managed'
       - '--allow-unauthenticated'
+      - '--concurrency'
+      - '1'
+      - '--max-instances'
+      - '1'
       - '--set-env-vars'
-      - 'TWELVEDATA_API_KEY=$_TWELVEDATA_API_KEY'
-
+      - 'TWELVEDATA_API_KEY=$_TWELVEDATA_API_KEY,APCA_API_KEY_ID=$_APCA_API_KEY_ID,APCA_API_SECRET_KEY=$_APCA_API_SECRET_KEY,APCA_BASE_URL=https://paper-api.alpaca.markets,ALPACA_MAX_NOTIONAL=5000'
 images:
   - 'europe-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/stock-scanner:$COMMIT_SHA'
 
