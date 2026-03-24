@@ -16,28 +16,28 @@ PRIMARY_INSTRUMENTS = {
     "Rivian": {"symbol": "RIVN", "type": "stock", "priority": 10, "market": "NASDAQ"},
     "NIO": {"symbol": "NIO", "type": "stock", "priority": 9, "market": "NASDAQ"},
     "SoFi": {"symbol": "SOFI", "type": "stock", "priority": 8, "market": "NASDAQ"},
-    "Snap": {"symbol": "SNAP", "type": "stock", "priority": 8, "market": "NYSE"},
+    "Snap": {"symbol": "SNAP", "type": "stock", "priority": 8, "market": "NASDAQ"},
 }
 
 SECONDARY_INSTRUMENTS = {
     "Lucid": {"symbol": "LCID", "type": "stock", "priority": 7, "market": "NASDAQ"},
-    "Archer Aviation": {"symbol": "ACHR", "type": "stock", "priority": 7, "market": "NYSE"},
+    "Archer Aviation": {"symbol": "ACHR", "type": "stock", "priority": 7, "market": "NASDAQ"},
     "Opendoor": {"symbol": "OPEN", "type": "stock", "priority": 6, "market": "NASDAQ"},
-    "QuantumScape": {"symbol": "QS", "type": "stock", "priority": 6, "market": "NYSE"},
+    "QuantumScape": {"symbol": "QS", "type": "stock", "priority": 6, "market": "NASDAQ"},
 }
 
 THIRD_INSTRUMENTS = {
     "Plug Power": {"symbol": "PLUG", "type": "stock", "priority": 7, "market": "NASDAQ"},
     "Bitfarms": {"symbol": "BITF", "type": "stock", "priority": 7, "market": "NASDAQ"},
-    "Joby Aviation": {"symbol": "JOBY", "type": "stock", "priority": 6, "market": "NYSE"},
+    "Joby Aviation": {"symbol": "JOBY", "type": "stock", "priority": 6, "market": "NASDAQ"},
     "Grab": {"symbol": "GRAB", "type": "stock", "priority": 6, "market": "NASDAQ"},
 }
 
 FOURTH_INSTRUMENTS = {
     "Clover Health": {"symbol": "CLOV", "type": "stock", "priority": 6, "market": "NASDAQ"},
-    "Telefonica Brasil": {"symbol": "VIV", "type": "stock", "priority": 5, "market": "NYSE"},
-    "TAL Education": {"symbol": "TAL", "type": "stock", "priority": 6, "market": "NYSE"},
-    "Hims & Hers": {"symbol": "HIMS", "type": "stock", "priority": 6, "market": "NYSE"},
+    "Telefonica Brasil": {"symbol": "VIV", "type": "stock", "priority": 5, "market": "NASDAQ"},
+    "TAL Education": {"symbol": "TAL", "type": "stock", "priority": 6, "market": "NASDAQ"},
+    "Hims & Hers": {"symbol": "HIMS", "type": "stock", "priority": 6, "market": "NASDAQ"},
 }
 
 
@@ -481,6 +481,10 @@ def evaluate_symbol(name: str, info: dict, candles: list[dict], account_size: fl
     now_ny = get_ny_now()
     minutes_after_open = (now_ny.hour * 60 + now_ny.minute) - (9 * 60 + 30)
     metrics["minutes_after_open"] = minutes_after_open
+
+    # Hard entry cutoff temporarily disabled.
+    hard_entry_cutoff = False
+    checks["hard_entry_cutoff_rule"] = True
 
     late_session_strict = now_ny.hour > 11 or (now_ny.hour == 11 and now_ny.minute >= 30)
     checks["late_session_strict_rule"] = True

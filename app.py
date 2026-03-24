@@ -6,9 +6,33 @@ from datetime import datetime, timezone
 from flask import Flask, request, jsonify
 from google.cloud import storage
 
-from trade_scan import run_scan, market_time_check, MIN_CONFIDENCE
+from trade_scan import (
+    run_scan,
+    market_time_check,
+    MIN_CONFIDENCE,
+    PRIMARY_INSTRUMENTS,
+    SECONDARY_INSTRUMENTS,
+    THIRD_INSTRUMENTS,
+    FOURTH_INSTRUMENTS,
+)
 
 app = Flask(__name__)
+
+INSTRUMENT_GROUPS = {
+    "primary": PRIMARY_INSTRUMENTS,
+    "secondary": SECONDARY_INSTRUMENTS,
+    "third": THIRD_INSTRUMENTS,
+    "fourth": FOURTH_INSTRUMENTS,
+}
+
+
+def find_instrument_by_symbol(symbol: str) -> tuple[str, str] | tuple[None, None]:
+    symbol = symbol.strip().upper()
+    for mode_name, instruments in INSTRUMENT_GROUPS.items():
+        for display_name, info in instruments.items():
+            if info.get("symbol", "").upper() == symbol:
+                return display_name, mode_name
+    return None, None
 
 LOG_BUCKET = os.getenv("LOG_BUCKET", "stock-scanner-490821-logs")
 SIGNALS_CSV_PATH = os.getenv("SIGNALS_CSV_PATH", "signals/signals.csv")
@@ -236,22 +260,48 @@ def log_trade():
 
     event_type = str(payload.get("event_type", "")).strip().upper()
     symbol = str(payload.get("symbol", "")).strip().upper()
-    name = str(payload.get("name", "")).strip()
-    mode = str(payload.get("mode", "")).strip().lower()
-    shares = payload.get("shares", "")
-    entry_price = payload.get("entry_price", "")
-    stop_price = payload.get("stop_price", "")
-    target_price = payload.get("target_price", "")
-    exit_price = payload.get("exit_price", "")
-    exit_reason = str(payload.get("exit_reason", "")).strip().upper()
-    status = str(payload.get("status", "")).strip().upper()
     notes = str(payload.get("notes", "")).strip()
 
-    if event_type not in {"OPEN", "CLOSE", "UPDATE"}:
-        return jsonify({"ok": False, "error": "event_type must be OPEN, CLOSE, or UPDATE"}), 400
+    if event_type not in {"OPEN", "STOP_HIT", "TARGET_HIT", "MANUAL_CLOSE"}:
+        return jsonify({
+            "ok": False,
+            "error": "event_type must be OPEN, STOP_HIT, TARGET_HIT, or MANUAL_CLOSE"
+        }), 400
 
     if not symbol:
         return jsonify({"ok": False, "error": "symbol is required"}), 400
+
+    inferred_name, inferred_mode = find_instrument_by_symbol(symbol)
+    if inferred_name is None or inferred_mode is None:
+        return jsonify({"ok": False, "error": "symbol not found in configured watchlists"}), 400
+
+    # Simple shortcut-friendly input: one generic price field.
+    # OPEN uses it as entry_price; other events use it as exit_price.
+    price = payload.get("price", "")
+    shares = payload.get("shares", "")
+    stop_price = payload.get("stop_price", "")
+    target_price = payload.get("target_price", "")
+
+    if event_type == "OPEN":
+        entry_price = price
+        exit_price = ""
+        exit_reason = ""
+        status = "OPEN"
+    elif event_type == "STOP_HIT":
+        entry_price = ""
+        exit_price = price
+        exit_reason = "STOP_HIT"
+        status = "OPEN"
+    elif event_type == "TARGET_HIT":
+        entry_price = ""
+        exit_price = price
+        exit_reason = "TARGET_HIT"
+        status = "OPEN"
+    else:  # MANUAL_CLOSE
+        entry_price = ""
+        exit_price = price
+        exit_reason = "MANUAL_CLOSE"
+        status = "CLOSED"
 
     timestamp_utc = datetime.now(timezone.utc).isoformat()
 
@@ -260,8 +310,8 @@ def log_trade():
             "timestamp_utc": timestamp_utc,
             "event_type": event_type,
             "symbol": symbol,
-            "name": name,
-            "mode": mode,
+            "name": inferred_name,
+            "mode": inferred_mode,
             "shares": shares,
             "entry_price": entry_price,
             "stop_price": stop_price,
@@ -280,6 +330,9 @@ def log_trade():
         "message": "Trade event logged",
         "event_type": event_type,
         "symbol": symbol,
+        "name": inferred_name,
+        "mode": inferred_mode,
+        "status": status,
     })
 
 
