@@ -138,13 +138,33 @@ def append_trade_log(row: dict) -> None:
     ]
     append_csv_row(TRADES_CSV_PATH, headers, row)
 
+def read_trade_rows_for_date(target_date: str) -> list[dict]:
+    client = storage.Client()
+    bucket = client.bucket(LOG_BUCKET)
+    blob = bucket.blob(TRADES_CSV_PATH)
 
+    if not blob.exists():
+        return []
+
+    content = blob.download_as_text()
+    if not content.strip():
+        return []
+
+    reader = csv.DictReader(io.StringIO(content))
+    rows = []
+
+    for row in reader:
+        ts = str(row.get("timestamp_utc", ""))
+        if ts.startswith(target_date):
+            rows.append(row)
+
+    return rows
 @app.get("/")
 def home():
     return jsonify({
         "ok": True,
         "service": "stock-scanner",
-        "endpoints": ["/scan", "/log-trade"]
+        "endpoints": ["/scan", "/log-trade", "/read-trades-by-date"]
     })
 
 
@@ -333,6 +353,48 @@ def log_trade():
         "name": inferred_name,
         "mode": inferred_mode,
         "status": status,
+    })
+
+@app.post("/read-trades-by-date")
+def read_trades_by_date():
+    payload = request.get_json(silent=True) or {}
+    target_date = str(payload.get("date", "")).strip()
+
+    if not target_date:
+        return jsonify({"ok": False, "error": "date is required in YYYY-MM-DD format"}), 400
+
+    try:
+        rows = read_trade_rows_for_date(target_date)
+    except Exception as e:
+        print(f"Trade log read failed: {e}", flush=True)
+        return jsonify({"ok": False, "error": f"trade log read failed: {e}"}), 500
+
+    formatted_lines = [f"Trade Log for {target_date}"]
+
+    if not rows:
+        formatted_lines.append("")
+        formatted_lines.append("No trade events found.")
+    else:
+        for row in rows:
+            ts = row.get("timestamp_utc", "")
+            time_part = ts[11:16] if len(ts) >= 16 else ts
+            formatted_lines.append(
+                f"{time_part} UTC | "
+                f"{row.get('event_type', '')} | "
+                f"{row.get('symbol', '')} | "
+                f"{row.get('mode', '')} | "
+                f"shares {row.get('shares', '')} | "
+                f"entry {row.get('entry_price', '')} | "
+                f"exit {row.get('exit_price', '')} | "
+                f"{row.get('notes', '')}"
+            )
+
+    return jsonify({
+        "ok": True,
+        "date": target_date,
+        "count": len(rows),
+        "rows": rows,
+        "formatted_text": "\n".join(formatted_lines),
     })
 
 
