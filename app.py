@@ -75,6 +75,7 @@ def trade_to_dict(eval_result: dict) -> dict:
     }
 
 
+
 def debug_to_dict(eval_result: dict) -> dict:
     return {
         "name": eval_result["name"],
@@ -82,6 +83,57 @@ def debug_to_dict(eval_result: dict) -> dict:
         "final_reason": eval_result["final_reason"],
         "checks": eval_result.get("checks", {}),
         "metrics": eval_result.get("metrics", {}),
+    }
+
+
+# --- Helper function for paper trade candidate selection ---
+def paper_candidate_from_evaluation(eval_result: dict) -> dict | None:
+    metrics = eval_result.get("metrics") or {}
+    direction = str(metrics.get("direction", "")).strip().upper()
+    confidence = metrics.get("final_confidence")
+
+    if direction not in {"BUY", "SELL"}:
+        return None
+
+    try:
+        confidence_value = float(confidence)
+    except (TypeError, ValueError):
+        return None
+
+    if confidence_value < PAPER_TRADE_MIN_CONFIDENCE:
+        return None
+
+    required_metric_keys = [
+        "symbol",
+        "price",
+        "entry",
+        "stop",
+        "target",
+        "shares",
+        "actual_position_cost",
+        "risk_per_share",
+        "actual_risk",
+        "risk_amount",
+        "or_high",
+        "or_low",
+        "vwap",
+        "final_confidence",
+        "direction",
+    ]
+    for key in required_metric_keys:
+        if key not in metrics:
+            return None
+
+    return {
+        "name": eval_result.get("name", ""),
+        "final_reason": eval_result.get("final_reason", ""),
+        "decision": "PAPER_CANDIDATE",
+        "checks": eval_result.get("checks", {}),
+        "metrics": {
+            **metrics,
+            "manual_eligible": direction == "BUY" and str(eval_result.get("decision", "")).strip().upper() == "VALID",
+            "paper_eligible": True,
+        },
     }
 
 
@@ -650,7 +702,11 @@ def scan():
 
     all_trades, evaluations, _fetch_ok, _fetch_fail, benchmark_directions, source = run_scan(account_size, mode)
     trades = [t for t in all_trades if t["metrics"].get("direction") == "BUY"]
-    paper_trades = [t for t in all_trades if t["metrics"].get("final_confidence", 0) > PAPER_TRADE_MIN_CONFIDENCE]
+    paper_trades = []
+    for ev in evaluations:
+        candidate = paper_candidate_from_evaluation(ev)
+        if candidate is not None:
+            paper_trades.append(candidate)
     paper_long_candidates = [t for t in paper_trades if t["metrics"].get("direction") == "BUY"]
     paper_short_candidates = [t for t in paper_trades if t["metrics"].get("direction") == "SELL"]
 
@@ -679,7 +735,7 @@ def scan():
             response["paper_trade_result"] = {
                 "attempted": False,
                 "placed": False,
-                "reason": "no_paper_trade_candidates_above_90",
+                "reason": "no_paper_trade_candidates_at_or_above_threshold",
                 "candidate_count": 0,
                 "long_candidate_count": 0,
                 "short_candidate_count": 0,
