@@ -117,19 +117,23 @@ def paper_candidate_from_evaluation(eval_result: dict) -> dict | None:
 
     shares = metrics.get("shares")
     if shares in (None, ""):
-        shares = 1
+        shares = ""
 
     risk_per_share = to_float_or_none(metrics.get("risk_per_share"))
     if risk_per_share is None:
         risk_per_share = abs(entry_value - stop)
 
+    share_count_for_calc = to_float_or_none(shares)
+    if share_count_for_calc is None or share_count_for_calc <= 0:
+        share_count_for_calc = 0.0
+
     actual_position_cost = to_float_or_none(metrics.get("actual_position_cost"))
     if actual_position_cost is None:
-        actual_position_cost = entry_value * float(shares)
+        actual_position_cost = entry_value * share_count_for_calc
 
     actual_risk = to_float_or_none(metrics.get("actual_risk"))
     if actual_risk is None:
-        actual_risk = risk_per_share * float(shares)
+        actual_risk = risk_per_share * share_count_for_calc
 
     risk_amount = to_float_or_none(metrics.get("risk_amount"))
     if risk_amount is None:
@@ -141,7 +145,7 @@ def paper_candidate_from_evaluation(eval_result: dict) -> dict | None:
         "price": price if price is not None else entry_value,
         "stop": stop,
         "target": target,
-        "shares": int(float(shares)),
+        "shares": int(float(shares)) if shares not in (None, "") else "",
         "actual_position_cost": actual_position_cost,
         "risk_per_share": risk_per_share,
         "actual_risk": actual_risk,
@@ -202,6 +206,15 @@ def append_signal_log(row: dict) -> None:
         "reason",
         "benchmark_sp500",
         "benchmark_nasdaq",
+        "paper_trade_enabled",
+        "paper_trade_candidate_count",
+        "paper_trade_long_candidate_count",
+        "paper_trade_short_candidate_count",
+        "paper_trade_placed_count",
+        "paper_trade_placed_long_count",
+        "paper_trade_placed_short_count",
+        "paper_candidate_symbols",
+        "paper_placed_symbols",
     ]
     append_csv_row(SIGNALS_CSV_PATH, headers, row)
 
@@ -709,6 +722,15 @@ def scan():
                 "reason": timing_msg.replace("\n", " "),
                 "benchmark_sp500": "",
                 "benchmark_nasdaq": "",
+                "paper_trade_enabled": paper_trade,
+                "paper_trade_candidate_count": 0,
+                "paper_trade_long_candidate_count": 0,
+                "paper_trade_short_candidate_count": 0,
+                "paper_trade_placed_count": 0,
+                "paper_trade_placed_long_count": 0,
+                "paper_trade_placed_short_count": 0,
+                "paper_candidate_symbols": "",
+                "paper_placed_symbols": "",
             })
         except Exception as e:
             print(f"Signal log write failed: {e}", flush=True)
@@ -732,6 +754,10 @@ def scan():
             paper_trades.append(candidate)
     paper_long_candidates = [t for t in paper_trades if t["metrics"].get("direction") == "BUY"]
     paper_short_candidates = [t for t in paper_trades if t["metrics"].get("direction") == "SELL"]
+
+    paper_candidate_symbols = ",".join(
+        t["metrics"].get("symbol", "") for t in paper_trades if t["metrics"].get("symbol", "")
+    )
 
     response = {
         "ok": True,
@@ -838,6 +864,19 @@ def scan():
                 "results": paper_results,
             }
 
+    paper_trade_result = response.get("paper_trade_result", {}) if paper_trade else {}
+    paper_trade_placed_count = paper_trade_result.get("placed_count", 0) if isinstance(paper_trade_result, dict) else 0
+    paper_trade_placed_long_count = paper_trade_result.get("placed_long_count", 0) if isinstance(paper_trade_result, dict) else 0
+    paper_trade_placed_short_count = paper_trade_result.get("placed_short_count", 0) if isinstance(paper_trade_result, dict) else 0
+    paper_placed_symbols = ""
+    if isinstance(paper_trade_result, dict):
+        paper_result_items = paper_trade_result.get("results", []) or []
+        paper_placed_symbols = ",".join(
+            str(item.get("symbol", "")).strip().upper()
+            for item in paper_result_items
+            if isinstance(item, dict) and item.get("placed") and str(item.get("symbol", "")).strip()
+        )
+
     try:
         top_metrics = top_trade["metrics"] if top_trade else {}
 
@@ -859,6 +898,15 @@ def scan():
             "reason": top_trade["final_reason"] if top_trade else "No trade today",
             "benchmark_sp500": benchmark_directions.get("SP500", ""),
             "benchmark_nasdaq": benchmark_directions.get("NASDAQ", ""),
+            "paper_trade_enabled": paper_trade,
+            "paper_trade_candidate_count": len(paper_trades),
+            "paper_trade_long_candidate_count": len(paper_long_candidates),
+            "paper_trade_short_candidate_count": len(paper_short_candidates),
+            "paper_trade_placed_count": paper_trade_placed_count,
+            "paper_trade_placed_long_count": paper_trade_placed_long_count,
+            "paper_trade_placed_short_count": paper_trade_placed_short_count,
+            "paper_candidate_symbols": paper_candidate_symbols,
+            "paper_placed_symbols": paper_placed_symbols,
         })
     except Exception as e:
         print(f"Signal log write failed: {e}", flush=True)

@@ -65,11 +65,11 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
             return {"attempted": False, "placed": False, "symbol": symbol, "reason": "short_target_must_be_below_entry"}
     else:
         return {"attempted": False, "placed": False, "symbol": symbol, "reason": "invalid_direction"}
-    if scanner_shares <= 0:
-        return {"attempted": False, "placed": False, "symbol": symbol, "reason": "invalid_scanner_share_size"}
-
     capped_shares = int(max_notional / entry)
-    final_shares = min(scanner_shares, capped_shares)
+    if scanner_shares > 0:
+        final_shares = min(scanner_shares, capped_shares)
+    else:
+        final_shares = capped_shares
     if final_shares <= 0:
         return {
             "attempted": False,
