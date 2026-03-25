@@ -22,7 +22,7 @@ from trade_scan import (
 )
 PAPER_TRADE_MIN_CONFIDENCE = 70
 SCHEDULED_PAPER_ACCOUNT_SIZE = float(os.getenv("SCHEDULED_PAPER_ACCOUNT_SIZE", "1000"))
-SCHEDULED_ROUND_ROBIN_MODES = ["primary", "secondary", "third", "fourth"]
+SCHEDULED_ROUND_ROBIN_MODES = ["primary", "secondary", "third", "fourth", "core_one", "core_two"]
 
 app = Flask(__name__)
 

@@ -40,6 +40,20 @@ FOURTH_INSTRUMENTS = {
     "Hims & Hers": {"symbol": "HIMS", "type": "stock", "priority": 6, "market": "NASDAQ"},
 }
 
+CORE_ONE_INSTRUMENTS = {
+    "NVIDIA": {"symbol": "NVDA", "type": "stock", "priority": 10, "market": "NASDAQ"},
+    "Tesla": {"symbol": "TSLA", "type": "stock", "priority": 10, "market": "NASDAQ"},
+    "Apple": {"symbol": "AAPL", "type": "stock", "priority": 10, "market": "NASDAQ"},
+    "AMD": {"symbol": "AMD", "type": "stock", "priority": 9, "market": "NASDAQ"},
+}
+
+CORE_TWO_INSTRUMENTS = {
+    "Microsoft": {"symbol": "MSFT", "type": "stock", "priority": 10, "market": "NASDAQ"},
+    "Meta": {"symbol": "META", "type": "stock", "priority": 9, "market": "NASDAQ"},
+    "Amazon": {"symbol": "AMZN", "type": "stock", "priority": 9, "market": "NASDAQ"},
+    "Palantir": {"symbol": "PLTR", "type": "stock", "priority": 8, "market": "NASDAQ"},
+}
+
 
 def fmt(x: float) -> str:
     return f"{x:.2f}"
@@ -737,8 +751,12 @@ def run_scan(account_size: float, mode: str):
         selected_instruments = THIRD_INSTRUMENTS
     elif mode == "fourth":
         selected_instruments = FOURTH_INSTRUMENTS
+    elif mode == "core_one":
+        selected_instruments = CORE_ONE_INSTRUMENTS
+    elif mode == "core_two":
+        selected_instruments = CORE_TWO_INSTRUMENTS
     else:
-        raise ValueError("Mode must be 'primary', 'secondary', 'third', or 'fourth'")
+        raise ValueError("Mode must be 'primary', 'secondary', 'third', 'fourth', 'core_one', or 'core_two'")
 
     benchmark_instruments = get_benchmark_instruments()
 
@@ -878,13 +896,13 @@ def main():
     args = [a for a in args if a != "--debug"]
 
     if len(args) < 2:
-        print("Usage: python3 trade_scan.py <AccountSize> <primary|secondary|third|fourth> [--debug]")
-        print("   or: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth> [--debug]")
+        print("Usage: python3 trade_scan.py <AccountSize> <primary|secondary|third|fourth|core_one|core_two> [--debug]")
+        print("   or: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|core_one|core_two> [--debug]")
         return
 
     if args[0] == "--test":
         if len(args) < 3:
-            print("Usage: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth> [--debug]")
+            print("Usage: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|core_one|core_two> [--debug]")
             return
         account_size = float(args[1])
         mode = args[2].lower()

@@ -135,6 +135,12 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
             return {"attempted": False, "placed": False, "symbol": symbol, "reason": "short_target_must_be_below_entry"}
     else:
         return {"attempted": False, "placed": False, "symbol": symbol, "reason": "invalid_direction"}
+
+    if direction == "SELL":
+        minimum_short_stop = round(entry + 0.01, 2)
+        if stop < minimum_short_stop:
+            stop = minimum_short_stop
+
     capped_shares = int(max_notional / entry)
     if scanner_shares > 0:
         final_shares = min(scanner_shares, capped_shares)
