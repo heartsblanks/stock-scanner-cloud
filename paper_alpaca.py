@@ -100,11 +100,20 @@ def close_position(symbol: str) -> dict[str, Any]:
     return response.json()
 
 
+
 def _to_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _build_client_order_id(symbol: str, direction: str, entry: float, final_shares: int) -> str:
+    symbol = str(symbol).strip().upper()
+    direction = str(direction).strip().upper()
+    direction_tag = "BUY" if direction == "BUY" else "SELL"
+    price_tag = int(round(entry * 10000))
+    return f"scanner-{symbol}-{direction_tag}-{price_tag}-{final_shares}"
 
 
 def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None = None) -> dict[str, Any]:
@@ -184,7 +193,7 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
             "available_funds": round(available_funds, 2),
         }
 
-    client_order_id = f"scanner-{symbol}-{int(entry * 10000)}-{final_shares}"
+    client_order_id = _build_client_order_id(symbol, direction, entry, final_shares)
     payload = {
         "symbol": symbol,
         "qty": str(final_shares),

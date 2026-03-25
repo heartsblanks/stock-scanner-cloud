@@ -1,7 +1,8 @@
 import os
 import io
 import csv
-from datetime import datetime, timezone
+from pathlib import Path
+from datetime import datetime, timezone, timedelta
 
 import requests
 from zoneinfo import ZoneInfo
@@ -10,6 +11,9 @@ from flask import Flask, request, jsonify
 from google.cloud import storage
 from paper_alpaca import place_paper_bracket_order_from_trade, get_open_positions, get_open_orders, close_position, cancel_open_orders_for_symbol
 from alpaca_sync import sync_order_by_id, get_order_by_id
+from alpaca_reconcile import run_reconciliation, upload_file_to_gcs
+from trade_analysis import run_trade_analysis, upload_file_to_gcs as upload_analysis_file_to_gcs
+from signal_analysis import run_signal_analysis, upload_file_to_gcs as upload_signal_analysis_file_to_gcs
 
 from trade_scan import (
     run_scan,
@@ -25,6 +29,10 @@ from trade_scan import (
 PAPER_TRADE_MIN_CONFIDENCE = 70
 SCHEDULED_PAPER_ACCOUNT_SIZE = float(os.getenv("SCHEDULED_PAPER_ACCOUNT_SIZE", "1000"))
 SCHEDULED_ROUND_ROBIN_MODES = ["primary", "secondary", "third", "fourth", "core_one", "core_two"]
+
+PAPER_STOP_COOLDOWN_MINUTES = int(os.getenv("PAPER_STOP_COOLDOWN_MINUTES", "30"))
+PAPER_TARGET_COOLDOWN_MINUTES = int(os.getenv("PAPER_TARGET_COOLDOWN_MINUTES", "0"))
+PAPER_MANUAL_CLOSE_COOLDOWN_MINUTES = int(os.getenv("PAPER_MANUAL_CLOSE_COOLDOWN_MINUTES", "0"))
 
 app = Flask(__name__)
 
@@ -73,11 +81,20 @@ def build_scheduled_scan_payload(payload: dict, now_ny: datetime | None = None) 
         "mode": scheduled_mode,
         "paper_trade": True,
         "debug": payload.get("debug", False),
+        "scan_source": "SCHEDULED",
     }
 
 LOG_BUCKET = os.getenv("LOG_BUCKET", "stock-scanner-490821-logs")
 SIGNALS_CSV_PATH = os.getenv("SIGNALS_CSV_PATH", "signals/signals.csv")
 TRADES_CSV_PATH = os.getenv("TRADES_CSV_PATH", "trades/trades.csv")
+RECONCILIATION_BUCKET = os.getenv("RECONCILIATION_BUCKET", "stock-scanner-490821-logs")
+RECONCILIATION_OBJECT = os.getenv("RECONCILIATION_OBJECT", "reports/alpaca_reconciliation.csv")
+TRADE_ANALYSIS_BUCKET = os.getenv("TRADE_ANALYSIS_BUCKET", "stock-scanner-490821-logs")
+TRADE_ANALYSIS_SUMMARY_OBJECT = os.getenv("TRADE_ANALYSIS_SUMMARY_OBJECT", "reports/trade_analysis_summary.csv")
+TRADE_ANALYSIS_PAIRED_OBJECT = os.getenv("TRADE_ANALYSIS_PAIRED_OBJECT", "reports/trade_analysis_paired_trades.csv")
+SIGNAL_ANALYSIS_BUCKET = os.getenv("SIGNAL_ANALYSIS_BUCKET", "stock-scanner-490821-logs")
+SIGNAL_ANALYSIS_SUMMARY_OBJECT = os.getenv("SIGNAL_ANALYSIS_SUMMARY_OBJECT", "reports/signal_analysis_summary.csv")
+SIGNAL_ANALYSIS_ROWS_OBJECT = os.getenv("SIGNAL_ANALYSIS_ROWS_OBJECT", "reports/signal_analysis_rows.csv")
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY")
 TWELVEDATA_BASE_URL = "https://api.twelvedata.com/time_series"
 NY_TZ = ZoneInfo("America/New_York")
@@ -225,6 +242,10 @@ def append_csv_row(path: str, headers: list[str], row: dict) -> None:
 def append_signal_log(row: dict) -> None:
     headers = [
         "timestamp_utc",
+        "scan_id",
+        "scan_source",
+        "market_phase",
+        "scan_execution_time_ms",
         "mode",
         "account_size",
         "timing_ok",
@@ -249,7 +270,11 @@ def append_signal_log(row: dict) -> None:
         "paper_trade_placed_long_count",
         "paper_trade_placed_short_count",
         "paper_candidate_symbols",
+        "paper_candidate_confidences",
+        "paper_skipped_symbols",
+        "paper_skip_reasons",
         "paper_placed_symbols",
+        "paper_trade_ids",
     ]
     append_csv_row(SIGNALS_CSV_PATH, headers, row)
 
@@ -443,6 +468,101 @@ def to_float_or_none(value):
         return None
 
 
+def build_scan_id(timestamp_utc: str, mode: str) -> str:
+    safe_ts = str(timestamp_utc).replace(":", "-")
+    return f"{safe_ts}_{mode}"
+
+
+def market_phase_from_timestamp(timestamp_utc: str) -> str:
+    try:
+        dt_ny = parse_iso_utc(timestamp_utc).astimezone(NY_TZ)
+    except Exception:
+        return "UNKNOWN"
+
+    minutes = (dt_ny.hour * 60) + dt_ny.minute
+    open_minute = (9 * 60) + 30
+    if minutes < open_minute:
+        return "PREMARKET"
+    if minutes < open_minute + 30:
+        return "OPENING"
+    if minutes < (12 * 60):
+        return "MORNING"
+    if minutes < (14 * 60):
+        return "MIDDAY"
+    if minutes < (15 * 60) + 30:
+        return "AFTERNOON"
+    return "POWER_HOUR"
+
+
+def get_latest_open_paper_trade_for_symbol(symbol: str) -> dict | None:
+    symbol = str(symbol).strip().upper()
+    if not symbol:
+        return None
+
+    open_rows = get_open_paper_trades()
+    for row in reversed(open_rows):
+        if str(row.get("symbol", "")).strip().upper() == symbol:
+            return row
+    return None
+
+
+def get_latest_paper_close_event_for_symbol(symbol: str) -> dict | None:
+    symbol = str(symbol).strip().upper()
+    if not symbol:
+        return None
+
+    for row in reversed(read_all_trade_rows()):
+        if str(row.get("trade_source", "")).strip().upper() != "ALPACA_PAPER":
+            continue
+        if str(row.get("symbol", "")).strip().upper() != symbol:
+            continue
+        if str(row.get("status", "")).strip().upper() != "CLOSED":
+            continue
+        return row
+    return None
+
+
+def is_symbol_in_paper_cooldown(symbol: str, now_utc: str) -> tuple[bool, str]:
+    latest_close = get_latest_paper_close_event_for_symbol(symbol)
+    if not latest_close:
+        return False, ""
+
+    exit_reason = str(latest_close.get("exit_reason", "")).strip().upper()
+    cooldown_minutes = 0
+    cooldown_label = ""
+
+    if exit_reason == "STOP_HIT":
+        cooldown_minutes = PAPER_STOP_COOLDOWN_MINUTES
+        cooldown_label = "stop"
+    elif exit_reason == "TARGET_HIT":
+        cooldown_minutes = PAPER_TARGET_COOLDOWN_MINUTES
+        cooldown_label = "target"
+    elif exit_reason in {"MANUAL_CLOSE", "EOD_CLOSE"}:
+        cooldown_minutes = PAPER_MANUAL_CLOSE_COOLDOWN_MINUTES
+        cooldown_label = "manual_close"
+    else:
+        return False, ""
+
+    if cooldown_minutes <= 0:
+        return False, ""
+
+    latest_ts = str(latest_close.get("timestamp_utc", "")).strip()
+    if not latest_ts:
+        return False, ""
+
+    try:
+        now_dt = parse_iso_utc(now_utc)
+        latest_dt = parse_iso_utc(latest_ts)
+    except Exception:
+        return False, ""
+
+    cooldown_until = latest_dt + timedelta(minutes=cooldown_minutes)
+    if now_dt < cooldown_until:
+        return True, f"{cooldown_label}_cooldown_until_{cooldown_until.isoformat()}"
+
+    return False, ""
+
+
 def find_best_signal_match(symbol: str, actual_entry_price: float | None, open_timestamp_utc: str) -> dict | None:
     rows = read_all_signal_rows()
     symbol = symbol.strip().upper()
@@ -483,12 +603,29 @@ def find_best_signal_match(symbol: str, actual_entry_price: float | None, open_t
 
 
 def find_latest_open_trade(symbol: str, trade_source: str | None = None, broker_parent_order_id: str | None = None) -> dict | None:
-    rows = read_all_trade_rows()
-    current_open = None
-
-    normalized_symbol = symbol.strip().upper()
+    normalized_symbol = str(symbol or "").strip().upper()
     normalized_trade_source = str(trade_source or "").strip().upper()
     normalized_parent_order_id = str(broker_parent_order_id or "").strip()
+
+    if not normalized_symbol:
+        return None
+
+    if normalized_trade_source == "ALPACA_PAPER":
+        open_rows = get_open_paper_trades()
+
+        if normalized_parent_order_id:
+            for row in reversed(open_rows):
+                if str(row.get("broker_parent_order_id", "")).strip() == normalized_parent_order_id:
+                    return row
+
+        for row in reversed(open_rows):
+            if str(row.get("symbol", "")).strip().upper() == normalized_symbol:
+                return row
+
+        return None
+
+    rows = read_all_trade_rows()
+    current_open = None
 
     for row in rows:
         row_symbol = str(row.get("symbol", "")).strip().upper()
@@ -623,7 +760,7 @@ def home():
     return jsonify({
         "ok": True,
         "service": "stock-scanner",
-        "endpoints": ["/scan", "/scheduled-paper-scan", "/log-trade", "/sync-paper-trades", "/close-paper-positions", "/read-trades-by-date"]
+        "endpoints": ["/scan", "/scheduled-paper-scan", "/log-trade", "/sync-paper-trades", "/close-paper-positions", "/reconcile-paper-trades", "/analyze-paper-trades", "/analyze-signals", "/read-trades-by-date"]
     })
 
 @app.post("/scheduled-paper-scan")
@@ -723,8 +860,8 @@ def sync_paper_trades():
                 "broker_order_id": parent_order_id,
                 "broker_parent_order_id": parent_order_id,
                 "broker_status": sync_result.get("parent_status", ""),
-                "broker_filled_qty": sync_result.get("entry_filled_qty", ""),
-                "broker_filled_avg_price": sync_result.get("entry_filled_avg_price", ""),
+                "broker_filled_qty": sync_result.get("exit_filled_qty", ""),
+                "broker_filled_avg_price": sync_result.get("exit_filled_avg_price", ""),
                 "broker_exit_order_id": sync_result.get("exit_order_id", ""),
                 "shares": open_row.get("shares", ""),
                 "entry_price": open_row.get("entry_price", ""),
@@ -791,6 +928,11 @@ def scan():
     else:
         debug = bool(debug_raw)
 
+    scan_source_raw = payload.get("scan_source", "MANUAL")
+    scan_source = str(scan_source_raw).strip().upper() or "MANUAL"
+    if scan_source not in {"MANUAL", "SCHEDULED"}:
+        return jsonify({"ok": False, "error": "scan_source must be MANUAL or SCHEDULED"}), 400
+
     paper_trade_raw = payload.get("paper_trade", False)
     if isinstance(paper_trade_raw, bool):
         paper_trade = paper_trade_raw
@@ -811,12 +953,20 @@ def scan():
         return jsonify({"ok": False, "error": "mode must be primary, secondary, third, fourth, core_one, or core_two"}), 400
 
     ok, timing_msg = market_time_check()
+    scan_started_at = datetime.now(timezone.utc)
     timestamp_utc = datetime.now(timezone.utc).isoformat()
+
+    scan_id = build_scan_id(timestamp_utc, mode)
+    market_phase = market_phase_from_timestamp(timestamp_utc)
 
     if not ok:
         try:
             append_signal_log({
                 "timestamp_utc": timestamp_utc,
+                "scan_id": scan_id,
+                "scan_source": scan_source,
+                "market_phase": market_phase,
+                "scan_execution_time_ms": int((datetime.now(timezone.utc) - scan_started_at).total_seconds() * 1000),
                 "mode": mode,
                 "account_size": account_size,
                 "timing_ok": False,
@@ -841,7 +991,11 @@ def scan():
                 "paper_trade_placed_long_count": 0,
                 "paper_trade_placed_short_count": 0,
                 "paper_candidate_symbols": "",
+                "paper_candidate_confidences": "",
+                "paper_skipped_symbols": "",
+                "paper_skip_reasons": "",
                 "paper_placed_symbols": "",
+                "paper_trade_ids": "",
             })
         except Exception as e:
             print(f"Signal log write failed: {e}", flush=True)
@@ -870,6 +1024,10 @@ def scan():
         t["metrics"].get("symbol", "") for t in paper_trades if t["metrics"].get("symbol", "")
     )
 
+    paper_candidate_confidences = ",".join(
+        str(t["metrics"].get("final_confidence", "")) for t in paper_trades if t["metrics"].get("symbol", "")
+    )
+
     response = {
         "ok": True,
         "timing_ok": True,
@@ -883,6 +1041,7 @@ def scan():
         "paper_trade_short_candidate_count": len(paper_short_candidates),
         "trades": [trade_to_dict(t) for t in trades],
         "paper_trade_enabled": paper_trade,
+        "scan_source": scan_source,
     }
 
     if debug:
@@ -907,19 +1066,50 @@ def scan():
             placed_count = 0
             placed_long_count = 0
             placed_short_count = 0
+            skipped_symbols = []
+            skip_reasons = []
+            placed_trade_ids = []
 
             for paper_trade_candidate in paper_trades:
+                paper_metrics = paper_trade_candidate["metrics"]
+                candidate_symbol = str(paper_metrics.get("symbol", "")).strip().upper()
+
+                existing_open_trade = get_latest_open_paper_trade_for_symbol(candidate_symbol)
+                if existing_open_trade is not None:
+                    paper_results.append({
+                        "attempted": False,
+                        "placed": False,
+                        "reason": "symbol_already_open",
+                        "symbol": candidate_symbol,
+                    })
+                    skipped_symbols.append(candidate_symbol)
+                    skip_reasons.append(f"{candidate_symbol}:symbol_already_open")
+                    continue
+
+                in_cooldown, cooldown_reason = is_symbol_in_paper_cooldown(candidate_symbol, timestamp_utc)
+                if in_cooldown:
+                    paper_results.append({
+                        "attempted": False,
+                        "placed": False,
+                        "reason": cooldown_reason,
+                        "symbol": candidate_symbol,
+                    })
+                    skipped_symbols.append(candidate_symbol)
+                    skip_reasons.append(f"{candidate_symbol}:{cooldown_reason}")
+                    continue
+
                 try:
                     paper_trade_result = place_paper_bracket_order_from_trade(paper_trade_candidate)
                     paper_results.append(paper_trade_result)
 
                     if paper_trade_result.get("placed"):
                         placed_count += 1
-                        if paper_trade_candidate["metrics"].get("direction") == "BUY":
+                        if paper_metrics.get("direction") == "BUY":
                             placed_long_count += 1
-                        elif paper_trade_candidate["metrics"].get("direction") == "SELL":
+                        elif paper_metrics.get("direction") == "SELL":
                             placed_short_count += 1
-                        paper_metrics = paper_trade_candidate["metrics"]
+
+                        placed_trade_ids.append(str(paper_trade_result.get("client_order_id", "")).strip())
                         append_trade_log({
                             "timestamp_utc": timestamp_utc,
                             "event_type": "OPEN",
@@ -953,6 +1143,9 @@ def scan():
                             "inferred_analysis_start_utc": "",
                             "inferred_analysis_end_utc": "",
                         })
+                    else:
+                        skipped_symbols.append(candidate_symbol)
+                        skip_reasons.append(f"{candidate_symbol}:{paper_trade_result.get('reason', 'not_placed')}")
                 except Exception as e:
                     print(f"Paper trade placement failed: {e}", flush=True)
                     paper_results.append({
@@ -960,8 +1153,10 @@ def scan():
                         "placed": False,
                         "reason": "paper_trade_exception",
                         "details": str(e),
-                        "symbol": paper_trade_candidate.get("metrics", {}).get("symbol", ""),
+                        "symbol": candidate_symbol,
                     })
+                    skipped_symbols.append(candidate_symbol)
+                    skip_reasons.append(f"{candidate_symbol}:paper_trade_exception")
 
             response["paper_trade_result"] = {
                 "attempted": True,
@@ -972,6 +1167,9 @@ def scan():
                 "placed_count": placed_count,
                 "placed_long_count": placed_long_count,
                 "placed_short_count": placed_short_count,
+                "skipped_symbols": skipped_symbols,
+                "skip_reasons": skip_reasons,
+                "placed_trade_ids": placed_trade_ids,
                 "results": paper_results,
             }
 
@@ -979,6 +1177,9 @@ def scan():
     paper_trade_placed_count = paper_trade_result.get("placed_count", 0) if isinstance(paper_trade_result, dict) else 0
     paper_trade_placed_long_count = paper_trade_result.get("placed_long_count", 0) if isinstance(paper_trade_result, dict) else 0
     paper_trade_placed_short_count = paper_trade_result.get("placed_short_count", 0) if isinstance(paper_trade_result, dict) else 0
+    paper_skipped_symbols = ""
+    paper_skip_reasons = ""
+    paper_trade_ids = ""
     paper_placed_symbols = ""
     if isinstance(paper_trade_result, dict):
         paper_result_items = paper_trade_result.get("results", []) or []
@@ -987,12 +1188,31 @@ def scan():
             for item in paper_result_items
             if isinstance(item, dict) and item.get("placed") and str(item.get("symbol", "")).strip()
         )
+        paper_skipped_symbols = ",".join(
+            str(symbol).strip().upper()
+            for symbol in (paper_trade_result.get("skipped_symbols", []) or [])
+            if str(symbol).strip()
+        )
+        paper_skip_reasons = "|".join(
+            str(reason).strip()
+            for reason in (paper_trade_result.get("skip_reasons", []) or [])
+            if str(reason).strip()
+        )
+        paper_trade_ids = ",".join(
+            str(trade_id).strip()
+            for trade_id in (paper_trade_result.get("placed_trade_ids", []) or [])
+            if str(trade_id).strip()
+        )
 
     try:
         top_metrics = top_trade["metrics"] if top_trade else {}
 
         append_signal_log({
             "timestamp_utc": timestamp_utc,
+            "scan_id": scan_id,
+            "scan_source": scan_source,
+            "market_phase": market_phase,
+            "scan_execution_time_ms": int((datetime.now(timezone.utc) - scan_started_at).total_seconds() * 1000),
             "mode": mode,
             "account_size": account_size,
             "timing_ok": True,
@@ -1017,7 +1237,11 @@ def scan():
             "paper_trade_placed_long_count": paper_trade_placed_long_count,
             "paper_trade_placed_short_count": paper_trade_placed_short_count,
             "paper_candidate_symbols": paper_candidate_symbols,
+            "paper_candidate_confidences": paper_candidate_confidences,
+            "paper_skipped_symbols": paper_skipped_symbols,
+            "paper_skip_reasons": paper_skip_reasons,
             "paper_placed_symbols": paper_placed_symbols,
+            "paper_trade_ids": paper_trade_ids,
         })
     except Exception as e:
         print(f"Signal log write failed: {e}", flush=True)
@@ -1377,6 +1601,105 @@ def close_paper_positions():
         "closed_count": closed_count,
         "skipped_count": skipped_count,
         "results": results,
+    })
+
+
+@app.post("/reconcile-paper-trades")
+def reconcile_paper_trades():
+    try:
+        reconciled_rows, output_path = run_reconciliation()
+    except Exception as e:
+        print(f"Paper reconciliation failed: {e}", flush=True)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    gcs_uri = ""
+    try:
+        gcs_uri = upload_file_to_gcs(output_path, RECONCILIATION_BUCKET, RECONCILIATION_OBJECT)
+    except Exception as e:
+        print(f"Paper reconciliation upload failed: {e}", flush=True)
+
+    return jsonify({
+        "ok": True,
+        "row_count": len(reconciled_rows),
+        "local_output_path": str(output_path),
+        "gcs_output_uri": gcs_uri,
+    })
+
+
+# --- Trade analysis endpoint ---
+@app.post("/analyze-paper-trades")
+def analyze_paper_trades():
+    try:
+        summary_rows, paired_rows, unmatched_closes = run_trade_analysis()
+    except Exception as e:
+        print(f"Paper trade analysis failed: {e}", flush=True)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    summary_gcs_uri = ""
+    paired_gcs_uri = ""
+
+    try:
+        summary_gcs_uri = upload_analysis_file_to_gcs(
+            Path("trade_analysis_summary.csv"),
+            TRADE_ANALYSIS_BUCKET,
+            TRADE_ANALYSIS_SUMMARY_OBJECT,
+        )
+    except Exception as e:
+        print(f"Paper trade analysis summary upload failed: {e}", flush=True)
+
+    try:
+        paired_gcs_uri = upload_analysis_file_to_gcs(
+            Path("trade_analysis_paired_trades.csv"),
+            TRADE_ANALYSIS_BUCKET,
+            TRADE_ANALYSIS_PAIRED_OBJECT,
+        )
+    except Exception as e:
+        print(f"Paper trade analysis paired upload failed: {e}", flush=True)
+
+    return jsonify({
+        "ok": True,
+        "summary_row_count": len(summary_rows),
+        "paired_row_count": len(paired_rows),
+        "unmatched_close_count": len(unmatched_closes),
+        "summary_gcs_uri": summary_gcs_uri,
+        "paired_gcs_uri": paired_gcs_uri,
+    })
+
+@app.post("/analyze-signals")
+def analyze_signals():
+    try:
+        summary_rows, signal_rows = run_signal_analysis()
+    except Exception as e:
+        print(f"Signal analysis failed: {e}", flush=True)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    summary_gcs_uri = ""
+    rows_gcs_uri = ""
+
+    try:
+        summary_gcs_uri = upload_signal_analysis_file_to_gcs(
+            Path("signal_analysis_summary.csv"),
+            SIGNAL_ANALYSIS_BUCKET,
+            SIGNAL_ANALYSIS_SUMMARY_OBJECT,
+        )
+    except Exception as e:
+        print(f"Signal analysis summary upload failed: {e}", flush=True)
+
+    try:
+        rows_gcs_uri = upload_signal_analysis_file_to_gcs(
+            Path("signal_analysis_rows.csv"),
+            SIGNAL_ANALYSIS_BUCKET,
+            SIGNAL_ANALYSIS_ROWS_OBJECT,
+        )
+    except Exception as e:
+        print(f"Signal analysis rows upload failed: {e}", flush=True)
+
+    return jsonify({
+        "ok": True,
+        "summary_row_count": len(summary_rows),
+        "signal_row_count": len(signal_rows),
+        "summary_gcs_uri": summary_gcs_uri,
+        "rows_gcs_uri": rows_gcs_uri,
     })
 
 @app.post("/read-trades-by-date")

@@ -93,6 +93,9 @@ def summarize_order_sync(order: dict[str, Any]) -> dict[str, Any]:
     tp_filled_avg_price = _to_float((take_profit_leg or {}).get("filled_avg_price"))
     sl_filled_avg_price = _to_float((stop_loss_leg or {}).get("filled_avg_price"))
 
+    exit_filled_qty = ""
+    exit_filled_avg_price = ""
+
     entry_filled = parent_status == "filled" or filled_qty > 0
     exit_event = ""
     exit_order_id = ""
@@ -104,12 +107,16 @@ def summarize_order_sync(order: dict[str, Any]) -> dict[str, Any]:
         exit_event = "TARGET_HIT"
         exit_order_id = tp_order_id
         exit_price = round(tp_filled_avg_price, 4) if tp_filled_avg_price > 0 else ""
+        exit_filled_qty = round(tp_filled_qty, 4) if tp_filled_qty > 0 else ""
+        exit_filled_avg_price = round(tp_filled_avg_price, 4) if tp_filled_avg_price > 0 else ""
         exit_reason = "TARGET_HIT"
         status = "CLOSED"
     elif sl_status == "filled" or sl_filled_qty > 0:
         exit_event = "STOP_HIT"
         exit_order_id = sl_order_id
         exit_price = round(sl_filled_avg_price, 4) if sl_filled_avg_price > 0 else ""
+        exit_filled_qty = round(sl_filled_qty, 4) if sl_filled_qty > 0 else ""
+        exit_filled_avg_price = round(sl_filled_avg_price, 4) if sl_filled_avg_price > 0 else ""
         exit_reason = "STOP_HIT"
         status = "CLOSED"
     elif parent_status in {"canceled", "cancelled", "expired", "rejected"}:
@@ -132,6 +139,8 @@ def summarize_order_sync(order: dict[str, Any]) -> dict[str, Any]:
         "exit_event": exit_event,
         "exit_order_id": exit_order_id,
         "exit_price": exit_price,
+        "exit_filled_qty": exit_filled_qty,
+        "exit_filled_avg_price": exit_filled_avg_price,
         "exit_reason": exit_reason,
         "status": status,
     }
