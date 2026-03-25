@@ -19,6 +19,8 @@ from trade_scan import (
     SECONDARY_INSTRUMENTS,
     THIRD_INSTRUMENTS,
     FOURTH_INSTRUMENTS,
+    CORE_ONE_INSTRUMENTS,
+    CORE_TWO_INSTRUMENTS,
 )
 PAPER_TRADE_MIN_CONFIDENCE = 70
 SCHEDULED_PAPER_ACCOUNT_SIZE = float(os.getenv("SCHEDULED_PAPER_ACCOUNT_SIZE", "1000"))
@@ -31,6 +33,8 @@ INSTRUMENT_GROUPS = {
     "secondary": SECONDARY_INSTRUMENTS,
     "third": THIRD_INSTRUMENTS,
     "fourth": FOURTH_INSTRUMENTS,
+    "core_one": CORE_ONE_INSTRUMENTS,
+    "core_two": CORE_TWO_INSTRUMENTS,
 }
 
 
@@ -803,8 +807,8 @@ def scan():
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "account_size must be numeric"}), 400
 
-    if mode not in {"primary", "secondary", "third", "fourth"}:
-        return jsonify({"ok": False, "error": "mode must be primary, secondary, third, or fourth"}), 400
+    if mode not in {"primary", "secondary", "third", "fourth", "core_one", "core_two"}:
+        return jsonify({"ok": False, "error": "mode must be primary, secondary, third, fourth, core_one, or core_two"}), 400
 
     ok, timing_msg = market_time_check()
     timestamp_utc = datetime.now(timezone.utc).isoformat()
