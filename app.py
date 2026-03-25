@@ -21,6 +21,8 @@ from trade_scan import (
     FOURTH_INSTRUMENTS,
 )
 PAPER_TRADE_MIN_CONFIDENCE = 70
+SCHEDULED_PAPER_ACCOUNT_SIZE = float(os.getenv("SCHEDULED_PAPER_ACCOUNT_SIZE", "1000"))
+SCHEDULED_ROUND_ROBIN_MODES = ["primary", "secondary", "third", "fourth"]
 
 app = Flask(__name__)
 
@@ -39,6 +41,38 @@ def find_instrument_by_symbol(symbol: str) -> tuple[str, str] | tuple[None, None
             if info.get("symbol", "").upper() == symbol:
                 return display_name, mode_name
     return None, None
+
+
+def scheduled_round_robin_mode(now_ny: datetime | None = None) -> str | None:
+    now_ny = now_ny or datetime.now(NY_TZ)
+    total_minutes = (now_ny.hour * 60) + now_ny.minute
+    first_scan_minute = (9 * 60) + 50
+    last_scan_minute = (15 * 60) + 50
+
+    if total_minutes < first_scan_minute or total_minutes > last_scan_minute:
+        return None
+
+    if (total_minutes - first_scan_minute) % 10 != 0:
+        return None
+
+    slot_index = ((total_minutes - first_scan_minute) // 10) % len(SCHEDULED_ROUND_ROBIN_MODES)
+    return SCHEDULED_ROUND_ROBIN_MODES[slot_index]
+
+
+def build_scheduled_scan_payload(payload: dict, now_ny: datetime | None = None) -> dict:
+    now_ny = now_ny or datetime.now(NY_TZ)
+    scheduled_mode = scheduled_round_robin_mode(now_ny)
+    if scheduled_mode is None:
+        raise ValueError("outside scheduled paper scan window")
+
+    account_size = payload.get("account_size", SCHEDULED_PAPER_ACCOUNT_SIZE)
+
+    return {
+        "account_size": account_size,
+        "mode": scheduled_mode,
+        "paper_trade": True,
+        "debug": payload.get("debug", False),
+    }
 
 LOG_BUCKET = os.getenv("LOG_BUCKET", "stock-scanner-490821-logs")
 SIGNALS_CSV_PATH = os.getenv("SIGNALS_CSV_PATH", "signals/signals.csv")
@@ -332,6 +366,12 @@ def get_open_paper_trades() -> list[dict]:
         if str(row.get("status", "")).strip().upper() == "OPEN":
             open_rows.append(row)
 
+    return open_rows
+
+
+def get_managed_open_paper_trades_for_eod_close() -> list[dict]:
+    open_rows = get_open_paper_trades()
+
     try:
         positions = get_open_positions()
         open_orders = get_open_orders()
@@ -582,8 +622,25 @@ def home():
     return jsonify({
         "ok": True,
         "service": "stock-scanner",
-        "endpoints": ["/scan", "/log-trade", "/sync-paper-trades", "/close-paper-positions", "/read-trades-by-date"]
+        "endpoints": ["/scan", "/scheduled-paper-scan", "/log-trade", "/sync-paper-trades", "/close-paper-positions", "/read-trades-by-date"]
     })
+
+@app.post("/scheduled-paper-scan")
+def scheduled_paper_scan():
+    payload = request.get_json(silent=True) or {}
+    now_ny = datetime.now(NY_TZ)
+
+    try:
+        scheduled_payload = build_scheduled_scan_payload(payload, now_ny=now_ny)
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "error": str(e),
+            "current_new_york_time": now_ny.strftime("%Y-%m-%d %H:%M"),
+        }), 400
+
+    with app.test_request_context("/scan", method="POST", json=scheduled_payload):
+        return scan()
 
 # --- Sync paper trades endpoint ---
 
@@ -1170,7 +1227,7 @@ def close_paper_positions():
         print(f"Open position read failed: {e}", flush=True)
         return jsonify({"ok": False, "error": f"open position read failed: {e}"}), 500
 
-    open_paper_rows = get_open_paper_trades()
+    open_paper_rows = get_managed_open_paper_trades_for_eod_close()
     open_paper_symbols = {
         str(row.get("symbol", "")).strip().upper()
         for row in open_paper_rows
