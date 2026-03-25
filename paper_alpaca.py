@@ -30,6 +30,76 @@ def get_account() -> dict[str, Any]:
     return response.json()
 
 
+def get_open_positions() -> list[dict[str, Any]]:
+    response = requests.get(
+        f"{ALPACA_TRADING_BASE_URL}/v2/positions",
+        headers=_auth_headers(),
+        timeout=20,
+    )
+    response.raise_for_status()
+    data = response.json()
+    return data if isinstance(data, list) else []
+
+
+def get_open_orders() -> list[dict[str, Any]]:
+    response = requests.get(
+        f"{ALPACA_TRADING_BASE_URL}/v2/orders",
+        headers=_auth_headers(),
+        params={"status": "open", "nested": "true", "limit": 500, "direction": "desc"},
+        timeout=20,
+    )
+    response.raise_for_status()
+    data = response.json()
+    return data if isinstance(data, list) else []
+
+
+def cancel_open_orders_for_symbol(symbol: str) -> list[str]:
+    symbol = str(symbol).strip().upper()
+    if not symbol:
+        raise ValueError("symbol is required")
+
+    open_orders = get_open_orders()
+    canceled_order_ids: list[str] = []
+
+    for order in open_orders:
+        order_symbol = str(order.get("symbol", "")).strip().upper()
+        if order_symbol != symbol:
+            continue
+
+        order_id = str(order.get("id", "")).strip()
+        if not order_id:
+            continue
+
+        response = requests.delete(
+            f"{ALPACA_TRADING_BASE_URL}/v2/orders/{order_id}",
+            headers=_auth_headers(),
+            timeout=20,
+        )
+        response.raise_for_status()
+        canceled_order_ids.append(order_id)
+
+        for leg in order.get("legs") or []:
+            leg_id = str(leg.get("id", "")).strip()
+            if leg_id:
+                canceled_order_ids.append(leg_id)
+
+    return canceled_order_ids
+
+
+def close_position(symbol: str) -> dict[str, Any]:
+    symbol = str(symbol).strip().upper()
+    if not symbol:
+        raise ValueError("symbol is required")
+
+    response = requests.delete(
+        f"{ALPACA_TRADING_BASE_URL}/v2/positions/{symbol}",
+        headers=_auth_headers(),
+        timeout=20,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def _to_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)

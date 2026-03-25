@@ -8,8 +8,8 @@ from zoneinfo import ZoneInfo
 
 from flask import Flask, request, jsonify
 from google.cloud import storage
-from paper_alpaca import place_paper_bracket_order_from_trade
-from alpaca_sync import sync_order_by_id
+from paper_alpaca import place_paper_bracket_order_from_trade, get_open_positions, get_open_orders, close_position, cancel_open_orders_for_symbol
+from alpaca_sync import sync_order_by_id, get_order_by_id
 
 from trade_scan import (
     run_scan,
@@ -332,7 +332,45 @@ def get_open_paper_trades() -> list[dict]:
         if str(row.get("status", "")).strip().upper() == "OPEN":
             open_rows.append(row)
 
-    return open_rows
+    try:
+        positions = get_open_positions()
+        open_orders = get_open_orders()
+    except Exception as e:
+        print(f"Broker validation for open paper trades failed: {e}", flush=True)
+        return open_rows
+
+    open_position_symbols = {
+        str(position.get("symbol", "")).strip().upper()
+        for position in positions
+        if str(position.get("symbol", "")).strip()
+    }
+
+    open_order_ids = {
+        str(order.get("id", "")).strip()
+        for order in open_orders
+        if str(order.get("id", "")).strip()
+    }
+
+    for order in open_orders:
+        for leg in order.get("legs") or []:
+            leg_id = str(leg.get("id", "")).strip()
+            if leg_id:
+                open_order_ids.add(leg_id)
+
+    validated_open_rows = []
+    for row in open_rows:
+        symbol = str(row.get("symbol", "")).strip().upper()
+        parent_order_id = str(row.get("broker_parent_order_id", "")).strip()
+        broker_order_id = str(row.get("broker_order_id", "")).strip()
+
+        if (
+            symbol in open_position_symbols
+            or parent_order_id in open_order_ids
+            or broker_order_id in open_order_ids
+        ):
+            validated_open_rows.append(row)
+
+    return validated_open_rows
 
 
 def read_all_signal_rows() -> list[dict]:
@@ -403,13 +441,28 @@ def find_best_signal_match(symbol: str, actual_entry_price: float | None, open_t
     return candidates[0][3]
 
 
-def find_latest_open_trade(symbol: str) -> dict | None:
+def find_latest_open_trade(symbol: str, trade_source: str | None = None, broker_parent_order_id: str | None = None) -> dict | None:
     rows = read_all_trade_rows()
     current_open = None
 
+    normalized_symbol = symbol.strip().upper()
+    normalized_trade_source = str(trade_source or "").strip().upper()
+    normalized_parent_order_id = str(broker_parent_order_id or "").strip()
+
     for row in rows:
-        if str(row.get("symbol", "")).strip().upper() != symbol.strip().upper():
+        row_symbol = str(row.get("symbol", "")).strip().upper()
+        if row_symbol != normalized_symbol:
             continue
+
+        if normalized_trade_source:
+            row_trade_source = str(row.get("trade_source", "")).strip().upper()
+            if row_trade_source != normalized_trade_source:
+                continue
+
+        if normalized_parent_order_id:
+            row_parent_order_id = str(row.get("broker_parent_order_id", "")).strip()
+            if row_parent_order_id != normalized_parent_order_id:
+                continue
 
         event_type = str(row.get("event_type", "")).strip().upper()
         status = str(row.get("status", "")).strip().upper()
@@ -529,7 +582,7 @@ def home():
     return jsonify({
         "ok": True,
         "service": "stock-scanner",
-        "endpoints": ["/scan", "/log-trade", "/sync-paper-trades", "/read-trades-by-date"]
+        "endpoints": ["/scan", "/log-trade", "/sync-paper-trades", "/close-paper-positions", "/read-trades-by-date"]
     })
 
 # --- Sync paper trades endpoint ---
@@ -985,7 +1038,7 @@ def log_trade():
         status = "OPEN"
 
     elif event_type == "STOP_HIT":
-        open_row = find_latest_open_trade(symbol)
+        open_row = find_latest_open_trade(symbol, trade_source=trade_source, broker_parent_order_id=broker_parent_order_id)
         if open_row:
             linked_signal_timestamp_utc = open_row.get("linked_signal_timestamp_utc", "")
             linked_signal_entry = open_row.get("linked_signal_entry", "")
@@ -1002,7 +1055,7 @@ def log_trade():
         status = "CLOSED"
 
     elif event_type == "TARGET_HIT":
-        open_row = find_latest_open_trade(symbol)
+        open_row = find_latest_open_trade(symbol, trade_source=trade_source, broker_parent_order_id=broker_parent_order_id)
         if open_row:
             linked_signal_timestamp_utc = open_row.get("linked_signal_timestamp_utc", "")
             linked_signal_entry = open_row.get("linked_signal_entry", "")
@@ -1023,7 +1076,7 @@ def log_trade():
         status = "CLOSED"
 
     else:  # MANUAL_CLOSE
-        open_row = find_latest_open_trade(symbol)
+        open_row = find_latest_open_trade(symbol, trade_source=trade_source, broker_parent_order_id=broker_parent_order_id)
         if open_row:
             linked_signal_timestamp_utc = open_row.get("linked_signal_timestamp_utc", "")
             linked_signal_entry = open_row.get("linked_signal_entry", "")
@@ -1107,6 +1160,165 @@ def log_trade():
             "confidence": linked_signal_confidence,
         },
         "inference": inference,
+    })
+
+@app.post("/close-paper-positions")
+def close_paper_positions():
+    try:
+        positions = get_open_positions()
+    except Exception as e:
+        print(f"Open position read failed: {e}", flush=True)
+        return jsonify({"ok": False, "error": f"open position read failed: {e}"}), 500
+
+    open_paper_rows = get_open_paper_trades()
+    open_paper_symbols = {
+        str(row.get("symbol", "")).strip().upper()
+        for row in open_paper_rows
+        if str(row.get("symbol", "")).strip()
+    }
+
+    results = []
+    closed_count = 0
+    skipped_count = 0
+
+    for position in positions:
+        symbol = str(position.get("symbol", "")).strip().upper()
+        qty = str(position.get("qty", "")).strip()
+        side = str(position.get("side", "")).strip().lower()
+        current_price = position.get("current_price", "")
+
+        if not symbol:
+            skipped_count += 1
+            results.append({
+                "closed": False,
+                "reason": "missing_symbol",
+            })
+            continue
+
+        if symbol not in open_paper_symbols:
+            skipped_count += 1
+            results.append({
+                "symbol": symbol,
+                "closed": False,
+                "reason": "not_managed_by_app",
+            })
+            continue
+
+        try:
+            canceled_order_ids = cancel_open_orders_for_symbol(symbol)
+        except Exception as e:
+            print(f"Paper open-order cancel failed for {symbol}: {e}", flush=True)
+            skipped_count += 1
+            results.append({
+                "symbol": symbol,
+                "closed": False,
+                "reason": "cancel_open_orders_exception",
+                "details": str(e),
+            })
+            continue
+
+        try:
+            close_response = close_position(symbol)
+        except Exception as e:
+            print(f"Paper position close failed for {symbol}: {e}", flush=True)
+            skipped_count += 1
+            results.append({
+                "symbol": symbol,
+                "closed": False,
+                "reason": "close_exception",
+                "details": str(e),
+            })
+            continue
+
+        close_order_id = str(close_response.get("id", "")).strip()
+        close_order_status = str(close_response.get("status", "")).strip()
+        close_filled_avg_price = ""
+        close_filled_qty = qty
+
+        if close_order_id:
+            try:
+                close_order = get_order_by_id(close_order_id, nested=False)
+                close_order_status = str(close_order.get("status", close_order_status)).strip()
+                close_filled_qty = str(close_order.get("filled_qty", close_filled_qty)).strip()
+
+                close_filled_avg_price_raw = close_order.get("filled_avg_price", "")
+                if close_filled_avg_price_raw not in (None, ""):
+                    close_filled_avg_price = str(close_filled_avg_price_raw).strip()
+            except Exception as order_read_error:
+                print(f"Paper close order read failed for {symbol}: {order_read_error}", flush=True)
+
+        matching_open_row = next(
+            (row for row in open_paper_rows if str(row.get("symbol", "")).strip().upper() == symbol),
+            None,
+        )
+
+        timestamp_utc = datetime.now(timezone.utc).isoformat()
+
+        try:
+            append_trade_log({
+                "timestamp_utc": timestamp_utc,
+                "event_type": "MANUAL_CLOSE",
+                "symbol": symbol,
+                "name": (matching_open_row or {}).get("name", ""),
+                "mode": (matching_open_row or {}).get("mode", ""),
+                "trade_source": "ALPACA_PAPER",
+                "broker": "ALPACA",
+                "broker_order_id": close_order_id,
+                "broker_parent_order_id": (matching_open_row or {}).get("broker_parent_order_id", ""),
+                "broker_status": close_order_status,
+                "broker_filled_qty": close_filled_qty,
+                "broker_filled_avg_price": close_filled_avg_price,
+                "broker_exit_order_id": close_order_id,
+                "shares": (matching_open_row or {}).get("shares", qty),
+                "entry_price": (matching_open_row or {}).get("entry_price", ""),
+                "stop_price": (matching_open_row or {}).get("stop_price", ""),
+                "target_price": (matching_open_row or {}).get("target_price", ""),
+                "exit_price": close_filled_avg_price if close_filled_avg_price else current_price,
+                "exit_reason": "EOD_CLOSE",
+                "status": "CLOSED",
+                "notes": f"Paper position closed at end of day. side={side}; canceled_orders={len(canceled_order_ids)}",
+                "linked_signal_timestamp_utc": (matching_open_row or {}).get("linked_signal_timestamp_utc", ""),
+                "linked_signal_entry": (matching_open_row or {}).get("linked_signal_entry", ""),
+                "linked_signal_stop": (matching_open_row or {}).get("linked_signal_stop", ""),
+                "linked_signal_target": (matching_open_row or {}).get("linked_signal_target", ""),
+                "linked_signal_confidence": (matching_open_row or {}).get("linked_signal_confidence", ""),
+                "inferred_stop_hit": "",
+                "inferred_target_hit": "",
+                "inferred_first_level_hit": "",
+                "inferred_analysis_start_utc": "",
+                "inferred_analysis_end_utc": "",
+            })
+        except Exception as e:
+            print(f"Paper EOD close log write failed for {symbol}: {e}", flush=True)
+            skipped_count += 1
+            results.append({
+                "symbol": symbol,
+                "closed": False,
+                "reason": "log_write_failed",
+                "details": str(e),
+            })
+            continue
+
+        closed_count += 1
+        results.append({
+            "symbol": symbol,
+            "closed": True,
+            "qty": qty,
+            "side": side,
+            "exit_price": close_filled_avg_price if close_filled_avg_price else current_price,
+            "close_order_id": close_order_id,
+            "close_status": close_order_status,
+            "close_filled_qty": close_filled_qty,
+            "close_filled_avg_price": close_filled_avg_price,
+            "canceled_order_count": len(canceled_order_ids),
+        })
+
+    return jsonify({
+        "ok": True,
+        "position_count": len(positions),
+        "closed_count": closed_count,
+        "skipped_count": skipped_count,
+        "results": results,
     })
 
 @app.post("/read-trades-by-date")
