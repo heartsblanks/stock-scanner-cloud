@@ -52,9 +52,6 @@ def scheduled_round_robin_mode(now_ny: datetime | None = None) -> str | None:
     if total_minutes < first_scan_minute or total_minutes > last_scan_minute:
         return None
 
-    if (total_minutes - first_scan_minute) % 10 != 0:
-        return None
-
     slot_index = ((total_minutes - first_scan_minute) // 10) % len(SCHEDULED_ROUND_ROBIN_MODES)
     return SCHEDULED_ROUND_ROBIN_MODES[slot_index]
 
