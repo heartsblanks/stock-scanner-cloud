@@ -86,7 +86,7 @@ def cancel_open_orders_for_symbol(symbol: str) -> list[str]:
     return canceled_order_ids
 
 
-def close_position(symbol: str) -> dict[str, Any]:
+def close_position(symbol: str, cancel_orders: bool = True) -> dict[str, Any]:
     symbol = str(symbol).strip().upper()
     if not symbol:
         raise ValueError("symbol is required")
@@ -94,6 +94,7 @@ def close_position(symbol: str) -> dict[str, Any]:
     response = requests.delete(
         f"{ALPACA_TRADING_BASE_URL}/v2/positions/{symbol}",
         headers=_auth_headers(),
+        params={"cancel_orders": "true" if cancel_orders else "false"},
         timeout=20,
     )
     response.raise_for_status()

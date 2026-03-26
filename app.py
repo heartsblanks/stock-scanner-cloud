@@ -1500,7 +1500,7 @@ def close_paper_positions():
             continue
 
         try:
-            close_response = close_position(symbol)
+            close_response = close_position(symbol, cancel_orders=True)
         except Exception as e:
             print(f"Paper position close failed for {symbol}: {e}", flush=True)
             skipped_count += 1
