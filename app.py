@@ -1536,50 +1536,7 @@ def close_paper_positions():
 
         timestamp_utc = datetime.now(timezone.utc).isoformat()
 
-        try:
-            append_trade_log({
-                "timestamp_utc": timestamp_utc,
-                "event_type": "MANUAL_CLOSE",
-                "symbol": symbol,
-                "name": (matching_open_row or {}).get("name", ""),
-                "mode": (matching_open_row or {}).get("mode", ""),
-                "trade_source": "ALPACA_PAPER",
-                "broker": "ALPACA",
-                "broker_order_id": close_order_id,
-                "broker_parent_order_id": (matching_open_row or {}).get("broker_parent_order_id", ""),
-                "broker_status": close_order_status,
-                "broker_filled_qty": close_filled_qty,
-                "broker_filled_avg_price": close_filled_avg_price,
-                "broker_exit_order_id": close_order_id,
-                "shares": (matching_open_row or {}).get("shares", qty),
-                "entry_price": (matching_open_row or {}).get("entry_price", ""),
-                "stop_price": (matching_open_row or {}).get("stop_price", ""),
-                "target_price": (matching_open_row or {}).get("target_price", ""),
-                "exit_price": close_filled_avg_price if close_filled_avg_price else current_price,
-                "exit_reason": "EOD_CLOSE",
-                "status": "CLOSED",
-                "notes": f"Paper position closed at end of day. side={side}; canceled_orders={len(canceled_order_ids)}",
-                "linked_signal_timestamp_utc": (matching_open_row or {}).get("linked_signal_timestamp_utc", ""),
-                "linked_signal_entry": (matching_open_row or {}).get("linked_signal_entry", ""),
-                "linked_signal_stop": (matching_open_row or {}).get("linked_signal_stop", ""),
-                "linked_signal_target": (matching_open_row or {}).get("linked_signal_target", ""),
-                "linked_signal_confidence": (matching_open_row or {}).get("linked_signal_confidence", ""),
-                "inferred_stop_hit": "",
-                "inferred_target_hit": "",
-                "inferred_first_level_hit": "",
-                "inferred_analysis_start_utc": "",
-                "inferred_analysis_end_utc": "",
-            })
-        except Exception as e:
-            print(f"Paper EOD close log write failed for {symbol}: {e}", flush=True)
-            skipped_count += 1
-            results.append({
-                "symbol": symbol,
-                "closed": False,
-                "reason": "log_write_failed",
-                "details": str(e),
-            })
-            continue
+        
 
         closed_count += 1
         results.append({
