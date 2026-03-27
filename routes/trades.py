@@ -98,8 +98,8 @@ def register_trade_routes(
     get_closed_trade_events,
     get_recent_trade_event_rows,
     get_latest_scan_summary,
-    get_trade_lifecycle_rows,
-    get_trade_lifecycle_summary,
+    get_trade_lifecycles,
+    get_trade_lifecycle_summary_from_table,
     upsert_trade_lifecycle,
 ):
     @app.post("/log-trade")
@@ -523,7 +523,7 @@ def register_trade_routes(
             except Exception:
                 return jsonify({"ok": False, "error": "limit must be an integer"}), 400
 
-            rows = get_trade_lifecycle_rows(limit=limit, status=status)
+            rows = get_trade_lifecycles(limit=limit, status=status)
 
             return jsonify({
                 "ok": True,
@@ -547,7 +547,7 @@ def register_trade_routes(
             except Exception:
                 return jsonify({"ok": False, "error": "limit must be an integer"}), 400
 
-            summary = get_trade_lifecycle_summary(limit=limit)
+            summary = get_trade_lifecycle_summary_from_table(limit=limit)
 
             return jsonify({
                 "ok": True,

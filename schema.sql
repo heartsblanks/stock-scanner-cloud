@@ -100,6 +100,9 @@ CREATE TABLE IF NOT EXISTS alpaca_api_logs (
     request_body_json TEXT,
     status_code INT,
     response_body TEXT,
+    success BOOLEAN,
+    error_message TEXT,
+    duration_ms INTEGER,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

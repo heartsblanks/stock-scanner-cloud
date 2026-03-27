@@ -5,6 +5,7 @@ import requests
 from zoneinfo import ZoneInfo
 
 from flask import Flask
+from flask_cors import CORS
 from google.cloud import storage
 from paper_alpaca import place_paper_bracket_order_from_trade, get_open_positions, get_open_orders, close_position, cancel_open_orders_for_symbol
 from alpaca_sync import sync_order_by_id, get_order_by_id
@@ -27,9 +28,10 @@ from storage import (
     get_latest_scan_summary,
     get_recent_alpaca_api_logs,
     get_recent_alpaca_api_errors,
-    get_trade_lifecycle_rows,
-    get_trade_lifecycle_summary,
+    get_trade_lifecycles,
+    get_trade_lifecycle_summary_from_table,
     upsert_trade_lifecycle,
+    get_dashboard_summary,
 )
 from export_daily_snapshot import run_daily_snapshot
 from routes.health import register_health_routes
@@ -38,6 +40,7 @@ from routes.analysis import register_analysis_routes
 from routes.reconcile import register_reconcile_routes
 from routes.trades import register_trade_routes
 from routes.scans import register_scan_routes
+from routes.dashboard import register_dashboard_routes
 
 from routes.sync import register_sync_routes
 from services.sync_service import execute_sync_paper_trades
@@ -72,6 +75,7 @@ PAPER_MANUAL_CLOSE_COOLDOWN_MINUTES = int(os.getenv("PAPER_MANUAL_CLOSE_COOLDOWN
 
 
 app = Flask(__name__)
+CORS(app)
 
 
 def env_flag(name: str, default: str = "true") -> bool:
@@ -879,8 +883,8 @@ register_trade_routes(
     get_closed_trade_events=get_closed_trade_events,
     get_recent_trade_event_rows=get_recent_trade_event_rows,
     get_latest_scan_summary=get_latest_scan_summary,
-    get_trade_lifecycle_rows=get_trade_lifecycle_rows,
-    get_trade_lifecycle_summary=get_trade_lifecycle_summary,
+    get_trade_lifecycles=get_trade_lifecycles,
+    get_trade_lifecycle_summary_from_table=get_trade_lifecycle_summary_from_table,
     upsert_trade_lifecycle=upsert_trade_lifecycle,
 )
 
@@ -893,6 +897,11 @@ register_scan_routes(
 register_sync_routes(
     app,
     sync_paper_trades_handler=handle_sync_paper_trades,
+)
+
+register_dashboard_routes(
+    app,
+    get_dashboard_summary=get_dashboard_summary,
 )
 
 

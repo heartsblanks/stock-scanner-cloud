@@ -1265,3 +1265,154 @@ def get_trade_lifecycle_summary_from_table(limit: int = 1000) -> dict[str, Any]:
         "best_trade_pnl": max(pnl_values) if pnl_values else None,
         "worst_trade_pnl": min(pnl_values) if pnl_values else None,
     }
+
+
+# === DB-first analytics helpers for dashboard ===
+
+def get_trade_lifecycles_for_date(target_date: str, limit: int = 1000) -> list[dict[str, Any]]:
+    return fetch_all(
+        """
+        SELECT *
+        FROM trade_lifecycles
+        WHERE (
+            entry_time::date = %(target_date)s::date
+            OR exit_time::date = %(target_date)s::date
+        )
+        ORDER BY COALESCE(entry_time, created_at) DESC, id DESC
+        LIMIT %(limit)s
+        """,
+        {"target_date": target_date, "limit": limit},
+    )
+
+
+def get_trade_lifecycle_summary_for_date(target_date: str, limit: int = 5000) -> dict[str, Any]:
+    rows = get_trade_lifecycles_for_date(target_date=target_date, limit=limit)
+    closed_rows = [row for row in rows if str(row.get("status", "")).strip().upper() == "CLOSED"]
+    open_rows = [row for row in rows if str(row.get("status", "")).strip().upper() == "OPEN"]
+
+    pnl_values = [
+        _to_optional_float(row.get("realized_pnl"))
+        for row in closed_rows
+        if _to_optional_float(row.get("realized_pnl")) is not None
+    ]
+    duration_values = [
+        _to_optional_float(row.get("duration_minutes"))
+        for row in closed_rows
+        if _to_optional_float(row.get("duration_minutes")) is not None
+    ]
+
+    wins = [value for value in pnl_values if value > 0]
+    losses = [value for value in pnl_values if value < 0]
+    flats = [value for value in pnl_values if value == 0]
+
+    return {
+        "date": target_date,
+        "trade_count": len(rows),
+        "closed_trade_count": len(closed_rows),
+        "open_trade_count": len(open_rows),
+        "realized_pnl_total": round(sum(pnl_values), 6) if pnl_values else 0.0,
+        "winning_trade_count": len(wins),
+        "losing_trade_count": len(losses),
+        "flat_trade_count": len(flats),
+        "win_rate_percent": round((len(wins) / len(closed_rows)) * 100.0, 6) if closed_rows else None,
+        "average_realized_pnl": round(sum(pnl_values) / len(pnl_values), 6) if pnl_values else None,
+        "best_trade_pnl": max(pnl_values) if pnl_values else None,
+        "worst_trade_pnl": min(pnl_values) if pnl_values else None,
+        "average_duration_minutes": round(sum(duration_values) / len(duration_values), 6) if duration_values else None,
+    }
+
+
+def get_symbol_performance(limit: int = 100) -> list[dict[str, Any]]:
+    return fetch_all(
+        """
+        SELECT
+            symbol,
+            COUNT(*)::INT AS trade_count,
+            COUNT(*) FILTER (WHERE UPPER(COALESCE(status, '')) = 'CLOSED')::INT AS closed_trade_count,
+            COUNT(*) FILTER (WHERE COALESCE(realized_pnl, 0) > 0)::INT AS winning_trade_count,
+            COUNT(*) FILTER (WHERE COALESCE(realized_pnl, 0) < 0)::INT AS losing_trade_count,
+            ROUND(COALESCE(SUM(realized_pnl), 0)::numeric, 6) AS realized_pnl_total,
+            ROUND(AVG(realized_pnl)::numeric, 6) AS average_realized_pnl,
+            ROUND(AVG(duration_minutes)::numeric, 6) AS average_duration_minutes
+        FROM trade_lifecycles
+        GROUP BY symbol
+        ORDER BY realized_pnl_total DESC, symbol ASC
+        LIMIT %(limit)s
+        """,
+        {"limit": limit},
+    )
+
+
+def get_mode_performance(limit: int = 100) -> list[dict[str, Any]]:
+    return fetch_all(
+        """
+        SELECT
+            COALESCE(mode, '') AS mode,
+            COUNT(*)::INT AS trade_count,
+            COUNT(*) FILTER (WHERE UPPER(COALESCE(status, '')) = 'CLOSED')::INT AS closed_trade_count,
+            COUNT(*) FILTER (WHERE COALESCE(realized_pnl, 0) > 0)::INT AS winning_trade_count,
+            COUNT(*) FILTER (WHERE COALESCE(realized_pnl, 0) < 0)::INT AS losing_trade_count,
+            ROUND(COALESCE(SUM(realized_pnl), 0)::numeric, 6) AS realized_pnl_total,
+            ROUND(AVG(realized_pnl)::numeric, 6) AS average_realized_pnl,
+            ROUND(AVG(duration_minutes)::numeric, 6) AS average_duration_minutes
+        FROM trade_lifecycles
+        GROUP BY COALESCE(mode, '')
+        ORDER BY realized_pnl_total DESC, mode ASC
+        LIMIT %(limit)s
+        """,
+        {"limit": limit},
+    )
+
+
+def get_exit_reason_breakdown(limit: int = 100) -> list[dict[str, Any]]:
+    return fetch_all(
+        """
+        SELECT
+            COALESCE(exit_reason, '') AS exit_reason,
+            COUNT(*)::INT AS trade_count,
+            ROUND(COALESCE(SUM(realized_pnl), 0)::numeric, 6) AS realized_pnl_total,
+            ROUND(AVG(realized_pnl)::numeric, 6) AS average_realized_pnl
+        FROM trade_lifecycles
+        WHERE UPPER(COALESCE(status, '')) = 'CLOSED'
+        GROUP BY COALESCE(exit_reason, '')
+        ORDER BY trade_count DESC, exit_reason ASC
+        LIMIT %(limit)s
+        """,
+        {"limit": limit},
+    )
+
+
+def get_hourly_performance(limit: int = 100) -> list[dict[str, Any]]:
+    return fetch_all(
+        """
+        SELECT
+            EXTRACT(HOUR FROM entry_time)::INT AS entry_hour_utc,
+            COUNT(*)::INT AS trade_count,
+            COUNT(*) FILTER (WHERE UPPER(COALESCE(status, '')) = 'CLOSED')::INT AS closed_trade_count,
+            ROUND(COALESCE(SUM(realized_pnl), 0)::numeric, 6) AS realized_pnl_total,
+            ROUND(AVG(realized_pnl)::numeric, 6) AS average_realized_pnl,
+            ROUND(AVG(duration_minutes)::numeric, 6) AS average_duration_minutes
+        FROM trade_lifecycles
+        WHERE entry_time IS NOT NULL
+        GROUP BY EXTRACT(HOUR FROM entry_time)
+        ORDER BY entry_hour_utc ASC
+        LIMIT %(limit)s
+        """,
+        {"limit": limit},
+    )
+
+
+def get_dashboard_summary(target_date: Optional[str] = None) -> dict[str, Any]:
+    base_summary = (
+        get_trade_lifecycle_summary_for_date(target_date=target_date, limit=5000)
+        if target_date
+        else get_trade_lifecycle_summary_from_table(limit=5000)
+    )
+
+    return {
+        "summary": base_summary,
+        "top_symbols": get_symbol_performance(limit=10),
+        "mode_performance": get_mode_performance(limit=10),
+        "exit_reason_breakdown": get_exit_reason_breakdown(limit=20),
+        "hourly_performance": get_hourly_performance(limit=24),
+    }
