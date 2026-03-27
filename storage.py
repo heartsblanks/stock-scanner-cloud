@@ -1415,4 +1415,13 @@ def get_dashboard_summary(target_date: Optional[str] = None) -> dict[str, Any]:
         "mode_performance": get_mode_performance(limit=10),
         "exit_reason_breakdown": get_exit_reason_breakdown(limit=20),
         "hourly_performance": get_hourly_performance(limit=24),
+        "insights": {
+            "best_symbol": (get_symbol_performance(limit=1)[0] if get_symbol_performance(limit=1) else None),
+            "best_mode": (get_mode_performance(limit=1)[0] if get_mode_performance(limit=1) else None),
+            "most_common_exit": (get_exit_reason_breakdown(limit=1)[0] if get_exit_reason_breakdown(limit=1) else None),
+            "best_hour": (
+                max(get_hourly_performance(limit=24), key=lambda x: x.get("realized_pnl_total", 0))
+                if get_hourly_performance(limit=24) else None
+            ),
+        }
     }

@@ -4,7 +4,17 @@ export async function fetchDashboardSummary(date) {
   const response = await apiClient.get("/dashboard-summary", {
     params: date ? { date } : {},
   });
-  return response.data;
+
+  const data = response.data || {};
+
+  return {
+    ...data,
+    symbol_performance: data.symbol_performance || data.top_symbols || [],
+    mode_performance: data.mode_performance || [],
+    hourly_performance: data.hourly_performance || [],
+    exit_reason_breakdown: data.exit_reason_breakdown || [],
+    equity_curve: data.equity_curve || [],
+  };
 }
 
 export async function fetchOpenTrades(limit = 100) {
