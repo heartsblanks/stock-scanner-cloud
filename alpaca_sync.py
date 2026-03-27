@@ -1,24 +1,7 @@
-import os
+"""Helpers for syncing Alpaca bracket order state through the centralized order client."""
 from typing import Any
 
-import requests
-
-
-ALPACA_API_KEY_ID = os.getenv("APCA_API_KEY_ID", "")
-ALPACA_API_SECRET_KEY = os.getenv("APCA_API_SECRET_KEY", "")
-ALPACA_TRADING_BASE_URL = os.getenv("APCA_BASE_URL", "https://paper-api.alpaca.markets").rstrip("/")
-
-
-def _auth_headers() -> dict[str, str]:
-    if not ALPACA_API_KEY_ID or not ALPACA_API_SECRET_KEY:
-        raise RuntimeError("Missing Alpaca API credentials")
-
-    return {
-        "accept": "application/json",
-        "content-type": "application/json",
-        "APCA-API-KEY-ID": ALPACA_API_KEY_ID,
-        "APCA-API-SECRET-KEY": ALPACA_API_SECRET_KEY,
-    }
+from alpaca.alpaca_orders import fetch_order_by_id, fetch_orders
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -29,36 +12,11 @@ def _to_float(value: Any, default: float = 0.0) -> float:
 
 
 def get_order_by_id(order_id: str, nested: bool = True) -> dict[str, Any]:
-    order_id = str(order_id).strip()
-    if not order_id:
-        raise ValueError("order_id is required")
-
-    response = requests.get(
-        f"{ALPACA_TRADING_BASE_URL}/v2/orders/{order_id}",
-        headers=_auth_headers(),
-        params={"nested": str(nested).lower()},
-        timeout=20,
-    )
-    response.raise_for_status()
-    return response.json()
+    return fetch_order_by_id(order_id, nested=nested)
 
 
 def get_orders(status: str = "all", limit: int = 200, nested: bool = True, direction: str = "desc") -> list[dict[str, Any]]:
-    response = requests.get(
-        f"{ALPACA_TRADING_BASE_URL}/v2/orders",
-        headers=_auth_headers(),
-        params={
-            "status": status,
-            "limit": limit,
-            "nested": str(nested).lower(),
-            "direction": direction,
-        },
-        timeout=20,
-    )
-    response.raise_for_status()
-    data = response.json()
-    return data if isinstance(data, list) else []
-
+    return fetch_orders(status=status, limit=limit, nested=nested, direction=direction)
 
 def _find_exit_legs(order: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     take_profit_leg = None
