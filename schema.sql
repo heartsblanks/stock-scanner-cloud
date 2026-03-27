@@ -105,3 +105,53 @@ CREATE TABLE IF NOT EXISTS alpaca_api_logs (
 
 CREATE INDEX IF NOT EXISTS idx_alpaca_api_logs_logged_at ON alpaca_api_logs(logged_at);
 CREATE INDEX IF NOT EXISTS idx_alpaca_api_logs_method ON alpaca_api_logs(method);
+
+-- Trade lifecycles: one row per trade (OPEN → CLOSED unified)
+CREATE TABLE IF NOT EXISTS trade_lifecycles (
+    id SERIAL PRIMARY KEY,
+
+    trade_key TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    mode TEXT,
+    side TEXT,
+    direction TEXT,
+
+    status TEXT, -- OPEN / CLOSED
+
+    entry_time TIMESTAMPTZ,
+    exit_time TIMESTAMPTZ,
+    duration_minutes NUMERIC,
+
+    shares NUMERIC,
+    entry_price NUMERIC,
+    exit_price NUMERIC,
+    stop_price NUMERIC,
+    target_price NUMERIC,
+
+    exit_reason TEXT,
+
+    -- Signal linkage (optional but important for analytics)
+    signal_timestamp TIMESTAMPTZ,
+    signal_entry NUMERIC,
+    signal_stop NUMERIC,
+    signal_target NUMERIC,
+    signal_confidence NUMERIC,
+
+    -- Broker linkage
+    order_id TEXT,
+    parent_order_id TEXT,
+    exit_order_id TEXT,
+
+    -- Performance metrics
+    realized_pnl NUMERIC,
+    realized_pnl_percent NUMERIC,
+
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Indexes for trade lifecycles
+CREATE INDEX IF NOT EXISTS idx_trade_lifecycles_symbol ON trade_lifecycles(symbol);
+CREATE INDEX IF NOT EXISTS idx_trade_lifecycles_status ON trade_lifecycles(status);
+CREATE INDEX IF NOT EXISTS idx_trade_lifecycles_entry_time ON trade_lifecycles(entry_time);
+CREATE INDEX IF NOT EXISTS idx_trade_lifecycles_trade_key ON trade_lifecycles(trade_key);

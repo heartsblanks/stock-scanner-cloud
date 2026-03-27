@@ -12,6 +12,8 @@ def register_reconcile_routes(
     reconciliation_object,
     safe_insert_reconciliation_run,
     safe_insert_reconciliation_detail,
+    get_latest_reconciliation_summary,
+    get_recent_reconciliation_mismatches,
 ) -> None:
     @app.post("/reconcile-paper-trades")
     def reconcile_paper_trades():
@@ -80,3 +82,48 @@ def register_reconcile_routes(
             "local_output_path": str(output_path),
             "gcs_output_uri": gcs_uri,
         })
+
+
+    @app.get("/reconcile-summary")
+    def reconcile_summary():
+        try:
+            summary = get_latest_reconciliation_summary()
+            return jsonify({
+                "ok": True,
+                **summary,
+            })
+        except Exception as e:
+            print(f"Reconciliation summary read failed: {e}", flush=True)
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.get("/reconciliation-mismatches")
+    def reconciliation_mismatches():
+        try:
+            from flask import request
+
+            limit_raw = request.args.get("limit", "100")
+            run_id_raw = request.args.get("run_id")
+
+            try:
+                limit = max(1, min(1000, int(limit_raw)))
+            except Exception:
+                return jsonify({"ok": False, "error": "limit must be an integer"}), 400
+
+            run_id = None
+            if run_id_raw not in (None, ""):
+                try:
+                    run_id = int(run_id_raw)
+                except Exception:
+                    return jsonify({"ok": False, "error": "run_id must be an integer"}), 400
+
+            rows = get_recent_reconciliation_mismatches(limit=limit, run_id=run_id)
+            return jsonify({
+                "ok": True,
+                "count": len(rows),
+                "limit": limit,
+                "run_id": run_id,
+                "rows": rows,
+            })
+        except Exception as e:
+            print(f"Reconciliation mismatch read failed: {e}", flush=True)
+            return jsonify({"ok": False, "error": str(e)}), 500

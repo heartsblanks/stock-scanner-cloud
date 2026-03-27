@@ -527,6 +527,484 @@ def get_reconciliation_details_for_run(run_id: int) -> list[dict[str, Any]]:
     )
 
 
+# === Phase 5 dashboard API helpers ===
+
+def get_latest_reconciliation_run() -> Optional[dict[str, Any]]:
+    return fetch_one(
+        """
+        SELECT *
+        FROM reconciliation_runs
+        ORDER BY run_time DESC, id DESC
+        LIMIT 1
+        """,
+        {},
+    )
+
+
+def get_reconciliation_status_counts_for_run(run_id: int) -> list[dict[str, Any]]:
+    return fetch_all(
+        """
+        SELECT match_status, COUNT(*)::INT AS count
+        FROM reconciliation_details
+        WHERE run_id = %(run_id)s
+        GROUP BY match_status
+        ORDER BY count DESC, match_status ASC
+        """,
+        {"run_id": run_id},
+    )
+
+
+def get_latest_reconciliation_summary() -> dict[str, Any]:
+    latest_run = get_latest_reconciliation_run()
+    if not latest_run:
+        return {
+            "latest_run": None,
+            "match_status_counts": [],
+            "mismatch_count": 0,
+        }
+
+    run_id = int(latest_run["id"])
+    status_counts = get_reconciliation_status_counts_for_run(run_id)
+    mismatch_count = sum(
+        int(row.get("count", 0) or 0)
+        for row in status_counts
+        if str(row.get("match_status", "")).strip() != "matched"
+    )
+
+    return {
+        "latest_run": latest_run,
+        "match_status_counts": status_counts,
+        "mismatch_count": mismatch_count,
+    }
+
+
+def get_recent_reconciliation_details(limit: int = 100, run_id: Optional[int] = None) -> list[dict[str, Any]]:
+    if run_id is not None:
+        return fetch_all(
+            """
+            SELECT *
+            FROM reconciliation_details
+            WHERE run_id = %(run_id)s
+            ORDER BY id DESC
+            LIMIT %(limit)s
+            """,
+            {"run_id": run_id, "limit": limit},
+        )
+
+    return fetch_all(
+        """
+        SELECT *
+        FROM reconciliation_details
+        ORDER BY id DESC
+        LIMIT %(limit)s
+        """,
+        {"limit": limit},
+    )
+
+
+def get_recent_reconciliation_mismatches(limit: int = 100, run_id: Optional[int] = None) -> list[dict[str, Any]]:
+    if run_id is not None:
+        return fetch_all(
+            """
+            SELECT *
+            FROM reconciliation_details
+            WHERE run_id = %(run_id)s
+              AND COALESCE(match_status, '') <> 'matched'
+            ORDER BY id DESC
+            LIMIT %(limit)s
+            """,
+            {"run_id": run_id, "limit": limit},
+        )
+
+    return fetch_all(
+        """
+        SELECT *
+        FROM reconciliation_details
+        WHERE COALESCE(match_status, '') <> 'matched'
+        ORDER BY id DESC
+        LIMIT %(limit)s
+        """,
+        {"limit": limit},
+    )
+
+
+def get_recent_alpaca_api_logs(limit: int = 100) -> list[dict[str, Any]]:
+    return fetch_all(
+        """
+        SELECT *
+        FROM alpaca_api_logs
+        ORDER BY logged_at DESC, id DESC
+        LIMIT %(limit)s
+        """,
+        {"limit": limit},
+    )
+
+
+def get_recent_alpaca_api_errors(limit: int = 100) -> list[dict[str, Any]]:
+    return fetch_all(
+        """
+        SELECT *
+        FROM alpaca_api_logs
+        WHERE COALESCE(success, FALSE) = FALSE
+           OR COALESCE(status_code, 0) >= 400
+           OR COALESCE(error_message, '') <> ''
+        ORDER BY logged_at DESC, id DESC
+        LIMIT %(limit)s
+        """,
+        {"limit": limit},
+    )
+
+
+
+def get_latest_scan_run() -> Optional[dict[str, Any]]:
+    return fetch_one(
+        """
+        SELECT *
+        FROM scan_runs
+        ORDER BY scan_time DESC, id DESC
+        LIMIT 1
+        """,
+        {},
+    )
+
+
+
+def get_recent_broker_orders(limit: int = 100) -> list[dict[str, Any]]:
+    return fetch_all(
+        """
+        SELECT *
+        FROM broker_orders
+        ORDER BY COALESCE(submitted_at, created_at) DESC, id DESC
+        LIMIT %(limit)s
+        """,
+        {"limit": limit},
+    )
+
+
+
+def get_broker_order_status_counts() -> list[dict[str, Any]]:
+    return fetch_all(
+        """
+        SELECT COALESCE(status, '') AS status, COUNT(*)::INT AS count
+        FROM broker_orders
+        GROUP BY COALESCE(status, '')
+        ORDER BY count DESC, status ASC
+        """,
+        {},
+    )
+
+
+
+def get_recent_trade_event_rows(limit: int = 100) -> list[dict[str, Any]]:
+    return fetch_all(
+        """
+        SELECT *
+        FROM trade_events
+        ORDER BY event_time DESC, id DESC
+        LIMIT %(limit)s
+        """,
+        {"limit": limit},
+    )
+
+
+
+def get_trade_event_counts_by_type() -> list[dict[str, Any]]:
+    return fetch_all(
+        """
+        SELECT event_type, COUNT(*)::INT AS count
+        FROM trade_events
+        GROUP BY event_type
+        ORDER BY count DESC, event_type ASC
+        """,
+        {},
+    )
+
+
+
+def get_open_trade_events(limit: int = 100) -> list[dict[str, Any]]:
+    return fetch_all(
+        """
+        WITH ranked AS (
+            SELECT
+                te.*,
+                ROW_NUMBER() OVER (
+                    PARTITION BY COALESCE(NULLIF(parent_order_id, ''), NULLIF(order_id, ''), symbol)
+                    ORDER BY event_time DESC, id DESC
+                ) AS rn
+            FROM trade_events te
+        )
+        SELECT *
+        FROM ranked
+        WHERE rn = 1
+          AND UPPER(COALESCE(status, '')) = 'OPEN'
+        ORDER BY event_time DESC, id DESC
+        LIMIT %(limit)s
+        """,
+        {"limit": limit},
+    )
+
+
+
+def get_closed_trade_events(limit: int = 100) -> list[dict[str, Any]]:
+    return fetch_all(
+        """
+        SELECT *
+        FROM trade_events
+        WHERE UPPER(COALESCE(status, '')) = 'CLOSED'
+        ORDER BY event_time DESC, id DESC
+        LIMIT %(limit)s
+        """,
+        {"limit": limit},
+    )
+
+
+
+def _to_optional_float(value: Any) -> Optional[float]:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+
+def _trade_group_key(row: dict[str, Any]) -> str:
+    parent_order_id = str(row.get("parent_order_id") or "").strip()
+    order_id = str(row.get("order_id") or "").strip()
+    symbol = str(row.get("symbol") or "").strip().upper()
+    return parent_order_id or order_id or symbol
+
+
+
+def _infer_trade_direction(side: Optional[str]) -> str:
+    normalized = str(side or "").strip().lower()
+    if normalized == "buy":
+        return "LONG"
+    if normalized == "sell":
+        return "SHORT"
+    return "UNKNOWN"
+
+
+
+def _compute_realized_pnl(
+    *,
+    entry_price: Optional[float],
+    exit_price: Optional[float],
+    shares: Optional[float],
+    side: Optional[str],
+) -> Optional[float]:
+    if entry_price is None or exit_price is None or shares is None:
+        return None
+
+    normalized = str(side or "").strip().lower()
+    if normalized == "buy":
+        return round((exit_price - entry_price) * shares, 6)
+    if normalized == "sell":
+        return round((entry_price - exit_price) * shares, 6)
+    return None
+
+
+
+def _compute_pnl_percent(
+    *,
+    entry_price: Optional[float],
+    exit_price: Optional[float],
+    side: Optional[str],
+) -> Optional[float]:
+    if entry_price in (None, 0) or exit_price is None:
+        return None
+
+    normalized = str(side or "").strip().lower()
+    if normalized == "buy":
+        return round(((exit_price - entry_price) / entry_price) * 100.0, 6)
+    if normalized == "sell":
+        return round(((entry_price - exit_price) / entry_price) * 100.0, 6)
+    return None
+
+
+
+def _build_trade_lifecycle_rows_from_events(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        key = _trade_group_key(row)
+        if not key:
+            continue
+        grouped.setdefault(key, []).append(row)
+
+    lifecycle_rows: list[dict[str, Any]] = []
+
+    for key, events in grouped.items():
+        sorted_events = sorted(
+            events,
+            key=lambda item: (
+                item.get("event_time") or "",
+                item.get("id") or 0,
+            ),
+        )
+
+        open_event = next(
+            (event for event in sorted_events if str(event.get("event_type", "")).strip().upper() == "OPEN"),
+            None,
+        )
+        latest_event = sorted_events[-1] if sorted_events else None
+        close_event = None
+        for event in reversed(sorted_events):
+            if str(event.get("status", "")).strip().upper() == "CLOSED":
+                close_event = event
+                break
+
+        entry_event = open_event or sorted_events[0]
+        exit_event = close_event
+
+        entry_price = _to_optional_float(entry_event.get("price")) if entry_event else None
+        exit_price = _to_optional_float(exit_event.get("price")) if exit_event else None
+        shares = _to_optional_float((entry_event or latest_event or {}).get("shares"))
+        side = (entry_event or latest_event or {}).get("side")
+        direction = _infer_trade_direction(side)
+        realized_pnl = _compute_realized_pnl(
+            entry_price=entry_price,
+            exit_price=exit_price,
+            shares=shares,
+            side=side,
+        )
+        realized_pnl_percent = _compute_pnl_percent(
+            entry_price=entry_price,
+            exit_price=exit_price,
+            side=side,
+        )
+
+        entry_time = entry_event.get("event_time") if entry_event else None
+        exit_time = exit_event.get("event_time") if exit_event else None
+        duration_minutes = None
+        if isinstance(entry_time, datetime) and isinstance(exit_time, datetime):
+            duration_minutes = round((exit_time - entry_time).total_seconds() / 60.0, 2)
+
+        lifecycle_rows.append({
+            "trade_key": key,
+            "symbol": (entry_event or latest_event or {}).get("symbol"),
+            "mode": (entry_event or latest_event or {}).get("mode"),
+            "side": side,
+            "direction": direction,
+            "status": "CLOSED" if exit_event else "OPEN",
+            "entry_event_type": entry_event.get("event_type") if entry_event else None,
+            "exit_event_type": exit_event.get("event_type") if exit_event else None,
+            "entry_time": entry_time,
+            "exit_time": exit_time,
+            "duration_minutes": duration_minutes,
+            "shares": shares,
+            "entry_price": entry_price,
+            "exit_price": exit_price,
+            "realized_pnl": realized_pnl,
+            "realized_pnl_percent": realized_pnl_percent,
+            "exit_reason": exit_event.get("event_type") if exit_event else None,
+            "order_id": (entry_event or latest_event or {}).get("order_id"),
+            "parent_order_id": (entry_event or latest_event or {}).get("parent_order_id"),
+            "signal_info": None,
+            "event_count": len(sorted_events),
+        })
+
+    lifecycle_rows.sort(
+        key=lambda item: (
+            item.get("entry_time") or datetime.min,
+            item.get("trade_key") or "",
+        ),
+        reverse=True,
+    )
+    return lifecycle_rows
+
+
+
+def get_trade_lifecycle_rows(limit: int = 100, status: Optional[str] = None) -> list[dict[str, Any]]:
+    rows = fetch_all(
+        """
+        SELECT *
+        FROM trade_events
+        ORDER BY event_time DESC, id DESC
+        LIMIT %(limit)s
+        """,
+        {"limit": max(limit * 5, 500)},
+    )
+    lifecycle_rows = _build_trade_lifecycle_rows_from_events(rows)
+
+    if status:
+        normalized_status = str(status).strip().upper()
+        lifecycle_rows = [
+            row for row in lifecycle_rows
+            if str(row.get("status", "")).strip().upper() == normalized_status
+        ]
+
+    return lifecycle_rows[:limit]
+
+
+
+def get_trade_lifecycle_summary(limit: int = 1000) -> dict[str, Any]:
+    rows = get_trade_lifecycle_rows(limit=limit)
+    closed_rows = [row for row in rows if str(row.get("status", "")).strip().upper() == "CLOSED"]
+    pnl_values = [row["realized_pnl"] for row in closed_rows if row.get("realized_pnl") is not None]
+
+    wins = [value for value in pnl_values if value > 0]
+    losses = [value for value in pnl_values if value < 0]
+
+    return {
+        "trade_count": len(rows),
+        "closed_trade_count": len(closed_rows),
+        "open_trade_count": len([row for row in rows if str(row.get("status", "")).strip().upper() == "OPEN"]),
+        "realized_pnl_total": round(sum(pnl_values), 6) if pnl_values else 0.0,
+        "winning_trade_count": len(wins),
+        "losing_trade_count": len(losses),
+        "flat_trade_count": len([value for value in pnl_values if value == 0]),
+        "average_realized_pnl": round(sum(pnl_values) / len(pnl_values), 6) if pnl_values else None,
+        "best_trade_pnl": max(pnl_values) if pnl_values else None,
+        "worst_trade_pnl": min(pnl_values) if pnl_values else None,
+    }
+
+
+
+def get_latest_scan_summary() -> dict[str, Any]:
+    latest_scan = get_latest_scan_run()
+    return {
+        "latest_scan": latest_scan,
+        "scan_runs_count": get_table_row_count("scan_runs"),
+    }
+
+
+def get_table_row_count(table_name: str) -> int:
+    allowed_tables = {
+        "scan_runs",
+        "trade_events",
+        "broker_orders",
+        "reconciliation_runs",
+        "reconciliation_details",
+        "alpaca_api_logs",
+    }
+    normalized_table_name = str(table_name).strip()
+    if normalized_table_name not in allowed_tables:
+        raise ValueError(f"Unsupported table for count: {normalized_table_name}")
+
+    row = fetch_one(f"SELECT COUNT(*)::INT AS count FROM {normalized_table_name}", {})
+    return int(row["count"]) if row else 0
+
+
+def get_ops_summary() -> dict[str, Any]:
+    latest_run = get_latest_reconciliation_run()
+    return {
+        "scan_runs_count": get_table_row_count("scan_runs"),
+        "trade_events_count": get_table_row_count("trade_events"),
+        "broker_orders_count": get_table_row_count("broker_orders"),
+        "reconciliation_runs_count": get_table_row_count("reconciliation_runs"),
+        "reconciliation_details_count": get_table_row_count("reconciliation_details"),
+        "alpaca_api_logs_count": get_table_row_count("alpaca_api_logs"),
+        "open_trade_events_count": len(get_open_trade_events(limit=1000)),
+        "closed_trade_events_count": len(get_closed_trade_events(limit=1000)),
+        "latest_scan_run": get_latest_scan_run(),
+        "latest_reconciliation_run_id": latest_run.get("id") if latest_run else None,
+        "latest_reconciliation_run_time": latest_run.get("run_time") if latest_run else None,
+        "broker_order_status_counts": get_broker_order_status_counts(),
+        "trade_event_type_counts": get_trade_event_counts_by_type(),
+    }
+
+
 def insert_alpaca_api_log(
     logged_at: datetime,
     method: str,
@@ -567,3 +1045,223 @@ def insert_alpaca_api_log(
             "response_body": response_body,
         },
     )
+
+
+
+def upsert_trade_lifecycle(
+    trade_key: str,
+    symbol: Optional[str] = None,
+    mode: Optional[str] = None,
+    side: Optional[str] = None,
+    direction: Optional[str] = None,
+    status: Optional[str] = None,
+    entry_time: Optional[datetime] = None,
+    entry_price: Optional[float] = None,
+    exit_time: Optional[datetime] = None,
+    exit_price: Optional[float] = None,
+    stop_price: Optional[float] = None,
+    target_price: Optional[float] = None,
+    exit_reason: Optional[str] = None,
+    shares: Optional[float] = None,
+    realized_pnl: Optional[float] = None,
+    realized_pnl_percent: Optional[float] = None,
+    duration_minutes: Optional[float] = None,
+    signal_timestamp: Optional[datetime] = None,
+    signal_entry: Optional[float] = None,
+    signal_stop: Optional[float] = None,
+    signal_target: Optional[float] = None,
+    signal_confidence: Optional[float] = None,
+    order_id: Optional[str] = None,
+    parent_order_id: Optional[str] = None,
+    exit_order_id: Optional[str] = None,
+) -> None:
+    normalized_trade_key = _normalize_text(trade_key)
+    if not normalized_trade_key:
+        raise ValueError("trade_key is required")
+
+    existing = fetch_one(
+        """
+        SELECT id
+        FROM trade_lifecycles
+        WHERE trade_key = %(trade_key)s
+        LIMIT 1
+        """,
+        {"trade_key": normalized_trade_key},
+    )
+
+    params = {
+        "trade_key": normalized_trade_key,
+        "symbol": symbol,
+        "mode": mode,
+        "side": side,
+        "direction": direction,
+        "status": status,
+        "entry_time": entry_time,
+        "entry_price": entry_price,
+        "exit_time": exit_time,
+        "exit_price": exit_price,
+        "stop_price": stop_price,
+        "target_price": target_price,
+        "exit_reason": exit_reason,
+        "shares": shares,
+        "realized_pnl": realized_pnl,
+        "realized_pnl_percent": realized_pnl_percent,
+        "duration_minutes": duration_minutes,
+        "signal_timestamp": signal_timestamp,
+        "signal_entry": signal_entry,
+        "signal_stop": signal_stop,
+        "signal_target": signal_target,
+        "signal_confidence": signal_confidence,
+        "order_id": order_id,
+        "parent_order_id": parent_order_id,
+        "exit_order_id": exit_order_id,
+    }
+
+    if existing:
+        params["id"] = existing["id"]
+        execute(
+            """
+            UPDATE trade_lifecycles
+            SET symbol = %(symbol)s,
+                mode = %(mode)s,
+                side = %(side)s,
+                direction = %(direction)s,
+                status = %(status)s,
+                entry_time = %(entry_time)s,
+                entry_price = %(entry_price)s,
+                exit_time = %(exit_time)s,
+                exit_price = %(exit_price)s,
+                stop_price = %(stop_price)s,
+                target_price = %(target_price)s,
+                exit_reason = %(exit_reason)s,
+                shares = %(shares)s,
+                realized_pnl = %(realized_pnl)s,
+                realized_pnl_percent = %(realized_pnl_percent)s,
+                duration_minutes = %(duration_minutes)s,
+                signal_timestamp = %(signal_timestamp)s,
+                signal_entry = %(signal_entry)s,
+                signal_stop = %(signal_stop)s,
+                signal_target = %(signal_target)s,
+                signal_confidence = %(signal_confidence)s,
+                order_id = %(order_id)s,
+                parent_order_id = %(parent_order_id)s,
+                exit_order_id = %(exit_order_id)s,
+                updated_at = NOW()
+            WHERE id = %(id)s
+            """,
+            params,
+        )
+        return
+
+    execute(
+        """
+        INSERT INTO trade_lifecycles (
+            trade_key,
+            symbol,
+            mode,
+            side,
+            direction,
+            status,
+            entry_time,
+            entry_price,
+            exit_time,
+            exit_price,
+            stop_price,
+            target_price,
+            exit_reason,
+            shares,
+            realized_pnl,
+            realized_pnl_percent,
+            duration_minutes,
+            signal_timestamp,
+            signal_entry,
+            signal_stop,
+            signal_target,
+            signal_confidence,
+            order_id,
+            parent_order_id,
+            exit_order_id
+        )
+        VALUES (
+            %(trade_key)s,
+            %(symbol)s,
+            %(mode)s,
+            %(side)s,
+            %(direction)s,
+            %(status)s,
+            %(entry_time)s,
+            %(entry_price)s,
+            %(exit_time)s,
+            %(exit_price)s,
+            %(stop_price)s,
+            %(target_price)s,
+            %(exit_reason)s,
+            %(shares)s,
+            %(realized_pnl)s,
+            %(realized_pnl_percent)s,
+            %(duration_minutes)s,
+            %(signal_timestamp)s,
+            %(signal_entry)s,
+            %(signal_stop)s,
+            %(signal_target)s,
+            %(signal_confidence)s,
+            %(order_id)s,
+            %(parent_order_id)s,
+            %(exit_order_id)s
+        )
+        """,
+        params,
+    )
+
+
+
+def get_trade_lifecycles(limit: int = 100, status: Optional[str] = None) -> list[dict[str, Any]]:
+    if status:
+        return fetch_all(
+            """
+            SELECT *
+            FROM trade_lifecycles
+            WHERE UPPER(COALESCE(status, '')) = %(status)s
+            ORDER BY COALESCE(entry_time, created_at) DESC, id DESC
+            LIMIT %(limit)s
+            """,
+            {"status": str(status).strip().upper(), "limit": limit},
+        )
+
+    return fetch_all(
+        """
+        SELECT *
+        FROM trade_lifecycles
+        ORDER BY COALESCE(entry_time, created_at) DESC, id DESC
+        LIMIT %(limit)s
+        """,
+        {"limit": limit},
+    )
+
+
+
+def get_trade_lifecycle_summary_from_table(limit: int = 1000) -> dict[str, Any]:
+    rows = get_trade_lifecycles(limit=limit)
+    closed_rows = [row for row in rows if str(row.get("status", "")).strip().upper() == "CLOSED"]
+    pnl_values = [
+        _to_optional_float(row.get("realized_pnl"))
+        for row in closed_rows
+        if _to_optional_float(row.get("realized_pnl")) is not None
+    ]
+
+    wins = [value for value in pnl_values if value > 0]
+    losses = [value for value in pnl_values if value < 0]
+    flats = [value for value in pnl_values if value == 0]
+
+    return {
+        "trade_count": len(rows),
+        "closed_trade_count": len(closed_rows),
+        "open_trade_count": len([row for row in rows if str(row.get("status", "")).strip().upper() == "OPEN"]),
+        "realized_pnl_total": round(sum(pnl_values), 6) if pnl_values else 0.0,
+        "winning_trade_count": len(wins),
+        "losing_trade_count": len(losses),
+        "flat_trade_count": len(flats),
+        "average_realized_pnl": round(sum(pnl_values) / len(pnl_values), 6) if pnl_values else None,
+        "best_trade_pnl": max(pnl_values) if pnl_values else None,
+        "worst_trade_pnl": min(pnl_values) if pnl_values else None,
+    }

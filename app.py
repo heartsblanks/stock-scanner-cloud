@@ -18,6 +18,18 @@ from storage import (
     insert_broker_order,
     insert_reconciliation_run,
     insert_reconciliation_detail,
+    get_latest_reconciliation_summary,
+    get_recent_reconciliation_mismatches,
+    get_ops_summary,
+    get_open_trade_events,
+    get_closed_trade_events,
+    get_recent_trade_event_rows,
+    get_latest_scan_summary,
+    get_recent_alpaca_api_logs,
+    get_recent_alpaca_api_errors,
+    get_trade_lifecycle_rows,
+    get_trade_lifecycle_summary,
+    upsert_trade_lifecycle,
 )
 from export_daily_snapshot import run_daily_snapshot
 from routes.health import register_health_routes
@@ -820,6 +832,9 @@ register_health_routes(
     db_healthcheck=db_healthcheck,
     enable_csv_logging=ENABLE_CSV_LOGGING,
     enable_db_logging=ENABLE_DB_LOGGING,
+    get_ops_summary=get_ops_summary,
+    get_recent_alpaca_api_logs=get_recent_alpaca_api_logs,
+    get_recent_alpaca_api_errors=get_recent_alpaca_api_errors,
 )
 register_export_routes(app, run_daily_snapshot=run_daily_snapshot)
 register_analysis_routes(
@@ -843,6 +858,8 @@ register_reconcile_routes(
     reconciliation_object=RECONCILIATION_OBJECT,
     safe_insert_reconciliation_run=safe_insert_reconciliation_run,
     safe_insert_reconciliation_detail=safe_insert_reconciliation_detail,
+    get_latest_reconciliation_summary=get_latest_reconciliation_summary,
+    get_recent_reconciliation_mismatches=get_recent_reconciliation_mismatches,
 )
 
 register_trade_routes(
@@ -858,6 +875,13 @@ register_trade_routes(
     infer_first_level_hit=infer_first_level_hit,
     to_float_or_none=to_float_or_none,
     parse_iso_utc=parse_iso_utc,
+    get_open_trade_events=get_open_trade_events,
+    get_closed_trade_events=get_closed_trade_events,
+    get_recent_trade_event_rows=get_recent_trade_event_rows,
+    get_latest_scan_summary=get_latest_scan_summary,
+    get_trade_lifecycle_rows=get_trade_lifecycle_rows,
+    get_trade_lifecycle_summary=get_trade_lifecycle_summary,
+    upsert_trade_lifecycle=upsert_trade_lifecycle,
 )
 
 register_scan_routes(
