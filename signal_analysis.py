@@ -1,26 +1,33 @@
-
-
 from __future__ import annotations
 
 import csv
 import os
 from collections import defaultdict
 from io import StringIO
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from google.cloud import storage
+from db import fetch_all
 
 
 GCS_BUCKET_NAME = os.getenv("TRADE_LOG_BUCKET", "stock-scanner-490821-logs")
 SIGNALS_BUCKET_NAME = os.getenv("SIGNAL_LOG_BUCKET", GCS_BUCKET_NAME)
 SIGNALS_OBJECT = os.getenv("SIGNAL_LOG_OBJECT", "signals/signals.csv")
 ANALYSIS_SUMMARY_OUTPUT = Path("signal_analysis_summary.csv")
+ANALYSIS_SUMMARY_GCS_OUTPUT = Path("signal_analysis_summary_gcs.csv")
+ANALYSIS_SUMMARY_DB_OUTPUT = Path("signal_analysis_summary_db.csv")
 ANALYSIS_SIGNAL_ROWS_OUTPUT = Path("signal_analysis_rows.csv")
+ANALYSIS_SIGNAL_ROWS_GCS_OUTPUT = Path("signal_analysis_rows_gcs.csv")
+ANALYSIS_SIGNAL_ROWS_DB_OUTPUT = Path("signal_analysis_rows_db.csv")
+ANALYSIS_COMPARISON_OUTPUT = Path("signal_analysis_comparison.csv")
 ANALYSIS_GCS_BUCKET = os.getenv("TRADE_ANALYSIS_BUCKET", GCS_BUCKET_NAME)
 ANALYSIS_SUMMARY_OBJECT = os.getenv("SIGNAL_ANALYSIS_SUMMARY_OBJECT", "reports/signal_analysis_summary.csv")
 ANALYSIS_ROWS_OBJECT = os.getenv("SIGNAL_ANALYSIS_ROWS_OBJECT", "reports/signal_analysis_rows.csv")
 CORE_MODES = {"core_one", "core_two"}
+
+SIGNAL_ANALYSIS_SOURCE = os.getenv("SIGNAL_ANALYSIS_SOURCE", "gcs").strip().lower()
 
 
 def get_gcs_csv_rows(bucket_name: str, object_name: str) -> list[dict[str, str]]:
@@ -32,6 +39,56 @@ def get_gcs_csv_rows(bucket_name: str, object_name: str) -> list[dict[str, str]]
 
     csv_text = blob.download_as_text(encoding="utf-8")
     return list(csv.DictReader(StringIO(csv_text)))
+
+
+def stringify_db_row(row: dict[str, Any]) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    for key, value in row.items():
+        if value is None:
+            normalized[key] = ""
+        else:
+            normalized[key] = str(value)
+    return normalized
+
+
+
+def get_db_signal_rows() -> list[dict[str, str]]:
+    rows = fetch_all(
+        """
+        SELECT
+            scan_time AS timestamp_utc,
+            '' AS scan_id,
+            scan_source,
+            market_phase,
+            mode,
+            '' AS paper_trade_enabled,
+            candidate_count AS paper_trade_candidate_count,
+            placed_count AS paper_trade_placed_count,
+            '' AS paper_trade_long_candidate_count,
+            '' AS paper_trade_short_candidate_count,
+            '' AS paper_trade_placed_long_count,
+            '' AS paper_trade_placed_short_count,
+            '' AS paper_candidate_symbols,
+            '' AS paper_placed_symbols,
+            '' AS paper_skipped_symbols,
+            '' AS paper_skip_reasons,
+            '' AS paper_candidate_confidences,
+            '' AS benchmark_sp500,
+            '' AS benchmark_nasdaq,
+            '' AS reason
+        FROM scan_runs
+        ORDER BY scan_time ASC, id ASC
+        """
+    )
+    return [stringify_db_row(row) for row in rows]
+
+
+
+def get_signal_rows(source: str | None = None) -> list[dict[str, str]]:
+    resolved_source = str(source or SIGNAL_ANALYSIS_SOURCE).strip().lower()
+    if resolved_source == "db":
+        return get_db_signal_rows()
+    return get_gcs_csv_rows(SIGNALS_BUCKET_NAME, SIGNALS_OBJECT)
 
 
 def upload_file_to_gcs(local_path: Path, bucket_name: str, object_name: str) -> str:
@@ -95,6 +152,9 @@ def build_signal_rows(signal_rows: list[dict[str, str]]) -> list[dict[str, Any]]
         skipped_symbols = split_symbols(row.get("paper_skipped_symbols", ""))
         skip_reasons = split_skip_reasons(row.get("paper_skip_reasons", ""))
 
+        explicit_skipped_count = to_int(row.get("paper_trade_skipped_count"))
+        skipped_count = explicit_skipped_count if explicit_skipped_count > 0 else max(candidate_count - placed_count, 0)
+
         rows.append({
             "timestamp_utc": str(row.get("timestamp_utc", "")).strip(),
             "scan_id": str(row.get("scan_id", "")).strip(),
@@ -105,7 +165,7 @@ def build_signal_rows(signal_rows: list[dict[str, str]]) -> list[dict[str, Any]]
             "paper_trade_enabled": str(row.get("paper_trade_enabled", "")).strip(),
             "candidate_count": candidate_count,
             "placed_count": placed_count,
-            "skipped_count": max(candidate_count - placed_count, 0),
+            "skipped_count": skipped_count,
             "long_candidate_count": long_candidate_count,
             "short_candidate_count": short_candidate_count,
             "placed_long_count": placed_long_count,
@@ -179,8 +239,59 @@ def write_csv(rows: list[dict[str, Any]], path: Path, headers: list[str]) -> Non
             writer.writerow(row)
 
 
-def run_signal_analysis() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    raw_signal_rows = get_gcs_csv_rows(SIGNALS_BUCKET_NAME, SIGNALS_OBJECT)
+def choose_output_paths(source: str) -> tuple[Path, Path]:
+    normalized = str(source).strip().lower()
+    if normalized == "db":
+        return ANALYSIS_SUMMARY_DB_OUTPUT, ANALYSIS_SIGNAL_ROWS_DB_OUTPUT
+    return ANALYSIS_SUMMARY_GCS_OUTPUT, ANALYSIS_SIGNAL_ROWS_GCS_OUTPUT
+
+
+def build_comparison_rows(
+    gcs_summary_rows: list[dict[str, Any]],
+    db_summary_rows: list[dict[str, Any]],
+    gcs_signal_rows: list[dict[str, Any]],
+    db_signal_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    def get_overall(rows):
+        return next((r for r in rows if r.get("group_name") == "overall"), {})
+
+    gcs_overall = get_overall(gcs_summary_rows)
+    db_overall = get_overall(db_summary_rows)
+
+    def metric(row, key):
+        return row.get(key, "") if row else ""
+
+    return [
+        {
+            "metric": "row_count",
+            "gcs_value": len(gcs_signal_rows),
+            "db_value": len(db_signal_rows),
+            "match": len(gcs_signal_rows) == len(db_signal_rows),
+        },
+        {
+            "metric": "total_candidates",
+            "gcs_value": metric(gcs_overall, "total_candidates"),
+            "db_value": metric(db_overall, "total_candidates"),
+            "match": metric(gcs_overall, "total_candidates") == metric(db_overall, "total_candidates"),
+        },
+        {
+            "metric": "total_placed",
+            "gcs_value": metric(gcs_overall, "total_placed"),
+            "db_value": metric(db_overall, "total_placed"),
+            "match": metric(gcs_overall, "total_placed") == metric(db_overall, "total_placed"),
+        },
+        {
+            "metric": "placement_rate_pct",
+            "gcs_value": metric(gcs_overall, "placement_rate_pct"),
+            "db_value": metric(db_overall, "placement_rate_pct"),
+            "match": metric(gcs_overall, "placement_rate_pct") == metric(db_overall, "placement_rate_pct"),
+        },
+    ]
+
+
+def run_signal_analysis(source: str | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    resolved_source = str(source or SIGNAL_ANALYSIS_SOURCE).strip().lower()
+    raw_signal_rows = get_signal_rows(source=resolved_source)
     signal_rows = build_signal_rows(raw_signal_rows)
 
     by_mode: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -204,9 +315,11 @@ def run_signal_analysis() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     summary_rows.extend(build_summary_rows("core_group", by_core_group))
     summary_rows.extend(build_skip_reason_rows(signal_rows))
 
+    summary_output, rows_output = choose_output_paths(resolved_source)
+
     write_csv(
         summary_rows,
-        ANALYSIS_SUMMARY_OUTPUT,
+        summary_output,
         [
             "group_name",
             "group_value",
@@ -224,7 +337,7 @@ def run_signal_analysis() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     )
     write_csv(
         signal_rows,
-        ANALYSIS_SIGNAL_ROWS_OUTPUT,
+        rows_output,
         [
             "timestamp_utc",
             "scan_id",
@@ -251,6 +364,54 @@ def run_signal_analysis() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
             "reason",
         ],
     )
+    if resolved_source == SIGNAL_ANALYSIS_SOURCE:
+        write_csv(
+            summary_rows,
+            ANALYSIS_SUMMARY_OUTPUT,
+            [
+                "group_name",
+                "group_value",
+                "scans",
+                "scans_with_candidates",
+                "scans_with_placements",
+                "candidate_scan_rate_pct",
+                "placement_scan_rate_pct",
+                "total_candidates",
+                "total_placed",
+                "total_skipped",
+                "placement_rate_pct",
+                "count",
+            ],
+        )
+        write_csv(
+            signal_rows,
+            ANALYSIS_SIGNAL_ROWS_OUTPUT,
+            [
+                "timestamp_utc",
+                "scan_id",
+                "scan_source",
+                "market_phase",
+                "mode",
+                "core_group",
+                "paper_trade_enabled",
+                "candidate_count",
+                "placed_count",
+                "skipped_count",
+                "long_candidate_count",
+                "short_candidate_count",
+                "placed_long_count",
+                "placed_short_count",
+                "placement_rate_pct",
+                "candidate_symbols",
+                "placed_symbols",
+                "skipped_symbols",
+                "skip_reasons",
+                "confidence_values",
+                "benchmark_sp500",
+                "benchmark_nasdaq",
+                "reason",
+            ],
+        )
 
     return summary_rows, signal_rows
 
@@ -272,41 +433,60 @@ def print_summary_row(row: dict[str, Any]) -> None:
 
 
 def main() -> None:
-    summary_rows, signal_rows = run_signal_analysis()
+    gcs_summary_rows, gcs_signal_rows = run_signal_analysis(source="gcs")
+    db_summary_rows, db_signal_rows = run_signal_analysis(source="db")
+
+    comparison_rows = build_comparison_rows(
+        gcs_summary_rows,
+        db_summary_rows,
+        gcs_signal_rows,
+        db_signal_rows,
+    )
+
+    write_csv(
+        comparison_rows,
+        ANALYSIS_COMPARISON_OUTPUT,
+        ["metric", "gcs_value", "db_value", "match"],
+    )
+
+    active_summary_rows = db_summary_rows if SIGNAL_ANALYSIS_SOURCE == "db" else gcs_summary_rows
+    active_signal_rows = db_signal_rows if SIGNAL_ANALYSIS_SOURCE == "db" else gcs_signal_rows
 
     print("Overall signal summary")
-    for row in summary_rows:
+    for row in active_summary_rows:
         if row.get("group_name") == "overall":
             print_summary_row(row)
 
     print("\nSignal summary by mode")
-    for row in summary_rows:
+    for row in active_summary_rows:
         if row.get("group_name") == "mode":
             print_summary_row(row)
 
     print("\nSignal summary by scan_source")
-    for row in summary_rows:
+    for row in active_summary_rows:
         if row.get("group_name") == "scan_source":
             print_summary_row(row)
 
     print("\nSignal summary by market_phase")
-    for row in summary_rows:
+    for row in active_summary_rows:
         if row.get("group_name") == "market_phase":
             print_summary_row(row)
 
     print("\nSignal summary by core_group")
-    for row in summary_rows:
+    for row in active_summary_rows:
         if row.get("group_name") == "core_group":
             print_summary_row(row)
 
     print("\nSkip reason counts")
-    for row in summary_rows:
+    for row in active_summary_rows:
         if row.get("group_name") == "skip_reason":
             print_summary_row(row)
 
-    print(f"\nWrote signal summary CSV to {ANALYSIS_SUMMARY_OUTPUT}")
-    print(f"Wrote signal rows CSV to {ANALYSIS_SIGNAL_ROWS_OUTPUT}")
-    print(f"Signal rows analyzed: {len(signal_rows)}")
+    print(f"\nSignal analysis active source: {SIGNAL_ANALYSIS_SOURCE.upper()}")
+    print(f"Wrote GCS summary CSV to {ANALYSIS_SUMMARY_GCS_OUTPUT}")
+    print(f"Wrote DB summary CSV to {ANALYSIS_SUMMARY_DB_OUTPUT}")
+    print(f"Wrote comparison CSV to {ANALYSIS_COMPARISON_OUTPUT}")
+    print(f"Signal rows analyzed (active): {len(active_signal_rows)}")
 
 
 if __name__ == "__main__":

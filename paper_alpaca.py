@@ -1,56 +1,25 @@
 import os
 from typing import Any
 
-import requests
-
-ALPACA_API_KEY_ID = os.getenv("APCA_API_KEY_ID", "")
-ALPACA_API_SECRET_KEY = os.getenv("APCA_API_SECRET_KEY", "")
-ALPACA_TRADING_BASE_URL = os.getenv("APCA_BASE_URL", "https://paper-api.alpaca.markets").rstrip("/")
+from alpaca.alpaca_client import alpaca_client
+from alpaca.alpaca_orders import cancel_order_by_id, fetch_open_orders
+from alpaca.alpaca_positions import close_position_by_symbol, fetch_positions
 ALPACA_MAX_NOTIONAL = float(os.getenv("ALPACA_MAX_NOTIONAL", "5000"))
 
 
-def _auth_headers() -> dict[str, str]:
-    if not ALPACA_API_KEY_ID or not ALPACA_API_SECRET_KEY:
-        raise RuntimeError("Missing Alpaca API credentials")
-    return {
-        "accept": "application/json",
-        "content-type": "application/json",
-        "APCA-API-KEY-ID": ALPACA_API_KEY_ID,
-        "APCA-API-SECRET-KEY": ALPACA_API_SECRET_KEY,
-    }
-
-
 def get_account() -> dict[str, Any]:
-    response = requests.get(
-        f"{ALPACA_TRADING_BASE_URL}/v2/account",
-        headers=_auth_headers(),
-        timeout=20,
-    )
-    response.raise_for_status()
-    return response.json()
+    data = alpaca_client.get("/v2/account")
+    if isinstance(data, dict):
+        return data
+    raise ValueError("Unexpected Alpaca account response format")
 
 
 def get_open_positions() -> list[dict[str, Any]]:
-    response = requests.get(
-        f"{ALPACA_TRADING_BASE_URL}/v2/positions",
-        headers=_auth_headers(),
-        timeout=20,
-    )
-    response.raise_for_status()
-    data = response.json()
-    return data if isinstance(data, list) else []
+    return fetch_positions()
 
 
 def get_open_orders() -> list[dict[str, Any]]:
-    response = requests.get(
-        f"{ALPACA_TRADING_BASE_URL}/v2/orders",
-        headers=_auth_headers(),
-        params={"status": "open", "nested": "true", "limit": 500, "direction": "desc"},
-        timeout=20,
-    )
-    response.raise_for_status()
-    data = response.json()
-    return data if isinstance(data, list) else []
+    return fetch_open_orders(limit=500, nested=True, direction="desc")
 
 
 def cancel_open_orders_for_symbol(symbol: str) -> list[str]:
@@ -70,12 +39,7 @@ def cancel_open_orders_for_symbol(symbol: str) -> list[str]:
         if not order_id:
             continue
 
-        response = requests.delete(
-            f"{ALPACA_TRADING_BASE_URL}/v2/orders/{order_id}",
-            headers=_auth_headers(),
-            timeout=20,
-        )
-        response.raise_for_status()
+        cancel_order_by_id(order_id)
         canceled_order_ids.append(order_id)
 
         for leg in order.get("legs") or []:
@@ -87,18 +51,7 @@ def cancel_open_orders_for_symbol(symbol: str) -> list[str]:
 
 
 def close_position(symbol: str, cancel_orders: bool = True) -> dict[str, Any]:
-    symbol = str(symbol).strip().upper()
-    if not symbol:
-        raise ValueError("symbol is required")
-
-    response = requests.delete(
-        f"{ALPACA_TRADING_BASE_URL}/v2/positions/{symbol}",
-        headers=_auth_headers(),
-        params={"cancel_orders": "true" if cancel_orders else "false"},
-        timeout=20,
-    )
-    response.raise_for_status()
-    return response.json()
+    return close_position_by_symbol(symbol, cancel_orders=cancel_orders)
 
 
 
@@ -207,13 +160,9 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
         "client_order_id": client_order_id,
     }
 
-    response = requests.post(
-        f"{ALPACA_TRADING_BASE_URL}/v2/orders",
-        headers=_auth_headers(),
-        json=payload,
-        timeout=20,
-    )
-    if response.status_code >= 400:
+    try:
+        order = alpaca_client.post("/v2/orders", json_body=payload)
+    except Exception as e:
         return {
             "attempted": True,
             "placed": False,
@@ -221,11 +170,8 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
             "shares": final_shares,
             "estimated_notional": estimated_notional,
             "reason": "alpaca_order_rejected",
-            "http_status": response.status_code,
-            "details": response.text.strip(),
+            "details": str(e),
         }
-
-    order = response.json()
     legs = order.get("legs") or []
     take_profit_leg_id = ""
     stop_loss_leg_id = ""

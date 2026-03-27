@@ -6,20 +6,21 @@ import csv
 import os
 from dataclasses import dataclass
 from io import StringIO
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import requests
+ 
 from google.cloud import storage
+from storage import insert_broker_order
 
 
 
 GCS_BUCKET_NAME = os.getenv("TRADE_LOG_BUCKET", "stock-scanner-490821-logs")
 GCS_TRADES_OBJECT = os.getenv("TRADE_LOG_OBJECT", "trades/trades.csv")
 OUTPUT_PATH = Path("alpaca_reconciliation.csv")
-ALPACA_API_KEY_ID = os.getenv("APCA_API_KEY_ID", "")
-ALPACA_API_SECRET_KEY = os.getenv("APCA_API_SECRET_KEY", "")
-ALPACA_BASE_URL = os.getenv("APCA_BASE_URL", "https://paper-api.alpaca.markets")
+
+from alpaca.alpaca_orders import fetch_orders
 CLOSE_EVENT_TYPES = {"STOP_HIT", "TARGET_HIT", "MANUAL_CLOSE"}
 
 
@@ -46,6 +47,15 @@ def to_float(value: Any) -> float | None:
         return None
 
 
+def parse_alpaca_datetime(value: Any) -> datetime | None:
+    if value in (None, ""):
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
 def get_gcs_csv_rows(bucket_name: str, object_name: str) -> list[dict[str, str]]:
     client = storage.Client()
     bucket = client.bucket(bucket_name)
@@ -57,27 +67,10 @@ def get_gcs_csv_rows(bucket_name: str, object_name: str) -> list[dict[str, str]]
     return list(csv.DictReader(StringIO(csv_text)))
 
 
-def alpaca_auth_headers() -> dict[str, str]:
-    if not ALPACA_API_KEY_ID or not ALPACA_API_SECRET_KEY:
-        raise ValueError("APCA_API_KEY_ID and APCA_API_SECRET_KEY must be set")
-    return {
-        "APCA-API-KEY-ID": ALPACA_API_KEY_ID,
-        "APCA-API-SECRET-KEY": ALPACA_API_SECRET_KEY,
-    }
 
 
 def fetch_alpaca_orders(limit: int = 500) -> list[dict[str, Any]]:
-    response = requests.get(
-        f"{ALPACA_BASE_URL.rstrip('/')}/v2/orders",
-        headers=alpaca_auth_headers(),
-        params={"status": "all", "nested": "true", "direction": "desc", "limit": limit},
-        timeout=30,
-    )
-    response.raise_for_status()
-    data = response.json()
-    if isinstance(data, list):
-        return data
-    raise ValueError("Unexpected Alpaca orders response format")
+    return fetch_orders(limit=limit, status="all", nested=True, direction="desc")
 
 
 
@@ -157,6 +150,38 @@ def build_alpaca_index(orders: list[dict[str, Any]]) -> dict[str, dict[str, Any]
     return index
 
 
+def flatten_alpaca_orders(orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    flattened: list[dict[str, Any]] = []
+    for order in orders:
+        flattened.append(order)
+        for leg in order.get("legs") or []:
+            flattened.append(leg)
+    return flattened
+
+
+
+def persist_alpaca_orders_to_db(orders: list[dict[str, Any]]) -> None:
+    for order in flatten_alpaca_orders(orders):
+        order_id = str(order.get("id", "") or "").strip()
+        if not order_id:
+            continue
+        try:
+            insert_broker_order(
+                order_id=order_id,
+                symbol=str(order.get("symbol", "") or "").strip().upper() or None,
+                side=str(order.get("side", "") or "").strip().lower() or None,
+                order_type=str(order.get("type", "") or "").strip().lower() or None,
+                status=str(order.get("status", "") or "").strip().lower() or None,
+                qty=to_float(order.get("qty")),
+                filled_qty=to_float(order.get("filled_qty")),
+                avg_fill_price=to_float(order.get("filled_avg_price")),
+                submitted_at=parse_alpaca_datetime(order.get("submitted_at")),
+                filled_at=parse_alpaca_datetime(order.get("filled_at")),
+            )
+        except Exception as e:
+            print(f"DB broker order persist failed for {order_id}: {e}", flush=True)
+
+
 def reconcile(local_pairs: list[LocalTradePair], alpaca_index: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
 
@@ -234,6 +259,7 @@ def write_csv(rows: list[dict[str, Any]], path: Path) -> None:
 def run_reconciliation() -> tuple[list[dict[str, Any]], Path]:
     local_rows = get_gcs_csv_rows(GCS_BUCKET_NAME, GCS_TRADES_OBJECT)
     alpaca_orders = fetch_alpaca_orders()
+    persist_alpaca_orders_to_db(alpaca_orders)
 
     local_pairs = build_local_trade_pairs(local_rows)
     alpaca_index = build_alpaca_index(alpaca_orders)
