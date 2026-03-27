@@ -1,17 +1,28 @@
 from __future__ import annotations
 
 import csv
+import os
 from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable, Optional
 
+from google.cloud import storage
+
 from db import fetch_all
 
+
+LOG_BUCKET = os.getenv("LOG_BUCKET", "stock-scanner-490821-logs")
+SIGNALS_CSV_PATH = os.getenv("SIGNALS_CSV_PATH", "signals/signals.csv")
+TRADES_CSV_PATH = os.getenv("TRADES_CSV_PATH", "trades/trades.csv")
+TRADE_ANALYSIS_SUMMARY_OBJECT = os.getenv("TRADE_ANALYSIS_SUMMARY_OBJECT", "reports/trade_analysis_summary.csv")
+TRADE_ANALYSIS_PAIRED_OBJECT = os.getenv("TRADE_ANALYSIS_PAIRED_OBJECT", "reports/trade_analysis_paired_trades.csv")
+SIGNAL_ANALYSIS_SUMMARY_OBJECT = os.getenv("SIGNAL_ANALYSIS_SUMMARY_OBJECT", "reports/signal_analysis_summary.csv")
+SIGNAL_ANALYSIS_ROWS_OBJECT = os.getenv("SIGNAL_ANALYSIS_ROWS_OBJECT", "reports/signal_analysis_rows.csv")
+RECONCILIATION_OBJECT = os.getenv("RECONCILIATION_OBJECT", "reports/alpaca_reconciliation.csv")
 
 
 def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
-
 
 
 def _write_csv(file_path: Path, rows: list[dict], fieldnames: Iterable[str]) -> None:
@@ -21,6 +32,75 @@ def _write_csv(file_path: Path, rows: list[dict], fieldnames: Iterable[str]) -> 
         writer.writeheader()
         for row in rows:
             writer.writerow(row)
+
+
+def _download_gcs_file(storage_client: storage.Client, bucket_name: str, source_path: str, local_path: Path) -> Optional[Path]:
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(source_path)
+
+    if not blob.exists():
+        print(f"GCS file not found: gs://{bucket_name}/{source_path}")
+        return None
+
+    _ensure_dir(local_path.parent)
+    blob.download_to_filename(str(local_path))
+    return local_path
+
+
+
+def export_original_csv_files(output_dir: str | Path, for_date: Optional[date] = None) -> list[Path]:
+    target_date = for_date or datetime.utcnow().date()
+    base_dir = Path(output_dir) / str(target_date) / "csv"
+    storage_client = storage.Client()
+
+    exported: list[Path] = []
+
+    trades_path = _download_gcs_file(
+        storage_client,
+        LOG_BUCKET,
+        TRADES_CSV_PATH,
+        base_dir / "trades.csv",
+    )
+    if trades_path is not None:
+        exported.append(trades_path)
+
+    signals_path = _download_gcs_file(
+        storage_client,
+        LOG_BUCKET,
+        SIGNALS_CSV_PATH,
+        base_dir / "signals.csv",
+    )
+    if signals_path is not None:
+        exported.append(signals_path)
+
+    return exported
+
+
+
+def export_analysis_files(output_dir: str | Path, for_date: Optional[date] = None) -> list[Path]:
+    target_date = for_date or datetime.utcnow().date()
+    base_dir = Path(output_dir) / str(target_date) / "analysis"
+    storage_client = storage.Client()
+
+    exported: list[Path] = []
+
+    for source_path, filename in [
+        (TRADE_ANALYSIS_SUMMARY_OBJECT, "trade_analysis_summary.csv"),
+        (TRADE_ANALYSIS_PAIRED_OBJECT, "trade_analysis_paired_trades.csv"),
+        (SIGNAL_ANALYSIS_SUMMARY_OBJECT, "signal_analysis_summary.csv"),
+        (SIGNAL_ANALYSIS_ROWS_OBJECT, "signal_analysis_rows.csv"),
+        (RECONCILIATION_OBJECT, "alpaca_reconciliation.csv"),
+    ]:
+        exported_path = _download_gcs_file(
+            storage_client,
+            LOG_BUCKET,
+            source_path,
+            base_dir / filename,
+        )
+        if exported_path is not None:
+            exported.append(exported_path)
+
+    return exported
 
 
 
@@ -35,7 +115,7 @@ def export_trade_events(output_dir: str | Path, for_date: Optional[date] = None)
         """,
         {"target_date": target_date},
     )
-    file_path = Path(output_dir) / str(target_date) / "trade_events.csv"
+    file_path = Path(output_dir) / str(target_date) / "db" / "trade_events.csv"
     fieldnames = rows[0].keys() if rows else [
         "id",
         "event_time",
@@ -66,7 +146,7 @@ def export_scan_runs(output_dir: str | Path, for_date: Optional[date] = None) ->
         """,
         {"target_date": target_date},
     )
-    file_path = Path(output_dir) / str(target_date) / "scan_runs.csv"
+    file_path = Path(output_dir) / str(target_date) / "db" / "scan_runs.csv"
     fieldnames = rows[0].keys() if rows else [
         "id",
         "scan_time",
@@ -94,7 +174,7 @@ def export_broker_orders(output_dir: str | Path, for_date: Optional[date] = None
         """,
         {"target_date": target_date},
     )
-    file_path = Path(output_dir) / str(target_date) / "broker_orders.csv"
+    file_path = Path(output_dir) / str(target_date) / "db" / "broker_orders.csv"
     fieldnames = rows[0].keys() if rows else [
         "id",
         "order_id",
@@ -125,7 +205,7 @@ def export_reconciliation_runs(output_dir: str | Path, for_date: Optional[date] 
         """,
         {"target_date": target_date},
     )
-    file_path = Path(output_dir) / str(target_date) / "reconciliation_runs.csv"
+    file_path = Path(output_dir) / str(target_date) / "db" / "reconciliation_runs.csv"
     fieldnames = rows[0].keys() if rows else [
         "id",
         "run_time",
@@ -140,9 +220,12 @@ def export_reconciliation_runs(output_dir: str | Path, for_date: Optional[date] 
 
 
 def export_all_reports(output_dir: str | Path, for_date: Optional[date] = None) -> list[Path]:
-    return [
+    exported_paths = [
         export_trade_events(output_dir, for_date=for_date),
         export_scan_runs(output_dir, for_date=for_date),
         export_broker_orders(output_dir, for_date=for_date),
         export_reconciliation_runs(output_dir, for_date=for_date),
     ]
+    exported_paths.extend(export_original_csv_files(output_dir, for_date=for_date))
+    exported_paths.extend(export_analysis_files(output_dir, for_date=for_date))
+    return exported_paths

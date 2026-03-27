@@ -1,5 +1,7 @@
 
 
+"""Thin client facade over centralized Alpaca HTTP helpers (alpaca_http)."""
+
 from __future__ import annotations
 
 from typing import Any

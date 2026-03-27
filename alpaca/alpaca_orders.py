@@ -1,3 +1,4 @@
+"""Alpaca order operations built on the centralized Alpaca client wrapper."""
 from __future__ import annotations
 
 from typing import Any

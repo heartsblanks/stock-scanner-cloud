@@ -17,6 +17,7 @@ from storage import (
     insert_trade_event,
     insert_broker_order,
     insert_reconciliation_run,
+    insert_reconciliation_detail,
 )
 from export_daily_snapshot import run_daily_snapshot
 from routes.health import register_health_routes
@@ -105,6 +106,7 @@ def safe_insert_broker_order(**kwargs) -> None:
         print(f"DB broker order write failed: {e}", flush=True)
 
 
+
 def safe_insert_reconciliation_run(**kwargs) -> None:
     if not ENABLE_DB_LOGGING:
         return
@@ -112,6 +114,15 @@ def safe_insert_reconciliation_run(**kwargs) -> None:
         insert_reconciliation_run(**kwargs)
     except Exception as e:
         print(f"DB reconciliation write failed: {e}", flush=True)
+
+
+def safe_insert_reconciliation_detail(**kwargs) -> None:
+    if not ENABLE_DB_LOGGING:
+        return
+    try:
+        insert_reconciliation_detail(**kwargs)
+    except Exception as e:
+        print(f"DB reconciliation detail write failed: {e}", flush=True)
 
 
 def find_instrument_by_symbol(symbol: str) -> tuple[str, str] | tuple[None, None]:
@@ -830,6 +841,7 @@ register_reconcile_routes(
     reconciliation_bucket=RECONCILIATION_BUCKET,
     reconciliation_object=RECONCILIATION_OBJECT,
     safe_insert_reconciliation_run=safe_insert_reconciliation_run,
+    safe_insert_reconciliation_detail=safe_insert_reconciliation_detail,
 )
 
 register_trade_routes(

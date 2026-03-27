@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import csv
@@ -36,6 +34,29 @@ class LocalTradePair:
     shares: float | None
     exit_reason: str
     client_order_id: str
+
+
+@dataclass
+class ReconciliationDetailRow:
+    broker_parent_order_id: str
+    symbol: str
+    mode: str
+    client_order_id: str
+    local_entry_timestamp_utc: str
+    local_exit_timestamp_utc: str
+    local_entry_price: float | None
+    alpaca_entry_price: float | None
+    local_exit_price: float | None
+    alpaca_exit_price: float | None
+    local_shares: float | None
+    alpaca_entry_qty: float | None
+    alpaca_exit_qty: float | None
+    local_exit_reason: str
+    alpaca_exit_reason: str
+    alpaca_exit_order_id: str
+    entry_price_diff: float | str
+    exit_price_diff: float | str
+    match_status: str
 
 
 def to_float(value: Any) -> float | None:
@@ -182,45 +203,104 @@ def persist_alpaca_orders_to_db(orders: list[dict[str, Any]]) -> None:
             print(f"DB broker order persist failed for {order_id}: {e}", flush=True)
 
 
+def build_reconciliation_detail_row(pair: LocalTradePair, order: dict[str, Any] | None) -> ReconciliationDetailRow:
+    if not order:
+        return ReconciliationDetailRow(
+            broker_parent_order_id=pair.broker_parent_order_id,
+            symbol=pair.symbol,
+            mode=pair.mode,
+            client_order_id=pair.client_order_id,
+            local_entry_timestamp_utc=pair.entry_timestamp_utc,
+            local_exit_timestamp_utc=pair.exit_timestamp_utc,
+            local_entry_price=pair.entry_price,
+            alpaca_entry_price=None,
+            local_exit_price=pair.exit_price,
+            alpaca_exit_price=None,
+            local_shares=pair.shares,
+            alpaca_entry_qty=None,
+            alpaca_exit_qty=None,
+            local_exit_reason=pair.exit_reason,
+            alpaca_exit_reason="",
+            alpaca_exit_order_id="",
+            entry_price_diff="",
+            exit_price_diff="",
+            match_status="missing_in_alpaca",
+        )
+
+    alpaca_entry_price = to_float(order.get("filled_avg_price"))
+    alpaca_entry_qty = to_float(order.get("filled_qty"))
+    alpaca_exit_reason, alpaca_exit_qty, alpaca_exit_price, alpaca_exit_order_id = infer_alpaca_exit(order)
+
+    entry_price_diff = (
+        round((pair.entry_price or 0.0) - (alpaca_entry_price or 0.0), 6)
+        if pair.entry_price is not None and alpaca_entry_price is not None
+        else ""
+    )
+    exit_price_diff = (
+        round((pair.exit_price or 0.0) - (alpaca_exit_price or 0.0), 6)
+        if pair.exit_price is not None and alpaca_exit_price is not None
+        else ""
+    )
+
+    match_status = "matched"
+    if alpaca_exit_reason == "UNKNOWN":
+        match_status = "exit_not_resolved"
+    elif pair.exit_reason and alpaca_exit_reason and pair.exit_reason != alpaca_exit_reason:
+        match_status = "exit_reason_mismatch"
+    elif pair.shares is not None and alpaca_entry_qty is not None and abs(pair.shares - alpaca_entry_qty) > 1e-9:
+        match_status = "entry_qty_mismatch"
+    elif pair.shares is not None and alpaca_exit_qty is not None and abs(pair.shares - alpaca_exit_qty) > 1e-9:
+        match_status = "exit_qty_mismatch"
+
+    return ReconciliationDetailRow(
+        broker_parent_order_id=pair.broker_parent_order_id,
+        symbol=pair.symbol,
+        mode=pair.mode,
+        client_order_id=pair.client_order_id,
+        local_entry_timestamp_utc=pair.entry_timestamp_utc,
+        local_exit_timestamp_utc=pair.exit_timestamp_utc,
+        local_entry_price=pair.entry_price,
+        alpaca_entry_price=alpaca_entry_price,
+        local_exit_price=pair.exit_price,
+        alpaca_exit_price=alpaca_exit_price,
+        local_shares=pair.shares,
+        alpaca_entry_qty=alpaca_entry_qty,
+        alpaca_exit_qty=alpaca_exit_qty,
+        local_exit_reason=pair.exit_reason,
+        alpaca_exit_reason=alpaca_exit_reason,
+        alpaca_exit_order_id=alpaca_exit_order_id,
+        entry_price_diff=entry_price_diff,
+        exit_price_diff=exit_price_diff,
+        match_status=match_status,
+    )
+
+
 def reconcile(local_pairs: list[LocalTradePair], alpaca_index: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
 
     for pair in local_pairs:
         order = alpaca_index.get(pair.broker_parent_order_id)
-        if not order:
-            results.append({
-                "broker_parent_order_id": pair.broker_parent_order_id,
-                "symbol": pair.symbol,
-                "mode": pair.mode,
-                "client_order_id": pair.client_order_id,
-                "match_status": "missing_in_alpaca",
-            })
-            continue
-
-        alpaca_entry_price = to_float(order.get("filled_avg_price"))
-        alpaca_entry_qty = to_float(order.get("filled_qty"))
-        alpaca_exit_reason, alpaca_exit_qty, alpaca_exit_price, alpaca_exit_order_id = infer_alpaca_exit(order)
-
+        detail_row = build_reconciliation_detail_row(pair, order)
         results.append({
-            "broker_parent_order_id": pair.broker_parent_order_id,
-            "symbol": pair.symbol,
-            "mode": pair.mode,
-            "client_order_id": pair.client_order_id,
-            "local_entry_timestamp_utc": pair.entry_timestamp_utc,
-            "local_exit_timestamp_utc": pair.exit_timestamp_utc,
-            "local_entry_price": pair.entry_price if pair.entry_price is not None else "",
-            "alpaca_entry_price": alpaca_entry_price if alpaca_entry_price is not None else "",
-            "local_exit_price": pair.exit_price if pair.exit_price is not None else "",
-            "alpaca_exit_price": alpaca_exit_price if alpaca_exit_price is not None else "",
-            "local_shares": pair.shares if pair.shares is not None else "",
-            "alpaca_entry_qty": alpaca_entry_qty if alpaca_entry_qty is not None else "",
-            "alpaca_exit_qty": alpaca_exit_qty if alpaca_exit_qty is not None else "",
-            "local_exit_reason": pair.exit_reason,
-            "alpaca_exit_reason": alpaca_exit_reason,
-            "alpaca_exit_order_id": alpaca_exit_order_id,
-            "entry_price_diff": round((pair.entry_price or 0.0) - (alpaca_entry_price or 0.0), 6) if pair.entry_price is not None and alpaca_entry_price is not None else "",
-            "exit_price_diff": round((pair.exit_price or 0.0) - (alpaca_exit_price or 0.0), 6) if pair.exit_price is not None and alpaca_exit_price is not None else "",
-            "match_status": "matched",
+            "broker_parent_order_id": detail_row.broker_parent_order_id,
+            "symbol": detail_row.symbol,
+            "mode": detail_row.mode,
+            "client_order_id": detail_row.client_order_id,
+            "local_entry_timestamp_utc": detail_row.local_entry_timestamp_utc,
+            "local_exit_timestamp_utc": detail_row.local_exit_timestamp_utc,
+            "local_entry_price": detail_row.local_entry_price if detail_row.local_entry_price is not None else "",
+            "alpaca_entry_price": detail_row.alpaca_entry_price if detail_row.alpaca_entry_price is not None else "",
+            "local_exit_price": detail_row.local_exit_price if detail_row.local_exit_price is not None else "",
+            "alpaca_exit_price": detail_row.alpaca_exit_price if detail_row.alpaca_exit_price is not None else "",
+            "local_shares": detail_row.local_shares if detail_row.local_shares is not None else "",
+            "alpaca_entry_qty": detail_row.alpaca_entry_qty if detail_row.alpaca_entry_qty is not None else "",
+            "alpaca_exit_qty": detail_row.alpaca_exit_qty if detail_row.alpaca_exit_qty is not None else "",
+            "local_exit_reason": detail_row.local_exit_reason,
+            "alpaca_exit_reason": detail_row.alpaca_exit_reason,
+            "alpaca_exit_order_id": detail_row.alpaca_exit_order_id,
+            "entry_price_diff": detail_row.entry_price_diff,
+            "exit_price_diff": detail_row.exit_price_diff,
+            "match_status": detail_row.match_status,
         })
 
     return results
@@ -256,6 +336,14 @@ def write_csv(rows: list[dict[str, Any]], path: Path) -> None:
             writer.writerow(row)
 
 
+def summarize_reconciliation(rows: list[dict[str, Any]]) -> dict[str, int]:
+    summary: dict[str, int] = {}
+    for row in rows:
+        key = str(row.get("match_status", "unknown")).strip() or "unknown"
+        summary[key] = summary.get(key, 0) + 1
+    return summary
+
+
 def run_reconciliation() -> tuple[list[dict[str, Any]], Path]:
     local_rows = get_gcs_csv_rows(GCS_BUCKET_NAME, GCS_TRADES_OBJECT)
     alpaca_orders = fetch_alpaca_orders()
@@ -264,6 +352,8 @@ def run_reconciliation() -> tuple[list[dict[str, Any]], Path]:
     local_pairs = build_local_trade_pairs(local_rows)
     alpaca_index = build_alpaca_index(alpaca_orders)
     reconciled_rows = reconcile(local_pairs, alpaca_index)
+    summary = summarize_reconciliation(reconciled_rows)
+    print(f"Reconciliation summary: {summary}", flush=True)
 
     write_csv(reconciled_rows, OUTPUT_PATH)
     return reconciled_rows, OUTPUT_PATH

@@ -1,3 +1,4 @@
+"""Helpers for syncing Alpaca bracket order state through the centralized order client."""
 from typing import Any
 
 from alpaca.alpaca_orders import fetch_order_by_id, fetch_orders
@@ -16,7 +17,6 @@ def get_order_by_id(order_id: str, nested: bool = True) -> dict[str, Any]:
 
 def get_orders(status: str = "all", limit: int = 200, nested: bool = True, direction: str = "desc") -> list[dict[str, Any]]:
     return fetch_orders(status=status, limit=limit, nested=nested, direction=direction)
-
 
 def _find_exit_legs(order: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     take_profit_leg = None

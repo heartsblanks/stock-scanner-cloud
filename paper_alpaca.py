@@ -1,3 +1,4 @@
+"""Paper Alpaca helpers built on the centralized Alpaca client/order/position layers."""
 import os
 from typing import Any
 
@@ -52,7 +53,6 @@ def cancel_open_orders_for_symbol(symbol: str) -> list[str]:
 
 def close_position(symbol: str, cancel_orders: bool = True) -> dict[str, Any]:
     return close_position_by_symbol(symbol, cancel_orders=cancel_orders)
-
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:

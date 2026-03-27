@@ -313,6 +313,153 @@ def insert_reconciliation_run(
     )
 
 
+# Insert reconciliation detail
+def insert_reconciliation_detail(
+    run_id: Optional[int],
+    broker_parent_order_id: Optional[str] = None,
+    symbol: Optional[str] = None,
+    mode: Optional[str] = None,
+    client_order_id: Optional[str] = None,
+    local_entry_timestamp_utc: Optional[datetime] = None,
+    local_exit_timestamp_utc: Optional[datetime] = None,
+    local_entry_price: Optional[float] = None,
+    alpaca_entry_price: Optional[float] = None,
+    local_exit_price: Optional[float] = None,
+    alpaca_exit_price: Optional[float] = None,
+    local_shares: Optional[float] = None,
+    alpaca_entry_qty: Optional[float] = None,
+    alpaca_exit_qty: Optional[float] = None,
+    local_exit_reason: Optional[str] = None,
+    alpaca_exit_reason: Optional[str] = None,
+    alpaca_exit_order_id: Optional[str] = None,
+    entry_price_diff: Optional[float] = None,
+    exit_price_diff: Optional[float] = None,
+    match_status: Optional[str] = None,
+) -> None:
+    existing = fetch_one(
+        """
+        SELECT id
+        FROM reconciliation_details
+        WHERE COALESCE(run_id, -1) = %(run_id_match)s
+          AND COALESCE(broker_parent_order_id, '') = %(broker_parent_order_id)s
+          AND COALESCE(symbol, '') = %(symbol)s
+          AND COALESCE(mode, '') = %(mode)s
+          AND COALESCE(client_order_id, '') = %(client_order_id)s
+          AND COALESCE(local_entry_timestamp_utc, TIMESTAMPTZ '1970-01-01 00:00:00+00') = %(local_entry_timestamp_utc_match)s
+          AND COALESCE(local_exit_timestamp_utc, TIMESTAMPTZ '1970-01-01 00:00:00+00') = %(local_exit_timestamp_utc_match)s
+          AND COALESCE(local_entry_price, -1) = %(local_entry_price_match)s
+          AND COALESCE(alpaca_entry_price, -1) = %(alpaca_entry_price_match)s
+          AND COALESCE(local_exit_price, -1) = %(local_exit_price_match)s
+          AND COALESCE(alpaca_exit_price, -1) = %(alpaca_exit_price_match)s
+          AND COALESCE(local_shares, -1) = %(local_shares_match)s
+          AND COALESCE(alpaca_entry_qty, -1) = %(alpaca_entry_qty_match)s
+          AND COALESCE(alpaca_exit_qty, -1) = %(alpaca_exit_qty_match)s
+          AND COALESCE(local_exit_reason, '') = %(local_exit_reason)s
+          AND COALESCE(alpaca_exit_reason, '') = %(alpaca_exit_reason)s
+          AND COALESCE(alpaca_exit_order_id, '') = %(alpaca_exit_order_id)s
+          AND COALESCE(entry_price_diff, -1) = %(entry_price_diff_match)s
+          AND COALESCE(exit_price_diff, -1) = %(exit_price_diff_match)s
+          AND COALESCE(match_status, '') = %(match_status)s
+        LIMIT 1
+        """,
+        {
+            "run_id_match": run_id if run_id is not None else -1,
+            "broker_parent_order_id": _normalize_text(broker_parent_order_id),
+            "symbol": _normalize_text(symbol),
+            "mode": _normalize_text(mode),
+            "client_order_id": _normalize_text(client_order_id),
+            "local_entry_timestamp_utc_match": local_entry_timestamp_utc or datetime(1970, 1, 1),
+            "local_exit_timestamp_utc_match": local_exit_timestamp_utc or datetime(1970, 1, 1),
+            "local_entry_price_match": local_entry_price if local_entry_price is not None else -1,
+            "alpaca_entry_price_match": alpaca_entry_price if alpaca_entry_price is not None else -1,
+            "local_exit_price_match": local_exit_price if local_exit_price is not None else -1,
+            "alpaca_exit_price_match": alpaca_exit_price if alpaca_exit_price is not None else -1,
+            "local_shares_match": local_shares if local_shares is not None else -1,
+            "alpaca_entry_qty_match": alpaca_entry_qty if alpaca_entry_qty is not None else -1,
+            "alpaca_exit_qty_match": alpaca_exit_qty if alpaca_exit_qty is not None else -1,
+            "local_exit_reason": _normalize_text(local_exit_reason),
+            "alpaca_exit_reason": _normalize_text(alpaca_exit_reason),
+            "alpaca_exit_order_id": _normalize_text(alpaca_exit_order_id),
+            "entry_price_diff_match": entry_price_diff if entry_price_diff is not None else -1,
+            "exit_price_diff_match": exit_price_diff if exit_price_diff is not None else -1,
+            "match_status": _normalize_text(match_status),
+        },
+    )
+    if existing:
+        return
+
+    execute(
+        """
+        INSERT INTO reconciliation_details (
+            run_id,
+            broker_parent_order_id,
+            symbol,
+            mode,
+            client_order_id,
+            local_entry_timestamp_utc,
+            local_exit_timestamp_utc,
+            local_entry_price,
+            alpaca_entry_price,
+            local_exit_price,
+            alpaca_exit_price,
+            local_shares,
+            alpaca_entry_qty,
+            alpaca_exit_qty,
+            local_exit_reason,
+            alpaca_exit_reason,
+            alpaca_exit_order_id,
+            entry_price_diff,
+            exit_price_diff,
+            match_status
+        )
+        VALUES (
+            %(run_id)s,
+            %(broker_parent_order_id)s,
+            %(symbol)s,
+            %(mode)s,
+            %(client_order_id)s,
+            %(local_entry_timestamp_utc)s,
+            %(local_exit_timestamp_utc)s,
+            %(local_entry_price)s,
+            %(alpaca_entry_price)s,
+            %(local_exit_price)s,
+            %(alpaca_exit_price)s,
+            %(local_shares)s,
+            %(alpaca_entry_qty)s,
+            %(alpaca_exit_qty)s,
+            %(local_exit_reason)s,
+            %(alpaca_exit_reason)s,
+            %(alpaca_exit_order_id)s,
+            %(entry_price_diff)s,
+            %(exit_price_diff)s,
+            %(match_status)s
+        )
+        """,
+        {
+            "run_id": run_id,
+            "broker_parent_order_id": broker_parent_order_id,
+            "symbol": symbol,
+            "mode": mode,
+            "client_order_id": client_order_id,
+            "local_entry_timestamp_utc": local_entry_timestamp_utc,
+            "local_exit_timestamp_utc": local_exit_timestamp_utc,
+            "local_entry_price": local_entry_price,
+            "alpaca_entry_price": alpaca_entry_price,
+            "local_exit_price": local_exit_price,
+            "alpaca_exit_price": alpaca_exit_price,
+            "local_shares": local_shares,
+            "alpaca_entry_qty": alpaca_entry_qty,
+            "alpaca_exit_qty": alpaca_exit_qty,
+            "local_exit_reason": local_exit_reason,
+            "alpaca_exit_reason": alpaca_exit_reason,
+            "alpaca_exit_order_id": alpaca_exit_order_id,
+            "entry_price_diff": entry_price_diff,
+            "exit_price_diff": exit_price_diff,
+            "match_status": match_status,
+        },
+    )
+
+
 
 def get_recent_trade_events(limit: int = 100) -> list[dict[str, Any]]:
     return fetch_all(
@@ -364,6 +511,19 @@ def get_broker_order(order_id: str) -> Optional[dict[str, Any]]:
         LIMIT 1
         """,
         {"order_id": order_id},
+    )
+
+
+# Read reconciliation details for a run
+def get_reconciliation_details_for_run(run_id: int) -> list[dict[str, Any]]:
+    return fetch_all(
+        """
+        SELECT *
+        FROM reconciliation_details
+        WHERE run_id = %(run_id)s
+        ORDER BY id ASC
+        """,
+        {"run_id": run_id},
     )
 
 

@@ -14,9 +14,11 @@ BASE_URL = "https://api.twelvedata.com/time_series"
 
 PRIMARY_INSTRUMENTS = {
     "Rivian": {"symbol": "RIVN", "type": "stock", "priority": 10, "market": "NASDAQ"},
-    "NIO": {"symbol": "NIO", "type": "stock", "priority": 9, "market": "NASDAQ"},
-    "SoFi": {"symbol": "SOFI", "type": "stock", "priority": 8, "market": "NASDAQ"},
+    "SoFi": {"symbol": "SOFI", "type": "stock", "priority": 9, "market": "NASDAQ"},
     "Snap": {"symbol": "SNAP", "type": "stock", "priority": 8, "market": "NASDAQ"},
+    "NIO": {"symbol": "NIO", "type": "stock", "priority": 8, "market": "NASDAQ"},
+    "Hims & Hers": {"symbol": "HIMS", "type": "stock", "priority": 8, "market": "NASDAQ"},
+    "Joby Aviation": {"symbol": "JOBY", "type": "stock", "priority": 8, "market": "NASDAQ"},
 }
 
 SECONDARY_INSTRUMENTS = {
@@ -24,20 +26,26 @@ SECONDARY_INSTRUMENTS = {
     "Archer Aviation": {"symbol": "ACHR", "type": "stock", "priority": 7, "market": "NASDAQ"},
     "Opendoor": {"symbol": "OPEN", "type": "stock", "priority": 6, "market": "NASDAQ"},
     "QuantumScape": {"symbol": "QS", "type": "stock", "priority": 6, "market": "NASDAQ"},
-}
-
-THIRD_INSTRUMENTS = {
-    "Plug Power": {"symbol": "PLUG", "type": "stock", "priority": 7, "market": "NASDAQ"},
-    "Bitfarms": {"symbol": "BITF", "type": "stock", "priority": 7, "market": "NASDAQ"},
-    "Joby Aviation": {"symbol": "JOBY", "type": "stock", "priority": 6, "market": "NASDAQ"},
+    "Plug Power": {"symbol": "PLUG", "type": "stock", "priority": 6, "market": "NASDAQ"},
     "Grab": {"symbol": "GRAB", "type": "stock", "priority": 6, "market": "NASDAQ"},
 }
 
-FOURTH_INSTRUMENTS = {
+THIRD_INSTRUMENTS = {
+    "Bitfarms": {"symbol": "BITF", "type": "stock", "priority": 7, "market": "NASDAQ"},
     "Clover Health": {"symbol": "CLOV", "type": "stock", "priority": 6, "market": "NASDAQ"},
-    "Telefonica Brasil": {"symbol": "VIV", "type": "stock", "priority": 5, "market": "NASDAQ"},
     "TAL Education": {"symbol": "TAL", "type": "stock", "priority": 6, "market": "NASDAQ"},
-    "Hims & Hers": {"symbol": "HIMS", "type": "stock", "priority": 6, "market": "NASDAQ"},
+    "Telefonica Brasil": {"symbol": "VIV", "type": "stock", "priority": 5, "market": "NASDAQ"},
+    "Rocket Lab": {"symbol": "RKLB", "type": "stock", "priority": 7, "market": "NASDAQ"},
+    "BigBear.ai": {"symbol": "BBAI", "type": "stock", "priority": 6, "market": "NASDAQ"},
+}
+
+FOURTH_INSTRUMENTS = {
+    "SoundHound AI": {"symbol": "SOUN", "type": "stock", "priority": 7, "market": "NASDAQ"},
+    "C3.ai": {"symbol": "AI", "type": "stock", "priority": 7, "market": "NASDAQ"},
+    "D-Wave Quantum": {"symbol": "QBTS", "type": "stock", "priority": 7, "market": "NASDAQ"},
+    "IonQ": {"symbol": "IONQ", "type": "stock", "priority": 7, "market": "NASDAQ"},
+    "Nu Holdings": {"symbol": "NU", "type": "stock", "priority": 6, "market": "NASDAQ"},
+    "Tempus AI": {"symbol": "TEM", "type": "stock", "priority": 6, "market": "NASDAQ"},
 }
 
 CORE_ONE_INSTRUMENTS = {
@@ -45,13 +53,17 @@ CORE_ONE_INSTRUMENTS = {
     "Tesla": {"symbol": "TSLA", "type": "stock", "priority": 10, "market": "NASDAQ"},
     "Apple": {"symbol": "AAPL", "type": "stock", "priority": 10, "market": "NASDAQ"},
     "AMD": {"symbol": "AMD", "type": "stock", "priority": 9, "market": "NASDAQ"},
+    "Palantir": {"symbol": "PLTR", "type": "stock", "priority": 9, "market": "NASDAQ"},
+    "Microsoft": {"symbol": "MSFT", "type": "stock", "priority": 9, "market": "NASDAQ"},
 }
 
 CORE_TWO_INSTRUMENTS = {
-    "Microsoft": {"symbol": "MSFT", "type": "stock", "priority": 10, "market": "NASDAQ"},
     "Meta": {"symbol": "META", "type": "stock", "priority": 9, "market": "NASDAQ"},
     "Amazon": {"symbol": "AMZN", "type": "stock", "priority": 9, "market": "NASDAQ"},
-    "Palantir": {"symbol": "PLTR", "type": "stock", "priority": 8, "market": "NASDAQ"},
+    "Alphabet": {"symbol": "GOOGL", "type": "stock", "priority": 9, "market": "NASDAQ"},
+    "Netflix": {"symbol": "NFLX", "type": "stock", "priority": 8, "market": "NASDAQ"},
+    "Broadcom": {"symbol": "AVGO", "type": "stock", "priority": 8, "market": "NASDAQ"},
+    "Micron": {"symbol": "MU", "type": "stock", "priority": 8, "market": "NASDAQ"},
 }
 
 
