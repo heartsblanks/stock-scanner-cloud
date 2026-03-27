@@ -780,8 +780,69 @@ def run_scan_wrapper(payload):
 
 
 
-def run_scheduled_paper_scan_wrapper(payload):
-    now_ny = datetime.now(NY_TZ)
+                close_filled_avg_price_raw = close_order.get("filled_avg_price", "")
+                if close_filled_avg_price_raw not in (None, ""):
+                    close_filled_avg_price = str(close_filled_avg_price_raw).strip()
+            except Exception as order_read_error:
+                print(f"Paper close order read failed for {symbol}: {order_read_error}", flush=True)
+
+        matching_open_row = next(
+            (row for row in open_paper_rows if str(row.get("symbol", "")).strip().upper() == symbol),
+            None,
+        )
+
+        timestamp_utc = datetime.now(timezone.utc).isoformat()
+
+        
+
+        closed_count += 1
+        results.append({
+            "symbol": symbol,
+            "closed": True,
+            "qty": qty,
+            "side": side,
+            "exit_price": close_filled_avg_price if close_filled_avg_price else current_price,
+            "close_order_id": close_order_id,
+            "close_status": close_order_status,
+            "close_filled_qty": close_filled_qty,
+            "close_filled_avg_price": close_filled_avg_price,
+            "canceled_order_count": len(canceled_order_ids),
+        })
+
+    return jsonify({
+        "ok": True,
+        "position_count": len(positions),
+        "closed_count": closed_count,
+        "skipped_count": skipped_count,
+        "results": results,
+    })
+
+
+@app.post("/reconcile-paper-trades")
+def reconcile_paper_trades():
+    try:
+        reconciled_rows, output_path = run_reconciliation()
+    except Exception as e:
+        print(f"Paper reconciliation failed: {e}", flush=True)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    gcs_uri = ""
+    try:
+        gcs_uri = upload_file_to_gcs(output_path, RECONCILIATION_BUCKET, RECONCILIATION_OBJECT)
+    except Exception as e:
+        print(f"Paper reconciliation upload failed: {e}", flush=True)
+
+    return jsonify({
+        "ok": True,
+        "row_count": len(reconciled_rows),
+        "local_output_path": str(output_path),
+        "gcs_output_uri": gcs_uri,
+    })
+
+
+# --- Trade analysis endpoint ---
+@app.post("/analyze-paper-trades")
+def analyze_paper_trades():
     try:
         scheduled_payload = build_scheduled_scan_payload(payload, now_ny=now_ny)
     except Exception as e:
