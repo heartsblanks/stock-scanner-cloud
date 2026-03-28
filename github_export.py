@@ -46,56 +46,73 @@ def _masked_remote_url() -> str:
     return f"https://x-access-token:{GITHUB_TOKEN}@github.com/{GITHUB_OWNER}/{GITHUB_REPO}.git"
 
 
-def _prepare_repo(path: Path) -> Path:
-    if path.exists():
-        shutil.rmtree(path)
+def _clone_repo(repo_dir: Path) -> Path:
+    if repo_dir.exists():
+        shutil.rmtree(repo_dir)
 
-    path.parent.mkdir(parents=True, exist_ok=True)
+    repo_dir.parent.mkdir(parents=True, exist_ok=True)
 
     remote_url = _masked_remote_url()
-    clone_parent = path.parent
-    _run(["git", "clone", "--branch", GITHUB_BRANCH, remote_url, str(path.name)], clone_parent)
+    _run(
+        ["git", "clone", "--branch", GITHUB_BRANCH, remote_url, str(repo_dir.name)],
+        repo_dir.parent,
+    )
 
-    _run(["git", "config", "user.name", GIT_AUTHOR_NAME], path)
-    _run(["git", "config", "user.email", GIT_AUTHOR_EMAIL], path)
-    _run(["git", "remote", "set-url", "origin", remote_url], path)
+    _run(["git", "config", "user.name", GIT_AUTHOR_NAME], repo_dir)
+    _run(["git", "config", "user.email", GIT_AUTHOR_EMAIL], repo_dir)
+    _run(["git", "remote", "set-url", "origin", remote_url], repo_dir)
 
-    return path
+    return repo_dir
 
 
-def commit_and_push(repo_dir: str | Path, files_to_add: Iterable[str | Path], message: str) -> None:
-    path = _prepare_repo(Path(repo_dir).expanduser().resolve())
+def commit_and_push(
+    repo_dir: str | Path,
+    files_to_add: Iterable[str | Path],
+    message: str,
+    source_base_dir: str | Path,
+) -> None:
+    repo_path = _clone_repo(Path(repo_dir).expanduser().resolve())
+    source_base = Path(source_base_dir).expanduser().resolve()
 
     add_targets = [Path(file_path) for file_path in files_to_add]
     if not add_targets:
         raise ValueError("files_to_add must not be empty")
 
-    for src in add_targets:
-        src_path = src.expanduser().resolve()
+    copied_targets: list[str] = []
+
+    for relative_path in add_targets:
+        src_path = source_base / relative_path
+        dst_path = repo_path / relative_path
+
         if not src_path.exists():
             continue
 
-        dst_path = path / src_path.name
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+
         if src_path.is_dir():
             if dst_path.exists():
                 shutil.rmtree(dst_path)
             shutil.copytree(src_path, dst_path)
         else:
-            dst_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src_path, dst_path)
 
-    _run(["git", "add", "."], path)
+        copied_targets.append(str(relative_path))
+
+    if not copied_targets:
+        return
+
+    _run(["git", "add", *copied_targets], repo_path)
 
     status = subprocess.run(
         ["git", "status", "--porcelain"],
-        cwd=str(path),
+        cwd=str(repo_path),
         check=False,
         text=True,
         capture_output=True,
-    )
+    ).stdout.strip()
 
-    if not status.stdout.strip():
+    if not status:
         return
 
-    _run(["git", "commit", "-m", message], path)
-    _run(["git", "push", "origin", GITHUB_BRANCH], path)
+    _run(["git", "commit", "-m", message], repo_path)
+    _run(["git", "push", "origin", GITHUB_BRANCH], repo_path)
