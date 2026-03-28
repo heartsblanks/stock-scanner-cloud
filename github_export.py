@@ -22,7 +22,9 @@ class GitHubExportConfigurationError(RuntimeError):
 
 
 def _run(cmd: list[str], cwd: Path) -> None:
-    subprocess.run(cmd, cwd=str(cwd), check=True)
+    subprocess.run(cmd, cwd=str(cwd), check=True,
+    text=True,
+        capture_output=True)
 
 
 
