@@ -54,7 +54,7 @@ def _log_alpaca_call(
             duration_ms=duration_ms,
         )
     except Exception as e:
-        print(f"Alpaca API DB log failed: {e}")
+        print(f"Alpaca API DB log failed: {type(e).__name__}: {e}")
 
 def alpaca_auth_headers() -> dict[str, str]:
     if not ALPACA_API_KEY_ID or not ALPACA_API_SECRET_KEY:

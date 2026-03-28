@@ -977,6 +977,7 @@ def get_table_row_count(table_name: str) -> int:
         "reconciliation_runs",
         "reconciliation_details",
         "alpaca_api_logs",
+        "trade_lifecycles",
     }
     normalized_table_name = str(table_name).strip()
     if normalized_table_name not in allowed_tables:
@@ -1013,6 +1014,9 @@ def insert_alpaca_api_log(
     request_body: Optional[dict[str, Any]] = None,
     status_code: Optional[int] = None,
     response_body: Optional[str] = None,
+    success: Optional[bool] = None,
+    error_message: Optional[str] = None,
+    duration_ms: Optional[int] = None,
 ) -> None:
     execute(
         """
@@ -1023,7 +1027,10 @@ def insert_alpaca_api_log(
             params_json,
             request_body_json,
             status_code,
-            response_body
+            response_body,
+            success,
+            error_message,
+            duration_ms
         )
         VALUES (
             %(logged_at)s,
@@ -1032,7 +1039,10 @@ def insert_alpaca_api_log(
             %(params_json)s,
             %(request_body_json)s,
             %(status_code)s,
-            %(response_body)s
+            %(response_body)s,
+            %(success)s,
+            %(error_message)s,
+            %(duration_ms)s
         )
         """,
         {
@@ -1043,6 +1053,9 @@ def insert_alpaca_api_log(
             "request_body_json": json.dumps(request_body, sort_keys=True) if request_body is not None else None,
             "status_code": status_code,
             "response_body": response_body,
+            "success": success,
+            "error_message": error_message,
+            "duration_ms": duration_ms,
         },
     )
 
@@ -1401,6 +1414,32 @@ def get_hourly_performance(limit: int = 100) -> list[dict[str, Any]]:
         {"limit": limit},
     )
 
+def get_equity_curve(limit: int = 5000) -> list[dict[str, Any]]:
+    rows = fetch_all(
+        """
+        SELECT
+            COALESCE(exit_time, entry_time, created_at) AS timestamp,
+            COALESCE(realized_pnl, 0) AS realized_pnl
+        FROM trade_lifecycles
+        ORDER BY COALESCE(exit_time, entry_time, created_at) ASC, id ASC
+        LIMIT %(limit)s
+        """,
+        {"limit": limit},
+    )
+
+    cumulative = 0.0
+    curve = []
+    for row in rows:
+        realized_pnl = _to_optional_float(row.get("realized_pnl")) or 0.0
+        cumulative += realized_pnl
+        timestamp = row.get("timestamp")
+        curve.append({
+            "timestamp": timestamp.isoformat() if hasattr(timestamp, "isoformat") else str(timestamp),
+            "realized_pnl": round(realized_pnl, 6),
+            "cumulative_pnl": round(cumulative, 6),
+        })
+
+    return curve
 
 def get_dashboard_summary(target_date: Optional[str] = None) -> dict[str, Any]:
     base_summary = (
@@ -1409,19 +1448,26 @@ def get_dashboard_summary(target_date: Optional[str] = None) -> dict[str, Any]:
         else get_trade_lifecycle_summary_from_table(limit=5000)
     )
 
+    symbol_performance = get_symbol_performance(limit=10)
+    mode_performance = get_mode_performance(limit=10)
+    exit_reason_breakdown = get_exit_reason_breakdown(limit=20)
+    hourly_performance = get_hourly_performance(limit=24)
+    equity_curve = get_equity_curve(limit=5000)
+
     return {
         "summary": base_summary,
-        "top_symbols": get_symbol_performance(limit=10),
-        "mode_performance": get_mode_performance(limit=10),
-        "exit_reason_breakdown": get_exit_reason_breakdown(limit=20),
-        "hourly_performance": get_hourly_performance(limit=24),
+        "top_symbols": symbol_performance,
+        "mode_performance": mode_performance,
+        "exit_reason_breakdown": exit_reason_breakdown,
+        "hourly_performance": hourly_performance,
+        "equity_curve": equity_curve,
         "insights": {
-            "best_symbol": (get_symbol_performance(limit=1)[0] if get_symbol_performance(limit=1) else None),
-            "best_mode": (get_mode_performance(limit=1)[0] if get_mode_performance(limit=1) else None),
-            "most_common_exit": (get_exit_reason_breakdown(limit=1)[0] if get_exit_reason_breakdown(limit=1) else None),
+            "best_symbol": (symbol_performance[0] if symbol_performance else None),
+            "best_mode": (mode_performance[0] if mode_performance else None),
+            "most_common_exit": (exit_reason_breakdown[0] if exit_reason_breakdown else None),
             "best_hour": (
-                max(get_hourly_performance(limit=24), key=lambda x: x.get("realized_pnl_total", 0))
-                if get_hourly_performance(limit=24) else None
+                max(hourly_performance, key=lambda x: x.get("realized_pnl_total", 0))
+                if hourly_performance else None
             ),
         }
     }
