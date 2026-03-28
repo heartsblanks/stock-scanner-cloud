@@ -765,6 +765,7 @@ def handle_sync_paper_trades():
         safe_insert_broker_order=safe_insert_broker_order,
         parse_iso_utc=parse_iso_utc,
         to_float_or_none=to_float_or_none,
+        upsert_trade_lifecycle=upsert_trade_lifecycle,
     )
 
 def handle_scan_request(payload):
@@ -788,6 +789,7 @@ def handle_scan_request(payload):
         safe_insert_broker_order=safe_insert_broker_order,
         to_float_or_none=to_float_or_none,
         MIN_CONFIDENCE=MIN_CONFIDENCE,
+        upsert_trade_lifecycle=upsert_trade_lifecycle,
     )
 
 
@@ -821,6 +823,9 @@ def close_all_paper_positions():
         close_position=close_position,
         get_order_by_id=get_order_by_id,
         safe_insert_broker_order=safe_insert_broker_order,
+        append_trade_log=append_trade_log,
+        safe_insert_trade_event=safe_insert_trade_event,
+        upsert_trade_lifecycle=upsert_trade_lifecycle,
         to_float_or_none=to_float_or_none,
         parse_iso_utc=parse_iso_utc,
     )

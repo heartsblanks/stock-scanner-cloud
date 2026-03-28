@@ -118,10 +118,10 @@ def register_trade_routes(
         broker_exit_order_id = str(payload.get("broker_exit_order_id", "")).strip()
         notes = str(payload.get("notes", "")).strip()
 
-        if event_type not in {"OPEN", "STOP_HIT", "TARGET_HIT", "MANUAL_CLOSE"}:
+        if event_type not in {"OPEN", "STOP_HIT", "TARGET_HIT", "MANUAL_CLOSE", "EOD_CLOSE"}:
             return jsonify({
                 "ok": False,
-                "error": "event_type must be OPEN, STOP_HIT, TARGET_HIT, or MANUAL_CLOSE",
+                "error": "event_type must be OPEN, STOP_HIT, TARGET_HIT, MANUAL_CLOSE, or EOD_CLOSE",
             }), 400
         if trade_source not in {"MANUAL", "ALPACA_PAPER"}:
             return jsonify({
@@ -242,7 +242,7 @@ def register_trade_routes(
             stop_price = linked_signal_stop
             target_price = linked_signal_target
             exit_price = price
-            exit_reason = "MANUAL_CLOSE"
+            exit_reason = "EOD_CLOSE" if event_type == "EOD_CLOSE" else "MANUAL_CLOSE"
             status = "CLOSED"
             open_timestamp_utc = open_row.get("timestamp_utc", "") if open_row else ""
             open_entry_price = open_row.get("entry_price", "") if open_row else ""

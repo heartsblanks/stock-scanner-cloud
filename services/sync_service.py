@@ -4,6 +4,100 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 
+# --- Helper functions ---
+
+def _normalize_trade_key(symbol: str, broker_parent_order_id: str, broker_order_id: str) -> str:
+    return broker_parent_order_id or broker_order_id or symbol
+
+
+def _infer_direction(entry_price, exit_price, stop_price, target_price) -> str | None:
+    try:
+        entry_val = float(entry_price) if entry_price not in (None, "") else None
+    except Exception:
+        entry_val = None
+    try:
+        exit_val = float(exit_price) if exit_price not in (None, "") else None
+    except Exception:
+        exit_val = None
+    try:
+        stop_val = float(stop_price) if stop_price not in (None, "") else None
+    except Exception:
+        stop_val = None
+    try:
+        target_val = float(target_price) if target_price not in (None, "") else None
+    except Exception:
+        target_val = None
+
+    if entry_val is not None and target_val is not None and stop_val is not None:
+        if target_val > entry_val and stop_val < entry_val:
+            return "LONG"
+        if target_val < entry_val and stop_val > entry_val:
+            return "SHORT"
+
+    if entry_val is not None and exit_val is not None:
+        if exit_val > entry_val:
+            return "LONG"
+        if exit_val < entry_val:
+            return "SHORT"
+
+    return None
+
+
+def _compute_realized_pnl(entry_price, exit_price, shares, direction):
+    try:
+        entry_val = float(entry_price) if entry_price not in (None, "") else None
+    except Exception:
+        entry_val = None
+    try:
+        exit_val = float(exit_price) if exit_price not in (None, "") else None
+    except Exception:
+        exit_val = None
+    try:
+        shares_val = float(shares) if shares not in (None, "") else None
+    except Exception:
+        shares_val = None
+
+    if entry_val is None or exit_val is None or shares_val is None:
+        return None
+
+    direction_val = str(direction or "").strip().upper()
+    if direction_val == "LONG":
+        return round((exit_val - entry_val) * shares_val, 6)
+    if direction_val == "SHORT":
+        return round((entry_val - exit_val) * shares_val, 6)
+    return None
+
+
+def _compute_realized_pnl_percent(entry_price, exit_price, direction):
+    try:
+        entry_val = float(entry_price) if entry_price not in (None, "") else None
+    except Exception:
+        entry_val = None
+    try:
+        exit_val = float(exit_price) if exit_price not in (None, "") else None
+    except Exception:
+        exit_val = None
+
+    if entry_val in (None, 0) or exit_val is None:
+        return None
+
+    direction_val = str(direction or "").strip().upper()
+    if direction_val == "LONG":
+        return round(((exit_val - entry_val) / entry_val) * 100.0, 6)
+    if direction_val == "SHORT":
+        return round(((entry_val - exit_val) / entry_val) * 100.0, 6)
+    return None
+
+
+def _compute_duration_minutes(entry_timestamp, exit_timestamp):
+    if entry_timestamp is None or exit_timestamp is None:
+        return None
+    try:
+        return round((exit_timestamp - entry_timestamp).total_seconds() / 60.0, 2)
+    except Exception:
+        return None
+
+
 
 def execute_sync_paper_trades(
     *,
@@ -13,6 +107,7 @@ def execute_sync_paper_trades(
     append_trade_log: Callable[[dict[str, Any]], None],
     safe_insert_trade_event: Callable[..., None],
     safe_insert_broker_order: Callable[..., None],
+    upsert_trade_lifecycle: Callable[..., None],
     parse_iso_utc: Callable[[str], Any],
     to_float_or_none: Callable[[Any], float | None],
 ) -> dict[str, Any] | tuple[dict[str, Any], int]:
@@ -137,6 +232,51 @@ def execute_sync_paper_trades(
                 avg_fill_price=to_float_or_none(sync_result.get("exit_filled_avg_price", "")),
                 submitted_at=parse_iso_utc(timestamp_utc),
                 filled_at=parse_iso_utc(timestamp_utc),
+            )
+
+            entry_price = open_row.get("entry_price", "")
+            stop_price = open_row.get("stop_price", "")
+            target_price = open_row.get("target_price", "")
+            exit_price = sync_result.get("exit_price", "")
+            shares_value = open_row.get("shares", "")
+            entry_timestamp_utc = str(open_row.get("timestamp_utc", "")).strip()
+            entry_timestamp = parse_iso_utc(entry_timestamp_utc) if entry_timestamp_utc else None
+            exit_timestamp = parse_iso_utc(timestamp_utc)
+            linked_signal_timestamp_utc = str(open_row.get("linked_signal_timestamp_utc", "")).strip()
+            broker_order_id = str(open_row.get("broker_order_id", "") or parent_order_id)
+            broker_parent_order_id = str(open_row.get("broker_parent_order_id", "") or parent_order_id)
+            direction = _infer_direction(entry_price, exit_price, stop_price, target_price)
+            realized_pnl = _compute_realized_pnl(entry_price, exit_price, shares_value, direction)
+            realized_pnl_percent = _compute_realized_pnl_percent(entry_price, exit_price, direction)
+            duration_minutes = _compute_duration_minutes(entry_timestamp, exit_timestamp)
+            trade_key = _normalize_trade_key(symbol, broker_parent_order_id, broker_order_id)
+
+            upsert_trade_lifecycle(
+                trade_key=trade_key,
+                symbol=symbol,
+                mode=str(open_row.get("mode", "") or ""),
+                side=None,
+                direction=direction,
+                status="CLOSED",
+                entry_time=entry_timestamp,
+                entry_price=to_float_or_none(entry_price),
+                exit_time=exit_timestamp,
+                exit_price=to_float_or_none(exit_price),
+                stop_price=to_float_or_none(stop_price),
+                target_price=to_float_or_none(target_price),
+                exit_reason=str(sync_result.get("exit_reason", exit_event) or exit_event),
+                shares=to_float_or_none(shares_value),
+                realized_pnl=realized_pnl,
+                realized_pnl_percent=realized_pnl_percent,
+                duration_minutes=duration_minutes,
+                signal_timestamp=parse_iso_utc(linked_signal_timestamp_utc) if linked_signal_timestamp_utc else None,
+                signal_entry=to_float_or_none(open_row.get("linked_signal_entry", "")),
+                signal_stop=to_float_or_none(open_row.get("linked_signal_stop", "")),
+                signal_target=to_float_or_none(open_row.get("linked_signal_target", "")),
+                signal_confidence=to_float_or_none(open_row.get("linked_signal_confidence", "")),
+                order_id=broker_order_id,
+                parent_order_id=broker_parent_order_id,
+                exit_order_id=str(sync_result.get("exit_order_id", "") or parent_order_id),
             )
         except Exception as e:
             print(f"Paper trade exit log write failed for {symbol} / {parent_order_id}: {e}", flush=True)

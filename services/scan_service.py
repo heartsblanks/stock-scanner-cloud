@@ -4,6 +4,44 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 
+def _normalize_trade_key(symbol: str, broker_parent_order_id: str, broker_order_id: str) -> str:
+    return broker_parent_order_id or broker_order_id or symbol
+
+
+def _to_upper_or_none(value: Any) -> str | None:
+    text = str(value or "").strip().upper()
+    return text or None
+
+
+def _infer_direction(entry_price, stop_price, target_price, side) -> str | None:
+    side_text = str(side or "").strip().upper()
+    if side_text == "BUY":
+        return "LONG"
+    if side_text == "SELL":
+        return "SHORT"
+
+    try:
+        entry_val = float(entry_price) if entry_price not in (None, "") else None
+    except Exception:
+        entry_val = None
+    try:
+        stop_val = float(stop_price) if stop_price not in (None, "") else None
+    except Exception:
+        stop_val = None
+    try:
+        target_val = float(target_price) if target_price not in (None, "") else None
+    except Exception:
+        target_val = None
+
+    if entry_val is not None and target_val is not None and stop_val is not None:
+        if target_val > entry_val and stop_val < entry_val:
+            return "LONG"
+        if target_val < entry_val and stop_val > entry_val:
+            return "SHORT"
+
+    return None
+
+
 def execute_scan_request(payload: dict[str, Any], *, handler: Callable[[dict[str, Any]], Any]) -> Any:
     return handler(payload)
 
@@ -38,6 +76,7 @@ def execute_full_scan(
     append_trade_log: Callable[[dict[str, Any]], None],
     safe_insert_trade_event: Callable[..., None],
     safe_insert_broker_order: Callable[..., None],
+    upsert_trade_lifecycle: Callable[..., None],
     to_float_or_none: Callable[[Any], float | None],
     MIN_CONFIDENCE: float,
 ) -> dict[str, Any] | tuple[dict[str, Any], int]:
@@ -297,6 +336,52 @@ def execute_full_scan(
                             avg_fill_price=None,
                             submitted_at=parse_iso_utc(timestamp_utc),
                             filled_at=None,
+                        )
+
+                        broker_order_id = str(paper_trade_result.get("alpaca_order_id", "") or "")
+                        broker_parent_order_id = str(paper_trade_result.get("alpaca_order_id", "") or "")
+                        entry_price = paper_metrics.get("entry", "")
+                        stop_price = paper_metrics.get("stop", "")
+                        target_price = paper_metrics.get("target", "")
+                        shares_value = paper_trade_result.get("shares", "")
+                        direction = _infer_direction(
+                            entry_price=entry_price,
+                            stop_price=stop_price,
+                            target_price=target_price,
+                            side=paper_metrics.get("direction", ""),
+                        )
+                        trade_key = _normalize_trade_key(
+                            str(paper_metrics.get("symbol", "") or ""),
+                            broker_parent_order_id,
+                            broker_order_id,
+                        )
+
+                        upsert_trade_lifecycle(
+                            trade_key=trade_key,
+                            symbol=str(paper_metrics.get("symbol", "") or ""),
+                            mode=mode,
+                            side=_to_upper_or_none(paper_metrics.get("direction", "")),
+                            direction=direction,
+                            status="OPEN",
+                            entry_time=parse_iso_utc(timestamp_utc),
+                            entry_price=to_float_or_none(entry_price),
+                            exit_time=None,
+                            exit_price=None,
+                            stop_price=to_float_or_none(stop_price),
+                            target_price=to_float_or_none(target_price),
+                            exit_reason=None,
+                            shares=to_float_or_none(shares_value),
+                            realized_pnl=None,
+                            realized_pnl_percent=None,
+                            duration_minutes=None,
+                            signal_timestamp=parse_iso_utc(timestamp_utc),
+                            signal_entry=to_float_or_none(entry_price),
+                            signal_stop=to_float_or_none(stop_price),
+                            signal_target=to_float_or_none(target_price),
+                            signal_confidence=to_float_or_none(paper_metrics.get("final_confidence", "")),
+                            order_id=broker_order_id,
+                            parent_order_id=broker_parent_order_id,
+                            exit_order_id=None,
                         )
                     else:
                         skipped_symbols.append(candidate_symbol)
