@@ -1,8 +1,7 @@
-
-
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Iterable
@@ -20,12 +19,21 @@ class GitHubExportConfigurationError(RuntimeError):
     """Raised when GitHub export settings are missing or invalid."""
 
 
-
-def _run(cmd: list[str], cwd: Path) -> None:
-    subprocess.run(cmd, cwd=str(cwd), check=True,
-    text=True,
-        capture_output=True)
-
+def _run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        cmd,
+        cwd=str(cwd),
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Command failed: {' '.join(cmd)}\n"
+            f"stdout={result.stdout.strip()}\n"
+            f"stderr={result.stderr.strip()}"
+        )
+    return result
 
 
 def _masked_remote_url() -> str:
@@ -35,58 +43,59 @@ def _masked_remote_url() -> str:
         raise GitHubExportConfigurationError("Missing required GitHub setting: GITHUB_TOKEN")
     if not GITHUB_REPO:
         raise GitHubExportConfigurationError("Missing required GitHub setting: GITHUB_REPO")
-    return f"https://{GITHUB_TOKEN}@github.com/{GITHUB_OWNER}/{GITHUB_REPO}.git"
+    return f"https://x-access-token:{GITHUB_TOKEN}@github.com/{GITHUB_OWNER}/{GITHUB_REPO}.git"
 
 
+def _prepare_repo(path: Path) -> Path:
+    if path.exists():
+        shutil.rmtree(path)
 
-def init_repo(repo_dir: str | Path) -> Path:
-    path = Path(repo_dir).expanduser().resolve()
-    path.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
 
-    if not (path / ".git").exists():
-        _run(["git", "init"], path)
+    remote_url = _masked_remote_url()
+    clone_parent = path.parent
+    _run(["git", "clone", "--branch", GITHUB_BRANCH, remote_url, str(path.name)], clone_parent)
 
     _run(["git", "config", "user.name", GIT_AUTHOR_NAME], path)
     _run(["git", "config", "user.email", GIT_AUTHOR_EMAIL], path)
-
-    remote_url = _masked_remote_url()
-    remotes = subprocess.run(
-        ["git", "remote"],
-        cwd=str(path),
-        check=True,
-        text=True,
-        capture_output=True,
-    ).stdout.splitlines()
-
-    if "origin" in remotes:
-        _run(["git", "remote", "set-url", "origin", remote_url], path)
-    else:
-        _run(["git", "remote", "add", "origin", remote_url], path)
+    _run(["git", "remote", "set-url", "origin", remote_url], path)
 
     return path
 
 
-
 def commit_and_push(repo_dir: str | Path, files_to_add: Iterable[str | Path], message: str) -> None:
-    path = init_repo(repo_dir)
+    path = _prepare_repo(Path(repo_dir).expanduser().resolve())
 
-    add_targets = [str(Path(file_path)) for file_path in files_to_add]
+    add_targets = [Path(file_path) for file_path in files_to_add]
     if not add_targets:
         raise ValueError("files_to_add must not be empty")
 
-    _run(["git", "add", *add_targets], path)
+    for src in add_targets:
+        src_path = src.expanduser().resolve()
+        if not src_path.exists():
+            continue
+
+        dst_path = path / src_path.name
+        if src_path.is_dir():
+            if dst_path.exists():
+                shutil.rmtree(dst_path)
+            shutil.copytree(src_path, dst_path)
+        else:
+            dst_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_path, dst_path)
+
+    _run(["git", "add", "."], path)
 
     status = subprocess.run(
         ["git", "status", "--porcelain"],
         cwd=str(path),
-        check=True,
+        check=False,
         text=True,
         capture_output=True,
-    ).stdout.strip()
+    )
 
-    if not status:
+    if not status.stdout.strip():
         return
 
     _run(["git", "commit", "-m", message], path)
-    _run(["git", "branch", "-M", GITHUB_BRANCH], path)
-    _run(["git", "push", "-u", "origin", GITHUB_BRANCH], path)
+    _run(["git", "push", "origin", GITHUB_BRANCH], path)
