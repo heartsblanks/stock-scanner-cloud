@@ -18,7 +18,12 @@ def register_reconcile_routes(
     @app.post("/reconcile-paper-trades")
     def reconcile_paper_trades():
         try:
-            reconciled_rows, output_path = run_reconciliation()
+            result = run_reconciliation()
+            reconciled_rows = result.get("rows", [])
+            output_path = result.get("file_path")
+            mismatch_count = int(result.get("mismatch_count", 0) or 0)
+            total_rows = int(result.get("total_rows", len(reconciled_rows)) or 0)
+            severity = result.get("severity")
         except Exception as e:
             print(f"Paper reconciliation failed: {e}", flush=True)
             return jsonify({"ok": False, "error": str(e)}), 500
@@ -29,12 +34,18 @@ def register_reconcile_routes(
         except Exception as e:
             print(f"Paper reconciliation upload failed: {e}", flush=True)
 
-        unmatched_count = sum(1 for row in reconciled_rows if row.get("match_status") != "matched")
+        unmatched_count = mismatch_count
+        matched_count = max(total_rows - unmatched_count, 0)
+        now_utc = datetime.now(timezone.utc)
 
         safe_insert_reconciliation_run(
-            run_time=datetime.now(timezone.utc),
-            matched_count=len(reconciled_rows) - unmatched_count,
+            run_time=now_utc,
+            matched_count=matched_count,
             unmatched_count=unmatched_count,
+            mismatch_count=unmatched_count,
+            severity=severity,
+            run_started_at=now_utc,
+            run_completed_at=now_utc,
             notes=f"local_output_path={output_path}; gcs_output_uri={gcs_uri}",
         )
         run_id = None
@@ -81,6 +92,8 @@ def register_reconcile_routes(
             "row_count": len(reconciled_rows),
             "local_output_path": str(output_path),
             "gcs_output_uri": gcs_uri,
+            "severity": severity,
+            "mismatch_count": mismatch_count,
         })
 
 

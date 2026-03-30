@@ -158,3 +158,13 @@ CREATE INDEX IF NOT EXISTS idx_trade_lifecycles_symbol ON trade_lifecycles(symbo
 CREATE INDEX IF NOT EXISTS idx_trade_lifecycles_status ON trade_lifecycles(status);
 CREATE INDEX IF NOT EXISTS idx_trade_lifecycles_entry_time ON trade_lifecycles(entry_time);
 CREATE INDEX IF NOT EXISTS idx_trade_lifecycles_trade_key ON trade_lifecycles(trade_key);
+
+ALTER TABLE reconciliation_runs
+ADD COLUMN IF NOT EXISTS severity TEXT;
+ALTER TABLE reconciliation_runs
+ADD COLUMN IF NOT EXISTS mismatch_count INT;
+ALTER TABLE reconciliation_runs
+ADD COLUMN IF NOT EXISTS run_started_at TIMESTAMPTZ;
+
+ALTER TABLE reconciliation_runs
+ADD COLUMN IF NOT EXISTS run_completed_at TIMESTAMPTZ;

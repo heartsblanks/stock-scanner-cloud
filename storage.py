@@ -269,7 +269,15 @@ def insert_reconciliation_run(
     matched_count: int,
     unmatched_count: int,
     notes: Optional[str] = None,
+    severity: Optional[str] = None,
+    mismatch_count: Optional[int] = None,
+    run_started_at: Optional[datetime] = None,
+    run_completed_at: Optional[datetime] = None,
 ) -> None:
+    resolved_mismatch_count = unmatched_count if mismatch_count is None else mismatch_count
+    resolved_run_started_at = run_time if run_started_at is None else run_started_at
+    resolved_run_completed_at = run_time if run_completed_at is None else run_completed_at
+
     existing = fetch_one(
         """
         SELECT id
@@ -277,6 +285,10 @@ def insert_reconciliation_run(
         WHERE run_time = %(run_time)s
           AND matched_count = %(matched_count)s
           AND unmatched_count = %(unmatched_count)s
+          AND COALESCE(mismatch_count, -1) = %(mismatch_count)s
+          AND COALESCE(severity, '') = %(severity)s
+          AND COALESCE(run_started_at, TIMESTAMPTZ '1970-01-01 00:00:00+00') = %(run_started_at)s
+          AND COALESCE(run_completed_at, TIMESTAMPTZ '1970-01-01 00:00:00+00') = %(run_completed_at)s
           AND COALESCE(notes, '') = %(notes)s
         LIMIT 1
         """,
@@ -284,6 +296,10 @@ def insert_reconciliation_run(
             "run_time": run_time,
             "matched_count": matched_count,
             "unmatched_count": unmatched_count,
+            "mismatch_count": resolved_mismatch_count,
+            "severity": _normalize_text(severity),
+            "run_started_at": resolved_run_started_at,
+            "run_completed_at": resolved_run_completed_at,
             "notes": _normalize_text(notes),
         },
     )
@@ -295,13 +311,21 @@ def insert_reconciliation_run(
             run_time,
             matched_count,
             unmatched_count,
-            notes
+            notes,
+            severity,
+            mismatch_count,
+            run_started_at,
+            run_completed_at
         )
         VALUES (
             %(run_time)s,
             %(matched_count)s,
             %(unmatched_count)s,
-            %(notes)s
+            %(notes)s,
+            %(severity)s,
+            %(mismatch_count)s,
+            %(run_started_at)s,
+            %(run_completed_at)s
         )
         """,
         {
@@ -309,6 +333,10 @@ def insert_reconciliation_run(
             "matched_count": matched_count,
             "unmatched_count": unmatched_count,
             "notes": notes,
+            "severity": severity,
+            "mismatch_count": resolved_mismatch_count,
+            "run_started_at": resolved_run_started_at,
+            "run_completed_at": resolved_run_completed_at,
         },
     )
 
@@ -622,6 +650,29 @@ def get_recent_reconciliation_mismatches(limit: int = 100, run_id: Optional[int]
         FROM reconciliation_details
         WHERE COALESCE(match_status, '') <> 'matched'
         ORDER BY id DESC
+        LIMIT %(limit)s
+        """,
+        {"limit": limit},
+    )
+
+
+# New function: get_reconciliation_runs
+def get_reconciliation_runs(limit: int = 20) -> list[dict[str, Any]]:
+    return fetch_all(
+        """
+        SELECT
+            id,
+            run_time,
+            matched_count,
+            unmatched_count,
+            notes,
+            created_at,
+            severity,
+            mismatch_count,
+            run_started_at,
+            run_completed_at
+        FROM reconciliation_runs
+        ORDER BY run_time DESC, id DESC
         LIMIT %(limit)s
         """,
         {"limit": limit},
@@ -1440,6 +1491,8 @@ def get_equity_curve(limit: int = 5000) -> list[dict[str, Any]]:
         })
 
     return curve
+
+
 
 def get_dashboard_summary(target_date: Optional[str] = None) -> dict[str, Any]:
     base_summary = (

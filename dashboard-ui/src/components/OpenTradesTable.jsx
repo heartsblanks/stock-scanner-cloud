@@ -33,9 +33,12 @@ export default function OpenTradesTable({ trades }) {
             <th style={thStyle}>Mode</th>
             <th style={thStyle}>Status</th>
             <th style={thStyle}>Shares</th>
+            <th style={thStyle}>Position Cost</th>
+            <th style={thStyle}>Per Trade Notional</th>
             <th style={thStyle}>Entry Price</th>
             <th style={thStyle}>Stop</th>
             <th style={thStyle}>Target</th>
+            <th style={thStyle}>Take Profit ($)</th>
             <th style={thStyle}>Entry Time</th>
           </tr>
         </thead>
@@ -69,9 +72,12 @@ export default function OpenTradesTable({ trades }) {
                 </span>
               </td>
               <td style={tdStyle}>{formatValue(trade.shares)}</td>
+              <td style={tdStyle}>{formatValue(trade.position_cost)}</td>
+              <td style={tdStyle}>{formatValue(trade.per_trade_notional)}</td>
               <td style={tdStyle}>{formatValue(trade.entry_price)}</td>
               <td style={tdStyle}>{formatValue(trade.stop_price)}</td>
               <td style={tdStyle}>{formatValue(trade.target_price)}</td>
+              <td style={tdStyle}>{formatValue(trade.take_profit_dollars)}</td>
               <td style={tdStyle}>{formatValue(trade.entry_time)}</td>
             </tr>
           ))}

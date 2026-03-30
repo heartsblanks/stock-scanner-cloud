@@ -58,6 +58,10 @@ export async function fetchReconcileSummary() {
   return response.data;
 }
 
+export async function fetchReconciliationSummary() {
+  return fetchReconcileSummary();
+}
+
 export async function fetchReconciliationMismatches(limit = 100, runId) {
   const params = { limit };
   if (runId !== undefined && runId !== null && runId !== "") {
@@ -66,6 +70,45 @@ export async function fetchReconciliationMismatches(limit = 100, runId) {
 
   const response = await apiClient.get("/reconciliation-mismatches", { params });
   return response.data;
+}
+
+export async function fetchReconciliationDetails(limit = 100, runId) {
+  const data = await fetchReconciliationMismatches(limit, runId);
+  return {
+    ...data,
+    rows: data?.rows || [],
+    count: data?.count || 0,
+    limit: data?.limit || limit,
+  };
+}
+
+export async function fetchReconciliationHistory(limit = 20) {
+  const response = await apiClient.get("/reconciliation-runs", {
+    params: { limit },
+  });
+
+  const data = response.data || {};
+  return {
+    ...data,
+    rows: data?.rows || [],
+    count: data?.count || 0,
+    limit: data?.limit || limit,
+  };
+}
+
+export async function fetchRiskExposureSummary() {
+  const response = await apiClient.get("/risk-exposure-summary");
+  const data = response.data || {};
+
+  return {
+    ...data,
+    total_open_exposure: data?.total_open_exposure || 0,
+    open_position_count: data?.open_position_count || 0,
+    daily_realized_pnl: data?.daily_realized_pnl || 0,
+    daily_unrealized_pnl: data?.daily_unrealized_pnl || 0,
+    allocation_used_pct: data?.allocation_used_pct || 0,
+    max_positions: data?.max_positions || 0,
+  };
 }
 
 export async function fetchAlpacaApiLogs(limit = 100) {
@@ -85,4 +128,14 @@ export async function fetchAlpacaApiErrors(limit = 100) {
 export async function fetchLatestScanSummary() {
   const response = await apiClient.get("/latest-scan-summary");
   return response.data;
+}
+
+export async function fetchAlpacaOpenPositions() {
+  const response = await apiClient.get("/alpaca-open-positions");
+  const data = response.data || {};
+
+  return {
+    count: data.count || 0,
+    positions: data.positions || [],
+  };
 }

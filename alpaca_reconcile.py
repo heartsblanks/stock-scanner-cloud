@@ -344,7 +344,35 @@ def summarize_reconciliation(rows: list[dict[str, Any]]) -> dict[str, int]:
     return summary
 
 
-def run_reconciliation() -> tuple[list[dict[str, Any]], Path]:
+
+# Helper to determine severity level from summary
+def calculate_severity(summary: dict[str, int]) -> tuple[str, int]:
+    mismatch_count = 0
+
+    # critical issues
+    critical_keys = {"missing_in_alpaca", "missing_in_db"}
+    for key in critical_keys:
+        mismatch_count += summary.get(key, 0)
+
+    if mismatch_count > 0:
+        return "CRITICAL", mismatch_count
+
+    # warning issues
+    warning_keys = {
+        "exit_reason_mismatch",
+        "entry_qty_mismatch",
+        "exit_qty_mismatch",
+        "exit_not_resolved",
+    }
+    warning_count = sum(summary.get(k, 0) for k in warning_keys)
+
+    if warning_count > 0:
+        return "WARNING", warning_count
+
+    return "OK", 0
+
+
+def run_reconciliation() -> dict[str, Any]:
     local_rows = get_gcs_csv_rows(GCS_BUCKET_NAME, GCS_TRADES_OBJECT)
     alpaca_orders = fetch_alpaca_orders()
     persist_alpaca_orders_to_db(alpaca_orders)
@@ -353,10 +381,21 @@ def run_reconciliation() -> tuple[list[dict[str, Any]], Path]:
     alpaca_index = build_alpaca_index(alpaca_orders)
     reconciled_rows = reconcile(local_pairs, alpaca_index)
     summary = summarize_reconciliation(reconciled_rows)
+
     print(f"Reconciliation summary: {summary}", flush=True)
 
     write_csv(reconciled_rows, OUTPUT_PATH)
-    return reconciled_rows, OUTPUT_PATH
+
+    severity, mismatch_count = calculate_severity(summary)
+
+    return {
+        "rows": reconciled_rows,
+        "summary": summary,
+        "severity": severity,
+        "mismatch_count": mismatch_count,
+        "file_path": str(OUTPUT_PATH),
+        "total_rows": len(reconciled_rows),
+    }
 
 
 def upload_file_to_gcs(local_path: Path, bucket_name: str, object_name: str) -> str:
@@ -368,9 +407,9 @@ def upload_file_to_gcs(local_path: Path, bucket_name: str, object_name: str) -> 
 
 
 def main() -> None:
-    reconciled_rows, output_path = run_reconciliation()
+    result = run_reconciliation()
     print(
-        f"Wrote {len(reconciled_rows)} rows to {output_path} using "
+        f"Wrote {result['total_rows']} rows to {result['file_path']} using "
         f"gs://{GCS_BUCKET_NAME}/{GCS_TRADES_OBJECT} and Alpaca API orders"
     )
 

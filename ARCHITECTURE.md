@@ -374,11 +374,161 @@ The sizing model should coexist with these controls:
 - optional max total open exposure guardrail
 - skip trades when no remaining slots are available
 - skip trades when remaining allocatable capital is not meaningful
+- symbol-level cooldown based on consecutive losses
+- adaptive position sizing based on recent performance
 
 ### 10.6 Current status
 **Defined in architecture, not fully implemented in trading logic yet**
 - current system historically used a fixed hard cap approach
 - target system is a 50%-allocation / 10-position dynamic sizing model
+
+### 10.7 Adaptive Risk and Cooldown Model
+
+To improve capital preservation and strategy robustness, the system should implement a dynamic risk adjustment model based on recent trade outcomes.
+
+#### 10.7.1 Symbol-level cooldown
+
+Rules:
+- track consecutive losing trades per symbol
+- if consecutive losses exceed a threshold (e.g., 2 losses):
+  - skip new trades for that symbol for a cooldown period
+
+Cooldown parameters:
+- `cooldown_loss_threshold = 2`
+- `cooldown_period_minutes = 60` (configurable)
+
+Expected behavior:
+- prevents repeated losses on the same symbol during adverse conditions
+- reduces overtrading on weak setups
+
+#### 10.7.2 Adaptive position sizing
+
+Position size should be adjusted based on recent performance.
+
+Suggested model:
+- base position size = dynamic per_trade_notional
+- apply multiplier based on performance:
+
+Example multipliers:
+- after 2 consecutive losses → reduce size to 50%
+- after 3+ consecutive losses → reduce size to 25%
+- after recovery (winning trade) → reset to 100%
+
+Formula:
+- `adjusted_notional = per_trade_notional * performance_multiplier`
+
+#### 10.7.3 Data requirements
+
+The following data is required:
+- trade history grouped by symbol
+- last N trades per symbol
+- consecutive win/loss streak tracking
+
+Primary source:
+- `trade_lifecycles` table
+
+#### 10.7.4 Integration points
+
+This logic should be applied in:
+- `services/scan_service.py` (candidate evaluation and sizing)
+
+Optional enforcement layer:
+- `paper_alpaca.py` (final validation before order placement)
+
+#### 10.7.5 Current status
+
+**Not implemented** — planned enhancement
+
+---
+
+### 10.8 Advanced Risk Controls (Future Enhancements)
+
+The following enhancements are planned to further improve risk management and strategy robustness.
+
+#### 10.8.1 Daily loss cutoff
+
+Rules:
+- stop trading for the day if account drawdown exceeds a threshold
+
+Suggested thresholds:
+- `daily_loss_cutoff_pct = 0.02` (2%)
+- optional aggressive mode: `0.03` (3%)
+
+Behavior:
+- no new trades should be placed after threshold breach
+- existing trades continue to be managed normally
+- trading resumes next trading day
+
+Data requirements:
+- starting equity of the day
+- current realized + unrealized PnL
+
+Integration points:
+- `scan_service.py` (pre-trade guardrail)
+- optional enforcement in `app.py` before scan execution
+
+Status:
+**Not implemented**
+
+---
+
+#### 10.8.2 Volatility-based sizing (ATR)
+
+Objective:
+- adjust stop distance and position sizing based on market volatility
+
+Approach:
+- calculate ATR (Average True Range) per symbol
+- define stop distance as a multiple of ATR:
+  - `stop_distance = ATR * multiplier`
+
+Example:
+- low volatility → tighter stop → larger position size
+- high volatility → wider stop → smaller position size
+
+Benefits:
+- normalizes risk across instruments
+- prevents oversized risk in volatile stocks
+
+Integration points:
+- `scan_service.py` (candidate sizing logic)
+- optional pre-computed ATR cache layer
+
+Status:
+**Not implemented**
+
+---
+
+#### 10.8.3 Confidence calibration (ML-style)
+
+Objective:
+- align strategy confidence scores with actual historical performance
+
+Approach:
+- track:
+  - confidence at entry
+  - actual outcome (win/loss, pnl)
+- evaluate:
+  - win rate vs confidence buckets (e.g., 70–80, 80–90, 90+)
+
+Usage:
+- adjust position sizing:
+  - higher confidence → slightly higher allocation
+  - lower confidence → reduced allocation
+
+Example:
+- `confidence_multiplier = f(confidence_score)`
+
+Data requirements:
+- historical trade outcomes from `trade_lifecycles`
+- stored confidence score per trade
+
+Integration points:
+- `scan_service.py` (final sizing adjustment)
+- analytics layer for calibration reporting
+
+Status:
+**Not implemented**
 
 ---
 
@@ -465,10 +615,48 @@ The dashboard is a React/Vite frontend backed by Flask API endpoints.
 **Partially implemented**
 - UI structure exists
 - data quality depends on lifecycle table population
-- reconciliation section not yet implemented
+- reconciliation section partially implemented (summary + mismatch + manual trigger available, detailed drilldown pending)
 - Alpaca logs section not yet implemented
 - hosted static deployment not yet finalized in architecture
+### 13.1 Implemented UI capabilities
 
+The dashboard UI currently includes:
+- summary cards for core trading metrics
+- equity curve visualization
+- open trades table
+- trade lifecycle table
+- system health section
+- Alpaca vs DB open-position mismatch display
+- mismatch severity label driven by backend reconciliation output
+- reconciliation summary section
+- reconciliation breakdown section
+- manual refresh button
+- manual re-run reconciliation button
+- last updated timestamp
+- last reconciliation status badge
+- last reconciliation timestamp
+- auto-refresh every 15 minutes
+
+### 13.2 Remaining UI work
+
+Pending dashboard UI enhancements:
+- dedicated reconciliation details table
+- reconciliation history / previous run list
+- mismatch drilldown by symbol
+- improved non-blocking toast component instead of inline message banner
+- per-widget loading and error states
+- daily loss / risk / exposure widgets
+- confidence multiplier / loss multiplier / final sizing multiplier visibility
+- manual fix-action buttons for operational recovery workflows
+- richer status indicators for backend jobs and sync health
+
+### 13.3 UI next implementation order
+
+Recommended next UI implementation order:
+1. extend API helpers in `dashboard-ui/src/api/dashboard.js`
+2. add reconciliation details component
+3. wire reconciliation details into `dashboard-ui/src/pages/DashboardPage.jsx`
+4. add risk / exposure / adaptive sizing widgets
 ---
 
 ## 14. Export and Backup Architecture

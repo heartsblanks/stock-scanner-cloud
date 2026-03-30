@@ -99,6 +99,7 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
     current_open_exposure = _to_float(metrics.get("current_open_exposure"), 0.0)
     max_total_allocated_capital = _to_float(metrics.get("max_total_allocated_capital"), 0.0)
     max_capital_allocation_pct = _to_float(metrics.get("max_capital_allocation_pct"), 0.0)
+    sizing_source = "dynamic_per_trade_notional" if per_trade_notional > 0 else "fallback_max_notional"
 
     if not symbol:
         return {"attempted": False, "placed": False, "reason": "missing_symbol"}
@@ -118,6 +119,16 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
             return {"attempted": False, "placed": False, "symbol": symbol, "reason": "short_target_must_be_below_entry"}
     else:
         return {"attempted": False, "placed": False, "symbol": symbol, "reason": "invalid_direction"}
+
+    if remaining_slots <= 0:
+        return {
+            "attempted": False,
+            "placed": False,
+            "symbol": symbol,
+            "reason": "no_remaining_position_slots",
+            "remaining_slots": remaining_slots,
+            "remaining_allocatable_capital": round(remaining_allocatable_capital, 2),
+        }
 
     if direction == "SELL":
         minimum_short_stop = round(entry + 0.01, 2)
@@ -148,6 +159,9 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
             "reason": "max_notional_too_small_for_symbol",
             "max_notional": round(max_notional, 2),
             "entry": round(entry, 4),
+            "scanner_shares": scanner_shares,
+            "capped_shares": capped_shares,
+            "sizing_source": sizing_source,
         }
 
     estimated_notional = round(final_shares * entry, 2)
@@ -169,6 +183,9 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
             "per_trade_notional": round(max_notional, 2),
             "remaining_slots": remaining_slots,
             "remaining_allocatable_capital": round(remaining_allocatable_capital, 2),
+            "scanner_shares": scanner_shares,
+            "capped_shares": capped_shares,
+            "sizing_source": sizing_source,
             "reason": "account_not_active",
             "account_status": account_status,
         }
@@ -182,6 +199,9 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
             "per_trade_notional": round(max_notional, 2),
             "remaining_slots": remaining_slots,
             "remaining_allocatable_capital": round(remaining_allocatable_capital, 2),
+            "scanner_shares": scanner_shares,
+            "capped_shares": capped_shares,
+            "sizing_source": sizing_source,
             "reason": "insufficient_buying_power",
             "available_funds": round(available_funds, 2),
         }
@@ -211,6 +231,9 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
             "per_trade_notional": round(max_notional, 2),
             "remaining_slots": remaining_slots,
             "remaining_allocatable_capital": round(remaining_allocatable_capital, 2),
+            "scanner_shares": scanner_shares,
+            "capped_shares": capped_shares,
+            "sizing_source": sizing_source,
             "reason": "alpaca_order_rejected",
             "details": str(e),
         }
@@ -244,6 +267,9 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
         "max_capital_allocation_pct": round(max_capital_allocation_pct, 4),
         "actual_risk": round(actual_risk, 4),
         "take_profit_dollars": round(take_profit_dollars, 4),
+        "scanner_shares": scanner_shares,
+        "capped_shares": capped_shares,
+        "sizing_source": sizing_source,
         "client_order_id": client_order_id,
         "alpaca_order_id": str(order.get("id", "")),
         "alpaca_order_status": str(order.get("status", "")),

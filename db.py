@@ -126,3 +126,30 @@ def healthcheck() -> dict[str, Any]:
         "database": DB_NAME or "database_url",
         "host": DB_HOST or (f"{DB_SOCKET_DIR}/{DB_SOCKET_INSTANCE}" if DB_SOCKET_DIR and DB_SOCKET_INSTANCE else "database_url"),
     }
+
+
+def fetch_recent_closed_trades_for_symbol(symbol: str, limit: int = 5) -> list[dict[str, Any]]:
+    """
+    Fetch recent CLOSED trades for a given symbol from trade_lifecycles.
+    Returns latest trades ordered by exit_time DESC.
+    """
+    if not symbol:
+        return []
+
+    query = """
+        SELECT
+            symbol,
+            exit_time,
+            realized_pnl
+        FROM trade_lifecycles
+        WHERE symbol = %s
+          AND status = 'CLOSED'
+          AND exit_time IS NOT NULL
+        ORDER BY exit_time DESC
+        LIMIT %s
+    """
+
+    try:
+        return fetch_all(query, (symbol, limit))
+    except Exception:
+        return []

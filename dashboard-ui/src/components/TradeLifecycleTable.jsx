@@ -29,9 +29,13 @@ export default function TradeLifecycleTable({ rows }) {
             <th style={thStyle}>Status</th>
             <th style={thStyle}>Direction</th>
             <th style={thStyle}>Shares</th>
+            <th style={thStyle}>Position Cost</th>
+            <th style={thStyle}>Per Trade Notional</th>
+            <th style={thStyle}>Remaining Slots</th>
             <th style={thStyle}>Entry Price</th>
             <th style={thStyle}>Exit Price</th>
             <th style={thStyle}>P&amp;L</th>
+            <th style={thStyle}>Take Profit ($)</th>
             <th style={thStyle}>P&amp;L %</th>
             <th style={thStyle}>Exit Reason</th>
             <th style={thStyle}>Duration (min)</th>
@@ -47,9 +51,13 @@ export default function TradeLifecycleTable({ rows }) {
               <td style={tdStyle}>{formatValue(row.status)}</td>
               <td style={tdStyle}>{formatValue(row.direction)}</td>
               <td style={tdStyle}>{formatValue(row.shares)}</td>
+              <td style={tdStyle}>{formatValue(row.position_cost)}</td>
+              <td style={tdStyle}>{formatValue(row.per_trade_notional)}</td>
+              <td style={tdStyle}>{formatValue(row.remaining_slots)}</td>
               <td style={tdStyle}>{formatValue(row.entry_price)}</td>
               <td style={tdStyle}>{formatValue(row.exit_price)}</td>
               <td style={tdStyle}>{formatValue(row.realized_pnl)}</td>
+              <td style={tdStyle}>{formatValue(row.take_profit_dollars)}</td>
               <td style={tdStyle}>{formatValue(row.realized_pnl_percent)}</td>
               <td style={tdStyle}>{formatValue(row.exit_reason)}</td>
               <td style={tdStyle}>{formatValue(row.duration_minutes)}</td>

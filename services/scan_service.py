@@ -3,6 +3,23 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+# NOTE: requires implementation
+# def get_recent_closed_trades_for_symbol(symbol: str, limit: int = 5) -> list[dict]
+
+
+# --- Helper: fetch recent closed trades for a symbol (to be replaced with DB-backed implementation) ---
+def get_recent_closed_trades_for_symbol(symbol: str, limit: int = 5) -> list[dict]:
+    """
+    Fetch recent CLOSED trades for a symbol from trade_lifecycles.
+    Expected to be replaced with DB-backed implementation.
+    """
+    try:
+        # Lazy import to avoid circular deps
+        from db import fetch_recent_closed_trades_for_symbol  # type: ignore
+        return fetch_recent_closed_trades_for_symbol(symbol=symbol, limit=limit) or []
+    except Exception:
+        return []
+
 
 def _normalize_trade_key(symbol: str, broker_parent_order_id: str, broker_order_id: str) -> str:
     return broker_parent_order_id or broker_order_id or symbol
@@ -266,6 +283,74 @@ def execute_full_scan(
             placed_trade_ids = []
 
             for paper_trade_candidate in paper_trade_candidates:
+                # --- Adaptive cooldown + sizing ---
+                candidate_symbol = str(paper_trade_candidate["metrics"].get("symbol", "")).strip().upper()
+
+                try:
+                    # Fetch recent closed trades for symbol (last 5)
+                    recent_trades = get_recent_closed_trades_for_symbol(candidate_symbol, limit=5)
+                except Exception:
+                    recent_trades = []
+
+                consecutive_losses = 0
+                for t in recent_trades:
+                    pnl = _to_float(t.get("realized_pnl"), 0.0)
+                    if pnl < 0:
+                        consecutive_losses += 1
+                    else:
+                        break
+
+                # Cooldown rule
+                if consecutive_losses >= 2:
+                    cooldown_minutes = 60
+                    last_trade_time = recent_trades[0].get("exit_time") if recent_trades else None
+                    if last_trade_time:
+                        try:
+                            last_dt = parse_iso_utc(str(last_trade_time))
+                            now_dt = parse_iso_utc(timestamp_utc)
+                            minutes_since = (now_dt - last_dt).total_seconds() / 60
+                            if minutes_since < cooldown_minutes:
+                                paper_results.append({
+                                    "attempted": False,
+                                    "placed": False,
+                                    "symbol": candidate_symbol,
+                                    "reason": f"cooldown_active_{int(minutes_since)}m",
+                                })
+                                skipped_symbols.append(candidate_symbol)
+                                skip_reasons.append(f"{candidate_symbol}:cooldown_active")
+                                continue
+                        except Exception:
+                            pass
+
+                # --- Confidence-weighted + loss-aware sizing ---
+                confidence = _to_float(paper_trade_candidate["metrics"].get("final_confidence"), 0.0)
+
+                # Base confidence scaling (AI-like)
+                # 70 → 0.5x, 85 → 1.0x, 100 → 1.5x
+                confidence_multiplier = max(0.5, min(1.5, (confidence - 70) / 30 + 0.5))
+
+                # Loss-based penalty
+                loss_multiplier = 1.0
+                if consecutive_losses >= 3:
+                    loss_multiplier = 0.25
+                elif consecutive_losses == 2:
+                    loss_multiplier = 0.5
+
+                final_multiplier = confidence_multiplier * loss_multiplier
+
+                if final_multiplier < 1.0 or final_multiplier > 1.0:
+                    base_notional = _to_float(paper_trade_candidate["metrics"].get("per_trade_notional"), 0.0)
+                    adjusted_notional = base_notional * final_multiplier
+                    entry_price = _to_float(paper_trade_candidate["metrics"].get("entry", 0.0))
+
+                    if entry_price > 0:
+                        adjusted_shares = int(adjusted_notional / entry_price)
+                        if adjusted_shares > 0:
+                            paper_trade_candidate["metrics"]["shares"] = adjusted_shares
+                            paper_trade_candidate["metrics"]["per_trade_notional"] = adjusted_notional
+                            paper_trade_candidate["metrics"]["confidence_multiplier"] = confidence_multiplier
+                            paper_trade_candidate["metrics"]["loss_multiplier"] = loss_multiplier
+                            paper_trade_candidate["metrics"]["final_multiplier"] = final_multiplier
                 paper_metrics = paper_trade_candidate["metrics"]
                 paper_metrics["current_open_positions"] = current_open_positions
                 paper_metrics["current_open_exposure"] = current_open_exposure

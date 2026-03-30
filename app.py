@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 import requests
 from zoneinfo import ZoneInfo
 
-from flask import Flask
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 from google.cloud import storage
 from paper_alpaca import place_paper_bracket_order_from_trade, get_open_positions, get_open_orders, close_position, cancel_open_orders_for_symbol
@@ -21,6 +21,7 @@ from storage import (
     insert_reconciliation_detail,
     get_latest_reconciliation_summary,
     get_recent_reconciliation_mismatches,
+    get_reconciliation_runs,
     get_ops_summary,
     get_open_trade_events,
     get_closed_trade_events,
@@ -211,14 +212,21 @@ def trade_to_dict(eval_result: dict) -> dict:
         "target": round(m["target"], 4),
         "shares": m["shares"],
         "position_cost": round(m["actual_position_cost"], 2),
+        "per_trade_notional": round(float(m.get("per_trade_notional", 0) or 0), 2),
+        "remaining_slots": int(float(m.get("remaining_slots", 0) or 0)),
+        "remaining_allocatable_capital": round(float(m.get("remaining_allocatable_capital", 0) or 0), 2),
         "risk_per_share": round(m["risk_per_share"], 4),
         "actual_risk": round(m["actual_risk"], 2),
-        "max_allowed_risk": round(m["risk_amount"], 2),
+        "take_profit_dollars": round(float(m.get("take_profit_dollars", 0) or 0), 2),
         "or_high": round(m["or_high"], 4),
         "or_low": round(m["or_low"], 4),
         "vwap": round(m["vwap"], 4),
         "benchmark_key": m.get("benchmark_key"),
         "benchmark_direction": m.get("benchmark_direction"),
+        "current_open_positions": int(float(m.get("current_open_positions", 0) or 0)),
+        "current_open_exposure": round(float(m.get("current_open_exposure", 0) or 0), 2),
+        "max_total_allocated_capital": round(float(m.get("max_total_allocated_capital", 0) or 0), 2),
+        "max_capital_allocation_pct": round(float(m.get("max_capital_allocation_pct", 0) or 0), 4),
         "reason": eval_result["final_reason"],
     }
 
@@ -944,10 +952,104 @@ register_sync_routes(
     sync_paper_trades_handler=handle_sync_paper_trades,
 )
 
+
 register_dashboard_routes(
     app,
     get_dashboard_summary=get_dashboard_summary,
 )
+
+# --- Add /reconcile-now route ---
+
+@app.route("/reconcile-now", methods=["POST"])
+def reconcile_now():
+    try:
+        result = run_reconciliation()
+
+        # upload latest reconciliation report to GCS
+        try:
+            upload_file_to_gcs(
+                bucket_name=RECONCILIATION_BUCKET,
+                source_file_path=result.get("file_path"),
+                destination_blob_name=RECONCILIATION_OBJECT,
+            )
+        except Exception as upload_err:
+            print(f"GCS upload failed: {upload_err}", flush=True)
+
+        # persist reconciliation run summary
+        try:
+            mismatch_count = int(result.get("mismatch_count", 0) or 0)
+            total_rows = int(result.get("total_rows", 0) or 0)
+            matched_count = max(total_rows - mismatch_count, 0)
+            unmatched_count = mismatch_count
+            severity = result.get("severity")
+            file_path = result.get("file_path")
+            now_utc = datetime.now(timezone.utc)
+
+            safe_insert_reconciliation_run(
+                run_time=now_utc,
+                matched_count=matched_count,
+                unmatched_count=unmatched_count,
+                mismatch_count=mismatch_count,
+                severity=severity,
+                run_started_at=now_utc,
+                run_completed_at=now_utc,
+                notes=f"file_path={file_path}",
+            )
+        except Exception as db_err:
+            print(f"DB reconciliation summary insert failed: {db_err}", flush=True)
+
+        return {
+            "ok": True,
+            "message": "Reconciliation completed",
+            "result": result,
+        }
+
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e),
+        }, 500
+
+
+# --- Add /reconciliation-runs route ---
+@app.route("/reconciliation-runs", methods=["GET"])
+def reconciliation_runs():
+    try:
+        limit = int(request.args.get("limit", 20))
+        rows = get_reconciliation_runs(limit=limit)
+
+        normalized_rows = []
+        for row in rows:
+            mismatch_count = row.get("mismatch_count")
+            if mismatch_count is None:
+                mismatch_count = row.get("unmatched_count") or 0
+
+            severity = row.get("severity")
+            if not severity:
+                if mismatch_count == 0:
+                    severity = "OK"
+                elif mismatch_count <= 5:
+                    severity = "WARNING"
+                else:
+                    severity = "CRITICAL"
+
+            normalized_rows.append({
+                **row,
+                "mismatch_count": mismatch_count,
+                "severity": severity,
+            })
+
+        return jsonify({
+            "ok": True,
+            "rows": normalized_rows,
+            "count": len(normalized_rows),
+            "limit": limit,
+        })
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "error": str(e),
+        }), 500
 
 
 
