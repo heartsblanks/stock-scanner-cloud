@@ -70,6 +70,57 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except Exception:
         return default
+
+
+# --- Patch: Minimum viable position sizing for high-priced symbols ---
+def _apply_minimum_viable_position_sizing(metrics: dict[str, Any]) -> None:
+    """
+    Ensure position sizing remains usable when equal slot allocation would otherwise
+    produce zero shares for high-priced symbols.
+
+    Strategy:
+    - keep the existing remaining capital ceiling
+    - compress the effective slot count based on what can actually buy at least 1 share
+    - recompute per-trade notional and shares from that compressed slot count
+    """
+    entry_price = _to_float(metrics.get("entry"), 0.0)
+    remaining_allocatable_capital = _to_float(metrics.get("remaining_allocatable_capital"), 0.0)
+    remaining_slots = _to_int(metrics.get("remaining_slots"), 0)
+    current_shares = _to_int(metrics.get("shares"), 0)
+
+    if entry_price <= 0 or remaining_allocatable_capital <= 0 or remaining_slots <= 0:
+        return
+
+    # If current sizing is already viable, do nothing.
+    if current_shares > 0:
+        return
+
+    # Cannot buy even 1 share with all remaining capital.
+    if remaining_allocatable_capital < entry_price:
+        return
+
+    # Compress slot count so that each slot can fund at least one share.
+    affordable_single_share_slots = max(1, int(remaining_allocatable_capital // entry_price))
+    effective_slots = max(1, min(remaining_slots, affordable_single_share_slots))
+
+    adjusted_notional = remaining_allocatable_capital / effective_slots
+    adjusted_shares = int(adjusted_notional / entry_price)
+
+    if adjusted_shares <= 0:
+        adjusted_shares = 1
+        adjusted_notional = entry_price
+
+    actual_position_cost = adjusted_shares * entry_price
+    if actual_position_cost > remaining_allocatable_capital:
+        return
+
+    metrics["effective_remaining_slots"] = effective_slots
+    metrics["per_trade_notional"] = round(adjusted_notional, 4)
+    metrics["shares"] = adjusted_shares
+    metrics["notional_capped_shares"] = adjusted_shares
+    metrics["cash_affordable_shares"] = max(_to_int(metrics.get("cash_affordable_shares"), 0), adjusted_shares)
+    metrics["actual_position_cost"] = round(actual_position_cost, 4)
+    metrics["actual_risk"] = round(adjusted_shares * _to_float(metrics.get("risk_per_share"), 0.0), 4)
     
 def execute_scan_request(payload: dict[str, Any], *, handler: Callable[[dict[str, Any]], Any]) -> Any:
     return handler(payload)
@@ -391,6 +442,8 @@ def execute_full_scan(
                 paper_metrics["current_open_exposure"] = current_open_exposure
                 candidate_symbol = str(paper_metrics.get("symbol", "")).strip().upper()
 
+                _apply_minimum_viable_position_sizing(paper_metrics)
+
                 candidate_name = paper_trade_candidate.get("name", "")
                 candidate_info = paper_trade_candidate.get("info")
                 candidate_candles = paper_trade_candidate.get("candles")
@@ -422,6 +475,22 @@ def execute_full_scan(
                     paper_metrics["current_open_positions"] = current_open_positions
                     paper_metrics["current_open_exposure"] = current_open_exposure
                     candidate_symbol = str(paper_metrics.get("symbol", "")).strip().upper()
+
+                    _apply_minimum_viable_position_sizing(paper_metrics)
+
+                if _to_int(paper_metrics.get("shares"), 0) <= 0:
+                    paper_results.append({
+                        "attempted": False,
+                        "placed": False,
+                        "reason": "position_size_too_small_after_slot_compression",
+                        "symbol": candidate_symbol,
+                        "entry_price": _to_float(paper_metrics.get("entry"), 0.0),
+                        "remaining_allocatable_capital": _to_float(paper_metrics.get("remaining_allocatable_capital"), 0.0),
+                        "remaining_slots": _to_int(paper_metrics.get("remaining_slots"), 0),
+                    })
+                    skipped_symbols.append(candidate_symbol)
+                    skip_reasons.append(f"{candidate_symbol}:position_size_too_small_after_slot_compression")
+                    continue
 
                 existing_open_trade = get_latest_open_paper_trade_for_symbol(candidate_symbol)
                 if existing_open_trade is not None:

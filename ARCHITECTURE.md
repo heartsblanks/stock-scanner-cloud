@@ -314,6 +314,7 @@ Lifecycle writes should occur from all relevant flows:
 - sync/exit flow
 - end-of-day close flow
 - manual close flow when applicable
+- broker-side close detection when a separate close order (for example EOD/manual close) fills after the original bracket flow
 
 ### 9.3 Trade key strategy
 A stable trade key should be derived from:
@@ -324,12 +325,34 @@ A stable trade key should be derived from:
 ### 9.4 Lifecycle state transitions
 - OPEN created when paper order placement is successful
 - CLOSED updated when exit is confirmed or forced
+- CLOSED must also be updated when Alpaca position flattening is detected through a separate broker-side exit order that is not the original TP/SL child leg
 
 ### 9.5 Current status
 **Partially implemented, materially improved**
 - lifecycle write hooks are present in scan, sync, and close-related flows
 - historical lifecycle backfill and repair utilities exist
 - runtime validation is still required to confirm clean production population across full market sessions and edge cases
+- known gap: some lifecycles can remain OPEN when Friday EOD/manual close requests fill later (for example Monday market open) as separate exit orders not currently mapped back to the original lifecycle
+
+### 9.6 Known lifecycle gap: delayed broker-side close fills
+
+A known edge case exists when a position is closed by a separate broker-side order rather than the original TP/SL exit leg.
+
+Example pattern:
+- end-of-day close request is submitted near session end
+- order remains accepted and does not fill before market close
+- the same order fills at the next session open (for example Monday market open)
+- Alpaca shows the position as closed, but the lifecycle row may remain OPEN if sync logic only evaluates the original bracket order tree
+
+Required future behavior:
+- sync logic must detect that the broker position is no longer open
+- sync logic must identify the separate filled exit order that flattened the position
+- lifecycle must be updated to CLOSED using the actual exit time, exit price, and appropriate exit reason such as `EOD_CLOSE` or `MANUAL_CLOSE`
+
+Primary implementation areas for future fix:
+- `alpaca_sync.py`
+- `services/sync_service.py`
+- optional repair/backfill support in operational scripts if stale rows already exist
 
 ---
 
@@ -792,6 +815,7 @@ Reconciliation compares local trade data and broker-side order/exit data.
 - static dashboard hosting rollout
 - repository documentation and cleanup
 - separation of concerns between `app.py`, route modules, and service modules
+- lifecycle handling for delayed broker-side close fills outside the original bracket order tree
 
 ### Missing
 - dashboard section for Alpaca logs/errors
@@ -830,11 +854,12 @@ Reconciliation compares local trade data and broker-side order/exit data.
 
 1. finalize backend support for dashboard endpoints such as `/alpaca-open-positions` and `/risk-exposure-summary`
 2. validate `trade_lifecycles` population during a real market-driven open/close cycle
-3. add dashboard sections for Alpaca logs/errors and risk/exposure visibility
-4. finalize static hosting deployment for the dashboard UI
-5. document runtime environment variables and deployment steps more clearly
-6. define retention policy for large operational tables and exported snapshots
-7. continue reducing orchestration and direct endpoint complexity inside `app.py`
+3. fix lifecycle closure handling for delayed EOD/manual broker-side exit fills that occur outside the original bracket order tree
+4. add dashboard sections for Alpaca logs/errors and risk/exposure visibility
+5. finalize static hosting deployment for the dashboard UI
+6. document runtime environment variables and deployment steps more clearly
+7. define retention policy for large operational tables and exported snapshots
+8. continue reducing orchestration and direct endpoint complexity inside `app.py`
 
 ---
 

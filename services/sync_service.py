@@ -15,6 +15,19 @@ def _to_upper_or_none(value: Any) -> str | None:
     return text or None
 
 
+def _resolve_lifecycle_side(open_row: dict[str, Any], direction: str | None) -> str | None:
+    open_side = _to_upper_or_none(open_row.get("side", ""))
+    if open_side:
+        return open_side
+
+    direction_val = str(direction or "").strip().upper()
+    if direction_val == "LONG":
+        return "BUY"
+    if direction_val == "SHORT":
+        return "SELL"
+    return None
+
+
 def _infer_direction(entry_price, exit_price, stop_price, target_price) -> str | None:
     try:
         entry_val = float(entry_price) if entry_price not in (None, "") else None
@@ -190,12 +203,18 @@ def execute_sync_paper_trades(
             continue
 
         timestamp_utc = datetime.now(timezone.utc).isoformat()
-        open_side = _to_upper_or_none(open_row.get("side", ""))
-        lifecycle_side = open_side
 
         try:
+            exit_timestamp = _resolve_exit_timestamp(sync_result, timestamp_utc, parse_iso_utc)
+            exit_timestamp_utc = exit_timestamp.astimezone(timezone.utc).isoformat() if exit_timestamp else timestamp_utc
+
+            entry_price = open_row.get("entry_price", "")
+            stop_price = open_row.get("stop_price", "")
+            target_price = open_row.get("target_price", "")
+            exit_price = sync_result.get("exit_price", "")
+
             append_trade_log({
-                "timestamp_utc": timestamp_utc,
+                "timestamp_utc": exit_timestamp_utc,
                 "event_type": exit_event,
                 "symbol": symbol,
                 "name": open_row.get("name", ""),
@@ -228,7 +247,7 @@ def execute_sync_paper_trades(
                 "inferred_analysis_end_utc": "",
             })
             safe_insert_trade_event(
-                event_time=parse_iso_utc(timestamp_utc),
+                event_time=exit_timestamp,
                 event_type=exit_event,
                 symbol=symbol,
                 side=lifecycle_side,
@@ -242,28 +261,24 @@ def execute_sync_paper_trades(
             safe_insert_broker_order(
                 order_id=str(sync_result.get("exit_order_id", "") or parent_order_id),
                 symbol=symbol,
-                side=lifecycle_side,
+                side=_resolve_lifecycle_side(open_row, _infer_direction(open_row.get("entry_price", ""), sync_result.get("exit_price", ""), open_row.get("stop_price", ""), open_row.get("target_price", ""))),
                 order_type="exit",
                 status=str(sync_result.get("exit_status", sync_result.get("parent_status", "")) or ""),
                 qty=to_float_or_none(open_row.get("shares", "")),
                 filled_qty=to_float_or_none(sync_result.get("exit_filled_qty", "")),
                 avg_fill_price=to_float_or_none(sync_result.get("exit_filled_avg_price", "")),
-                submitted_at=parse_iso_utc(timestamp_utc),
-                filled_at=parse_iso_utc(timestamp_utc),
+                submitted_at=exit_timestamp,
+                filled_at=exit_timestamp,
             )
 
-            entry_price = open_row.get("entry_price", "")
-            stop_price = open_row.get("stop_price", "")
-            target_price = open_row.get("target_price", "")
-            exit_price = sync_result.get("exit_price", "")
             shares_value = open_row.get("shares", "")
             entry_timestamp_utc = str(open_row.get("timestamp_utc", "")).strip()
             entry_timestamp = parse_iso_utc(entry_timestamp_utc) if entry_timestamp_utc else None
-            exit_timestamp = _resolve_exit_timestamp(sync_result, timestamp_utc, parse_iso_utc)
             linked_signal_timestamp_utc = str(open_row.get("linked_signal_timestamp_utc", "")).strip()
             broker_order_id = str(open_row.get("broker_order_id", "") or parent_order_id)
             broker_parent_order_id = str(open_row.get("broker_parent_order_id", "") or parent_order_id)
             direction = _infer_direction(entry_price, exit_price, stop_price, target_price)
+            lifecycle_side = _resolve_lifecycle_side(open_row, direction)
             realized_pnl = _compute_realized_pnl(entry_price, exit_price, shares_value, direction)
             realized_pnl_percent = _compute_realized_pnl_percent(entry_price, exit_price, direction)
             duration_minutes = _compute_duration_minutes(entry_timestamp, exit_timestamp)

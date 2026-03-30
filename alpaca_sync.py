@@ -32,6 +32,54 @@ def _find_exit_legs(order: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[
     return take_profit_leg, stop_loss_leg
 
 
+def _find_external_exit_order(parent_order: dict[str, Any]) -> dict[str, Any] | None:
+    """
+    Look for a filled order that closes the position but is NOT a TP/SL leg of the parent.
+    Heuristic:
+    - same symbol
+    - opposite side to parent
+    - filled_qty > 0
+    - different order id
+    - choose the most recent by filled_at
+    """
+    try:
+        symbol = str(parent_order.get("symbol", "")).strip().upper()
+        parent_id = str(parent_order.get("id", ""))
+        parent_side = str(parent_order.get("side", "")).strip().lower()
+
+        # Opposite side mapping
+        opposite_side = "sell" if parent_side == "buy" else "buy"
+
+        orders = fetch_orders(status="closed", limit=100, nested=False, direction="desc")
+
+        candidates: list[dict[str, Any]] = []
+        for o in orders or []:
+            try:
+                if str(o.get("symbol", "")).strip().upper() != symbol:
+                    continue
+                if str(o.get("id", "")) == parent_id:
+                    continue
+                if str(o.get("side", "")).strip().lower() != opposite_side:
+                    continue
+                filled_qty = _to_float(o.get("filled_qty"))
+                if filled_qty <= 0:
+                    continue
+                status = str(o.get("status", "")).lower()
+                if status != "filled":
+                    continue
+                candidates.append(o)
+            except Exception:
+                continue
+
+        if not candidates:
+            return None
+
+        # Already sorted desc by API; take first as most recent
+        return candidates[0]
+    except Exception:
+        return None
+
+
 def summarize_order_sync(order: dict[str, Any]) -> dict[str, Any]:
     parent_order_id = str(order.get("id", ""))
     parent_status = str(order.get("status", ""))
@@ -82,6 +130,21 @@ def summarize_order_sync(order: dict[str, Any]) -> dict[str, Any]:
         exit_order_id = parent_order_id
         exit_reason = parent_status.upper()
         status = "CLOSED"
+
+    # --- Fallback: detect external/manual close orders (EOD or separate exit) ---
+    if not exit_event:
+        external = _find_external_exit_order(order)
+        if external:
+            ext_id = str(external.get("id", ""))
+            ext_filled_qty = _to_float(external.get("filled_qty"))
+            ext_price = _to_float(external.get("filled_avg_price"))
+            exit_event = "MANUAL_CLOSE"
+            exit_order_id = ext_id
+            exit_price = round(ext_price, 4) if ext_price > 0 else ""
+            exit_filled_qty = round(ext_filled_qty, 4) if ext_filled_qty > 0 else ""
+            exit_filled_avg_price = round(ext_price, 4) if ext_price > 0 else ""
+            exit_reason = "EXTERNAL_EXIT"
+            status = "CLOSED"
 
     return {
         "parent_order_id": parent_order_id,
