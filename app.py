@@ -33,6 +33,7 @@ from storage import (
     get_trade_lifecycle_summary_from_table,
     upsert_trade_lifecycle,
     get_dashboard_summary,
+    get_daily_realized_pnl,
 )
 from export_daily_snapshot import run_daily_snapshot
 from routes.health import register_health_routes
@@ -478,6 +479,52 @@ def get_current_open_position_state() -> tuple[int, float]:
     return current_open_positions, current_open_exposure
 
 
+# --- Risk exposure summary helper ---
+def get_risk_exposure_summary() -> dict:
+    current_open_positions, current_open_exposure = get_current_open_position_state()
+
+    try:
+        positions = get_open_positions()
+    except Exception as e:
+        print(f"Failed to read open positions for risk summary: {e}", flush=True)
+        positions = []
+
+    try:
+        today_utc = datetime.now(timezone.utc).date().isoformat()
+        daily_realized_pnl = get_daily_realized_pnl(today_utc)
+    except Exception as e:
+        print(f"Failed to read daily realized PnL: {e}", flush=True)
+        daily_realized_pnl = 0.0
+
+    daily_unrealized_pnl = 0.0
+    for position in positions:
+        unrealized_pl = to_float_or_none(position.get("unrealized_pl"))
+        if unrealized_pl is not None:
+            daily_unrealized_pnl += unrealized_pl
+
+    max_positions = 10
+    max_capital_allocation_pct = 0.50
+    account_size = SCHEDULED_PAPER_ACCOUNT_SIZE
+    max_total_allocated_capital = account_size * max_capital_allocation_pct
+    allocation_used_pct = (
+        (current_open_exposure / max_total_allocated_capital) * 100.0
+        if max_total_allocated_capital > 0
+        else 0.0
+    )
+
+    return {
+        "total_open_exposure": round(current_open_exposure, 2),
+        "open_position_count": int(current_open_positions),
+        "daily_realized_pnl": round(daily_realized_pnl, 2),
+        "daily_unrealized_pnl": round(daily_unrealized_pnl, 2),
+        "allocation_used_pct": round(allocation_used_pct, 2),
+        "max_positions": max_positions,
+        "max_total_allocated_capital": round(max_total_allocated_capital, 2),
+        "max_capital_allocation_pct": max_capital_allocation_pct,
+        "account_size": round(account_size, 2),
+    }
+
+
 def read_all_signal_rows() -> list[dict]:
     return read_csv_rows_for_path(
         storage_client_factory=storage.Client,
@@ -816,6 +863,18 @@ def handle_scan_request(payload):
             scan_payload.setdefault("current_open_positions", current_open_positions)
             scan_payload.setdefault("current_open_exposure", current_open_exposure)
 
+        # Inject live PnL inputs for daily risk guardrail enforcement
+        try:
+            risk_summary = get_risk_exposure_summary()
+            scan_payload.setdefault("daily_realized_pnl", risk_summary.get("daily_realized_pnl", 0.0))
+            scan_payload.setdefault("daily_unrealized_pnl", risk_summary.get("daily_unrealized_pnl", 0.0))
+            scan_payload.setdefault("account_size", risk_summary.get("account_size", SCHEDULED_PAPER_ACCOUNT_SIZE))
+        except Exception as e:
+            print(f"Failed to inject risk summary into scan payload: {e}", flush=True)
+            scan_payload.setdefault("daily_realized_pnl", 0.0)
+            scan_payload.setdefault("daily_unrealized_pnl", 0.0)
+            scan_payload.setdefault("account_size", SCHEDULED_PAPER_ACCOUNT_SIZE)
+
     return execute_full_scan(
         scan_payload,
         market_time_check=market_time_check,
@@ -956,6 +1015,8 @@ register_sync_routes(
 register_dashboard_routes(
     app,
     get_dashboard_summary=get_dashboard_summary,
+    get_alpaca_open_positions=get_open_positions,
+    get_risk_exposure_summary=get_risk_exposure_summary,
 )
 
 # --- Add /reconcile-now route ---

@@ -256,12 +256,40 @@ def execute_full_scan(
         "current_open_exposure": current_open_exposure,
     }
 
+    # --- Daily Risk Guardrail (block trading on drawdown) ---
+    # Expect optional payload fields from upstream (app layer):
+    # - daily_realized_pnl
+    # - daily_unrealized_pnl
+    # - account_size (already available)
+    try:
+        daily_realized_pnl = _to_float(payload.get("daily_realized_pnl"), 0.0)
+        daily_unrealized_pnl = _to_float(payload.get("daily_unrealized_pnl"), 0.0)
+        combined_daily_pnl = daily_realized_pnl + daily_unrealized_pnl
+        daily_pnl_pct = (combined_daily_pnl / account_size) if account_size > 0 else 0.0
+    except Exception:
+        combined_daily_pnl = 0.0
+        daily_pnl_pct = 0.0
+
+    # If drawdown exceeds -2%, block new placements
+    trading_blocked = daily_pnl_pct <= -0.02
+    response["daily_pnl_pct"] = round(daily_pnl_pct * 100.0, 2)
+    response["trading_blocked"] = trading_blocked
+
     if debug:
         response["evaluations"] = [debug_to_dict(ev) for ev in evaluations]
 
     top_trade = trades[0] if trades else None
 
     if paper_trade:
+        # Enforce daily risk guardrail
+        if trading_blocked:
+            response["paper_trade_result"] = {
+                "attempted": False,
+                "placed": False,
+                "reason": "daily_loss_guardrail_blocked",
+                "daily_pnl_pct": response.get("daily_pnl_pct"),
+            }
+            return response
         if not paper_trade_candidates:
             response["paper_trade_result"] = {
                 "attempted": False,

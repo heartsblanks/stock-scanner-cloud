@@ -100,7 +100,7 @@ Market Scan Schedulers
 - `services/sync_service.py`
 - `services/trade_service.py`
 - `services/logging_service.py`
-- `services/paper_trade_service.py`
+- `services/paper_trade_service.py` *(currently placeholder / not materially implemented)*
 
 ### Route modules
 - `routes/health.py`
@@ -128,6 +128,11 @@ Market Scan Schedulers
 - `export_daily_snapshot.py`
 - `github_export.py`
 
+### Repository and analysis placeholders
+The following packages/files exist in the repository but are not currently active architectural layers:
+- `repositories/*` *(placeholder repository abstraction; current code uses `storage.py` directly)*
+- `analysis/*` *(placeholder package; current analysis logic is implemented in root-level modules such as `trade_analysis.py` and `signal_analysis.py`)*
+- `export_to_github.py` *(placeholder / not used by the active export flow)*
 ### Frontend
 - `dashboard-ui/`
   - `src/pages/DashboardPage.jsx`
@@ -149,6 +154,10 @@ Responsibilities:
 - expose dashboard endpoints
 - delegate implementation to service and storage layers
 
+Current code reality:
+- `app.py` is still more than a thin composition root and contains significant orchestration, helper logic, and some directly-declared endpoints
+- route modules are in use, but responsibility is not yet fully separated from `app.py`
+
 Examples of endpoint groups:
 - scan endpoints
 - sync endpoints
@@ -162,6 +171,10 @@ Examples of endpoint groups:
 ### 6.2 Service Layer
 
 The service layer implements business workflows.
+
+Current code reality:
+- `services/scan_service.py`, `services/sync_service.py`, and `services/trade_service.py` are active and important
+- `services/paper_trade_service.py` is currently a placeholder and should not be treated as an active runtime component yet
 
 #### Scan service
 Responsible for:
@@ -221,6 +234,10 @@ The GitHub export implementation should:
 ## 8. Database Architecture
 
 Primary database: PostgreSQL.
+
+Current code reality:
+- `storage.py` is the effective persistence and query layer for the application
+- the `repositories/` package is not yet used as the primary data-access abstraction
 
 ### 8.1 Primary tables
 
@@ -309,9 +326,10 @@ A stable trade key should be derived from:
 - CLOSED updated when exit is confirmed or forced
 
 ### 9.5 Current status
-**Partially implemented**
-- lifecycle write hooks have been added into main service flows
-- runtime validation is still required to confirm production population of `trade_lifecycles`
+**Partially implemented, materially improved**
+- lifecycle write hooks are present in scan, sync, and close-related flows
+- historical lifecycle backfill and repair utilities exist
+- runtime validation is still required to confirm clean production population across full market sessions and edge cases
 
 ---
 
@@ -378,9 +396,11 @@ The sizing model should coexist with these controls:
 - adaptive position sizing based on recent performance
 
 ### 10.6 Current status
-**Defined in architecture, not fully implemented in trading logic yet**
-- current system historically used a fixed hard cap approach
-- target system is a 50%-allocation / 10-position dynamic sizing model
+**Partially implemented in trading logic**
+- the system historically used a fixed hard cap approach
+- the codebase now includes a dynamic 50%-allocation / 10-position sizing model
+- current scan flow also includes symbol cooldown logic and adaptive sizing hooks
+- advanced guardrails such as daily loss cutoff, ATR-based sizing, and calibration analytics remain pending
 
 ### 10.7 Adaptive Risk and Cooldown Model
 
@@ -437,7 +457,9 @@ Optional enforcement layer:
 
 #### 10.7.5 Current status
 
-**Not implemented** — planned enhancement
+**Partially implemented**
+- symbol-level cooldown and adaptive sizing hooks have been added in scan orchestration
+- current implementation should still be validated during live/runtime trading cycles and refined over time
 
 ---
 
@@ -468,7 +490,10 @@ Integration points:
 - optional enforcement in `app.py` before scan execution
 
 Status:
-**Not implemented**
+Partially implemented
+- UI guardrail exists
+- Backend enforcement in scan_service exists
+- Needs runtime validation + refinement
 
 ---
 
@@ -612,12 +637,13 @@ The dashboard is a React/Vite frontend backed by Flask API endpoints.
 - insights
 
 ### Current status
-**Partially implemented**
-- UI structure exists
-- data quality depends on lifecycle table population
-- reconciliation section partially implemented (summary + mismatch + manual trigger available, detailed drilldown pending)
-- Alpaca logs section not yet implemented
-- hosted static deployment not yet finalized in architecture
+**Substantially implemented, with important gaps remaining**
+- core dashboard analytics and monitoring UI are in place
+- reconciliation summary, mismatch severity, detail table, and history table are implemented in UI structure
+- system health controls such as manual refresh and manual reconciliation trigger are implemented
+- data quality still depends on backend endpoint completeness and lifecycle/reconciliation correctness
+- Alpaca logs/errors section, risk/exposure widgets, and some backend support endpoints are still missing
+- hosted static deployment is not yet finalized in architecture
 ### 13.1 Implemented UI capabilities
 
 The dashboard UI currently includes:
@@ -640,15 +666,13 @@ The dashboard UI currently includes:
 ### 13.2 Remaining UI work
 
 Pending dashboard UI enhancements:
-- dedicated reconciliation details table
-- reconciliation history / previous run list
 - mismatch drilldown by symbol
 - improved non-blocking toast component instead of inline message banner
 - per-widget loading and error states
-- daily loss / risk / exposure widgets
 - confidence multiplier / loss multiplier / final sizing multiplier visibility
 - manual fix-action buttons for operational recovery workflows
 - richer status indicators for backend jobs and sync health
+- Alpaca logs / API errors section
 
 ### 13.3 UI next implementation order
 
@@ -694,7 +718,10 @@ Reconciliation compares local trade data and broker-side order/exit data.
 - `broker_orders` does not contain a `broker` column in the current schema
 
 ### Current status
-**Implemented in storage**, **not fully surfaced in UI**
+**Implemented across storage, API, and UI, with ongoing operational refinement**
+- reconciliation runs and mismatch detail APIs exist
+- reconciliation summary, detail, and history views exist in the dashboard UI
+- reconciliation quality still depends on correct persistence, broker sync behavior, and mismatch handling over time
 
 ---
 
@@ -718,7 +745,8 @@ Reconciliation compares local trade data and broker-side order/exit data.
 **Partially implemented**
 - DB-level Alpaca logging exists
 - Cloud Run logs are useful for runtime debugging
-- dashboard log views are still missing
+- reconciliation observability in the dashboard now exists
+- dashboard views for Alpaca API logs/errors are still missing
 
 ---
 
@@ -753,21 +781,22 @@ Reconciliation compares local trade data and broker-side order/exit data.
 - Alpaca API DB logging
 - daily snapshot export to GitHub
 - React dashboard base UI
+- reconciliation summary/detail/history UI structure
+- reconciliation run and mismatch APIs
 
 ### Partially implemented
-- trade lifecycle persistence (hooks added, runtime proof still needed)
-- dashboard analytics (depends on lifecycle population)
+- trade lifecycle persistence and runtime validation across live market flows
+- dynamic account-aware position sizing and adaptive sizing controls
+- dashboard analytics quality (depends on lifecycle and backend endpoint completeness)
 - observability UI sections
-- reconciliation visibility in dashboard
 - static dashboard hosting rollout
 - repository documentation and cleanup
+- separation of concerns between `app.py`, route modules, and service modules
 
 ### Missing
-- root `.gitignore` if not yet created
-- finalized static hosting deployment for dashboard UI
-- dashboard section for reconciliation runs/details
 - dashboard section for Alpaca logs/errors
-- dynamic account-aware position sizing using 50% max allocation and 10 max positions
+- volatility-based sizing (ATR)
+- confidence calibration analytics
 - retention/cleanup policy for growing DB tables and exported artifacts
 - architecture-aware README refresh
 
@@ -799,13 +828,13 @@ Reconciliation compares local trade data and broker-side order/exit data.
 
 ## 20. Immediate Next Steps
 
-1. implement account-aware dynamic position sizing with 50% max allocation and 10 max positions
+1. finalize backend support for dashboard endpoints such as `/alpaca-open-positions` and `/risk-exposure-summary`
 2. validate `trade_lifecycles` population during a real market-driven open/close cycle
-3. add a root `.gitignore` if missing
-4. add dashboard sections for reconciliation and Alpaca logs
-5. finalize static hosting deployment for the dashboard UI
-6. document runtime environment variables and deployment steps more clearly
-7. define retention policy for large operational tables and exported snapshots
+3. add dashboard sections for Alpaca logs/errors and risk/exposure visibility
+4. finalize static hosting deployment for the dashboard UI
+5. document runtime environment variables and deployment steps more clearly
+6. define retention policy for large operational tables and exported snapshots
+7. continue reducing orchestration and direct endpoint complexity inside `app.py`
 
 ---
 

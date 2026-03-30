@@ -99,15 +99,19 @@ export async function fetchReconciliationHistory(limit = 20) {
 export async function fetchRiskExposureSummary() {
   const response = await apiClient.get("/risk-exposure-summary");
   const data = response.data || {};
+  const summary = data.summary || {};
 
   return {
-    ...data,
-    total_open_exposure: data?.total_open_exposure || 0,
-    open_position_count: data?.open_position_count || 0,
-    daily_realized_pnl: data?.daily_realized_pnl || 0,
-    daily_unrealized_pnl: data?.daily_unrealized_pnl || 0,
-    allocation_used_pct: data?.allocation_used_pct || 0,
-    max_positions: data?.max_positions || 0,
+    ...summary,
+    total_open_exposure: summary?.total_open_exposure || 0,
+    open_position_count: summary?.open_position_count || 0,
+    daily_realized_pnl: summary?.daily_realized_pnl || 0,
+    daily_unrealized_pnl: summary?.daily_unrealized_pnl || 0,
+    allocation_used_pct: summary?.allocation_used_pct || 0,
+    max_positions: summary?.max_positions || 0,
+    max_total_allocated_capital: summary?.max_total_allocated_capital || 0,
+    max_capital_allocation_pct: summary?.max_capital_allocation_pct || 0,
+    account_size: summary?.account_size || 0,
   };
 }
 

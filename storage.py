@@ -1333,6 +1333,31 @@ def get_trade_lifecycle_summary_from_table(limit: int = 1000) -> dict[str, Any]:
 
 # === DB-first analytics helpers for dashboard ===
 
+def get_daily_realized_pnl(target_date: str) -> float:
+    row = fetch_one(
+        """
+        SELECT
+            ROUND(COALESCE(SUM(realized_pnl), 0)::numeric, 6) AS realized_pnl_total
+        FROM trade_lifecycles
+        WHERE UPPER(COALESCE(status, '')) = 'CLOSED'
+          AND exit_time IS NOT NULL
+          AND exit_time::date = %(target_date)s::date
+        """,
+        {"target_date": target_date},
+    )
+
+    if not row:
+        return 0.0
+
+    value = row.get("realized_pnl_total")
+    if value in (None, ""):
+        return 0.0
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
 def get_trade_lifecycles_for_date(target_date: str, limit: int = 1000) -> list[dict[str, Any]]:
     return fetch_all(
         """

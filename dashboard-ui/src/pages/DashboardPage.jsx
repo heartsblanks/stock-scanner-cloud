@@ -7,6 +7,9 @@ import {
   fetchReconciliationDetails,
   fetchReconciliationHistory,
   fetchAlpacaOpenPositions,
+  fetchRiskExposureSummary,
+  fetchAlpacaApiLogs,
+  fetchAlpacaApiErrors,
 } from "../api/dashboard";
 
 import SummaryCards from "../components/SummaryCards";
@@ -32,7 +35,11 @@ export default function DashboardPage() {
   const [alpacaOpenCount, setAlpacaOpenCount] = useState(null);
   const [reconciliationSummary, setReconciliationSummary] = useState(null);
   const [reconciliationDetails, setReconciliationDetails] = useState([]);
+  const [reconciliationSymbolFilter, setReconciliationSymbolFilter] = useState("");
   const [reconciliationHistory, setReconciliationHistory] = useState([]);
+  const [riskExposureSummary, setRiskExposureSummary] = useState(null);
+  const [alpacaApiLogs, setAlpacaApiLogs] = useState([]);
+  const [alpacaApiErrors, setAlpacaApiErrors] = useState([]);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [toast, setToast] = useState(null);
@@ -73,16 +80,22 @@ export default function DashboardPage() {
 
       setSummary(summaryRes || null);
 
-      const [reconRes, reconDetailsRes, reconHistoryRes, alpacaRes] = await Promise.all([
+      const [reconRes, reconDetailsRes, reconHistoryRes, alpacaRes, riskRes, alpacaLogsRes, alpacaErrorsRes] = await Promise.all([
         fetchReconciliationSummary(),
         fetchReconciliationDetails(100),
         fetchReconciliationHistory(20),
         fetchAlpacaOpenPositions(),
+        fetchRiskExposureSummary(),
+        fetchAlpacaApiLogs(20),
+        fetchAlpacaApiErrors(20),
       ]);
 
       setReconciliationSummary(reconRes || null);
       setReconciliationDetails(Array.isArray(reconDetailsRes?.rows) ? reconDetailsRes.rows : []);
       setReconciliationHistory(Array.isArray(reconHistoryRes?.rows) ? reconHistoryRes.rows : []);
+      setRiskExposureSummary(riskRes || null);
+      setAlpacaApiLogs(Array.isArray(alpacaLogsRes?.rows) ? alpacaLogsRes.rows : []);
+      setAlpacaApiErrors(Array.isArray(alpacaErrorsRes?.rows) ? alpacaErrorsRes.rows : []);
       setLastReconciliationStatus(reconRes?.severity || null);
       setLastReconciliationAt(new Date().toISOString());
       setAlpacaOpenCount(alpacaRes?.count ?? null);
@@ -124,10 +137,25 @@ export default function DashboardPage() {
   const equityCurve = summary?.equity_curve || [];
   const insights = summary?.insights || {};
 
+  const reconciliationSymbols = Array.from(
+    new Set(
+      (reconciliationDetails || [])
+        .map((row) => String(row?.symbol || "").trim().toUpperCase())
+        .filter(Boolean)
+    )
+  ).sort();
+
+  const filteredReconciliationDetails = reconciliationSymbolFilter
+    ? (reconciliationDetails || []).filter(
+        (row) => String(row?.symbol || "").trim().toUpperCase() === reconciliationSymbolFilter
+      )
+    : (reconciliationDetails || []);
+
   function handleApplyFilters(nextFilters) {
     const appliedFilters = nextFilters || { date: "", symbol: "" };
     setFilters(appliedFilters);
     loadData(appliedFilters);
+    setReconciliationSymbolFilter("");
   }
 
   const mismatch = reconciliationSummary?.mismatch_count ?? null;
@@ -152,12 +180,21 @@ export default function DashboardPage() {
       {toast && (
         <div
           style={{
-            marginBottom: 12,
-            padding: "10px 14px",
-            borderRadius: 8,
+            position: "fixed",
+            top: 20,
+            right: 20,
+            zIndex: 1000,
+            minWidth: 280,
+            maxWidth: 420,
+            padding: "12px 16px",
+            borderRadius: 10,
             background: toast.type === "success" ? "#dcfce7" : "#fee2e2",
             color: toast.type === "success" ? "#166534" : "#991b1b",
             border: `1px solid ${toast.type === "success" ? "#86efac" : "#fca5a5"}`,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+            fontSize: 14,
+            fontWeight: 500,
+            pointerEvents: "none",
           }}
         >
           {toast.message}
@@ -273,6 +310,111 @@ export default function DashboardPage() {
         )}
       </div>
 
+      <div style={{ marginTop: 30 }}>
+        <h2>Risk Exposure</h2>
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+          <InsightCard
+            title="Open Exposure ($)"
+            value={riskExposureSummary?.total_open_exposure ?? "-"}
+          />
+          <InsightCard
+            title="Allocation Used (%)"
+            value={riskExposureSummary?.allocation_used_pct ?? "-"}
+          />
+          <InsightCard
+            title="Open Positions"
+            value={
+              riskExposureSummary
+                ? `${riskExposureSummary.open_position_count ?? 0} / ${riskExposureSummary.max_positions ?? 0}`
+                : "-"
+            }
+          />
+          <InsightCard
+            title="Unrealized PnL"
+            value={riskExposureSummary?.daily_unrealized_pnl ?? "-"}
+            valueColor={
+              (riskExposureSummary?.daily_unrealized_pnl ?? 0) > 0
+                ? "#16a34a"
+                : (riskExposureSummary?.daily_unrealized_pnl ?? 0) < 0
+                ? "#dc2626"
+                : undefined
+            }
+          />
+        </div>
+        {riskExposureSummary && (
+          <div style={{ marginTop: 12, fontSize: 14, color: "#6b7280" }}>
+            Max Allocated Capital: {riskExposureSummary.max_total_allocated_capital ?? "-"} |
+            Account Size: {riskExposureSummary.account_size ?? "-"} |
+            Max Allocation Pct: {riskExposureSummary.max_capital_allocation_pct ?? "-"}
+          </div>
+        )}
+      </div>
+
+      <div style={{ marginTop: 30 }}>
+        <h2>Daily Risk Guardrail</h2>
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+          <InsightCard
+            title="Daily Realized PnL"
+            value={riskExposureSummary?.daily_realized_pnl ?? "-"}
+            valueColor={
+              (riskExposureSummary?.daily_realized_pnl ?? 0) > 0
+                ? "#16a34a"
+                : (riskExposureSummary?.daily_realized_pnl ?? 0) < 0
+                ? "#dc2626"
+                : undefined
+            }
+          />
+          <InsightCard
+            title="Daily Unrealized PnL"
+            value={riskExposureSummary?.daily_unrealized_pnl ?? "-"}
+            valueColor={
+              (riskExposureSummary?.daily_unrealized_pnl ?? 0) > 0
+                ? "#16a34a"
+                : (riskExposureSummary?.daily_unrealized_pnl ?? 0) < 0
+                ? "#dc2626"
+                : undefined
+            }
+          />
+          <InsightCard
+            title="Daily PnL %"
+            value={
+              riskExposureSummary && (riskExposureSummary.account_size ?? 0) > 0
+                ? (((riskExposureSummary.daily_realized_pnl ?? 0) + (riskExposureSummary.daily_unrealized_pnl ?? 0)) / riskExposureSummary.account_size * 100).toFixed(2)
+                : "-"
+            }
+            valueColor={
+              riskExposureSummary && (riskExposureSummary.account_size ?? 0) > 0
+                ? ((((riskExposureSummary.daily_realized_pnl ?? 0) + (riskExposureSummary.daily_unrealized_pnl ?? 0)) / riskExposureSummary.account_size) * 100) < 0
+                  ? "#dc2626"
+                  : "#16a34a"
+                : undefined
+            }
+          />
+          <InsightCard
+            title="Trading Status"
+            value={
+              riskExposureSummary && (riskExposureSummary.account_size ?? 0) > 0
+                ? ((((riskExposureSummary.daily_realized_pnl ?? 0) + (riskExposureSummary.daily_unrealized_pnl ?? 0)) / riskExposureSummary.account_size) <= -0.02
+                  ? "BLOCKED"
+                  : "ALLOWED")
+                : "-"
+            }
+            valueColor={
+              riskExposureSummary && (riskExposureSummary.account_size ?? 0) > 0
+                ? ((((riskExposureSummary.daily_realized_pnl ?? 0) + (riskExposureSummary.daily_unrealized_pnl ?? 0)) / riskExposureSummary.account_size) <= -0.02
+                  ? "#dc2626"
+                  : "#16a34a")
+                : undefined
+            }
+          />
+        </div>
+        {riskExposureSummary && (
+          <div style={{ marginTop: 12, fontSize: 14, color: "#6b7280" }}>
+            Daily loss cutoff: -2.00% | Guardrail evaluates realized + unrealized PnL against account size.
+          </div>
+        )}
+      </div>
+
       <div style={{ marginTop: 24, display: "flex", gap: 16, flexWrap: "wrap" }}>
         <InsightCard title="Best Symbol" value={insights?.best_symbol?.symbol || "-"} />
         <InsightCard title="Best Mode" value={insights?.best_mode?.mode || "-"} />
@@ -302,7 +444,94 @@ export default function DashboardPage() {
           <HourlyPerformanceChart rows={hourlyPerformance} />
         </div>
       </div>
+      
+            <div style={{ marginTop: 40 }}>
+        <h2>Alpaca API Logs</h2>
+        <div
+          style={{
+            background: "#fff",
+            borderRadius: 8,
+            padding: 16,
+            boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+          }}
+        >
+          <div style={{ marginBottom: 12, display: "flex", gap: 16, flexWrap: "wrap" }}>
+            <InsightCard title="Recent Calls" value={alpacaApiLogs.length} />
+            <InsightCard
+              title="Recent Errors"
+              value={alpacaApiErrors.length}
+              valueColor={alpacaApiErrors.length > 0 ? "#dc2626" : "#16a34a"}
+            />
+          </div>
 
+          <div style={{ marginTop: 16 }}>
+            <strong>Recent Errors</strong>
+            <div style={{ marginTop: 10, overflowX: "auto" }}>
+              {alpacaApiErrors.length === 0 ? (
+                <div style={{ color: "#6b7280", fontSize: 14 }}>No recent Alpaca API errors</div>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e5e7eb", fontSize: 13, color: "#374151", background: "#f9fafb" }}>Logged At</th>
+                      <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e5e7eb", fontSize: 13, color: "#374151", background: "#f9fafb" }}>Method</th>
+                      <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e5e7eb", fontSize: 13, color: "#374151", background: "#f9fafb" }}>URL</th>
+                      <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e5e7eb", fontSize: 13, color: "#374151", background: "#f9fafb" }}>Status</th>
+                      <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e5e7eb", fontSize: 13, color: "#374151", background: "#f9fafb" }}>Error</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {alpacaApiErrors.map((row, index) => (
+                      <tr key={`${row.id || "alpaca-error"}-${index}`}>
+                        <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13 }}>{row.logged_at || "-"}</td>
+                        <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13 }}>{row.method || "-"}</td>
+                        <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13, whiteSpace: "nowrap" }}>{row.url || "-"}</td>
+                        <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13 }}>{row.status_code ?? "-"}</td>
+                        <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13, color: "#991b1b" }}>{row.error_message || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+
+          <div style={{ marginTop: 20 }}>
+            <strong>Recent Calls</strong>
+            <div style={{ marginTop: 10, overflowX: "auto" }}>
+              {alpacaApiLogs.length === 0 ? (
+                <div style={{ color: "#6b7280", fontSize: 14 }}>No recent Alpaca API logs available</div>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e5e7eb", fontSize: 13, color: "#374151", background: "#f9fafb" }}>Logged At</th>
+                      <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e5e7eb", fontSize: 13, color: "#374151", background: "#f9fafb" }}>Method</th>
+                      <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e5e7eb", fontSize: 13, color: "#374151", background: "#f9fafb" }}>URL</th>
+                      <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e5e7eb", fontSize: 13, color: "#374151", background: "#f9fafb" }}>Status</th>
+                      <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e5e7eb", fontSize: 13, color: "#374151", background: "#f9fafb" }}>Success</th>
+                      <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e5e7eb", fontSize: 13, color: "#374151", background: "#f9fafb" }}>Duration (ms)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {alpacaApiLogs.map((row, index) => (
+                      <tr key={`${row.id || "alpaca-log"}-${index}`}>
+                        <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13 }}>{row.logged_at || "-"}</td>
+                        <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13 }}>{row.method || "-"}</td>
+                        <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13, whiteSpace: "nowrap" }}>{row.url || "-"}</td>
+                        <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13 }}>{row.status_code ?? "-"}</td>
+                        <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13, color: row.success ? "#166534" : "#991b1b" }}>{row.success ? "Yes" : "No"}</td>
+                        <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13 }}>{row.duration_ms ?? "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+      
       <div style={{ marginTop: 40 }}>
         <h2>Reconciliation</h2>
         {lastUpdated && (
@@ -368,9 +597,38 @@ export default function DashboardPage() {
               </div>
 
               <div style={{ marginTop: 20 }}>
-                <strong>Reconciliation Details</strong>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <strong>Reconciliation Details</strong>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <label style={{ fontSize: 13, color: "#374151" }}>Symbol:</label>
+                    <select
+                      value={reconciliationSymbolFilter}
+                      onChange={(e) => setReconciliationSymbolFilter(e.target.value)}
+                      style={{
+                        padding: "6px 10px",
+                        border: "1px solid #d1d5db",
+                        borderRadius: 6,
+                        background: "#fff",
+                        fontSize: 13,
+                      }}
+                    >
+                      <option value="">All symbols</option>
+                      {reconciliationSymbols.map((symbol) => (
+                        <option key={symbol} value={symbol}>
+                          {symbol}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 10, fontSize: 13, color: "#6b7280" }}>
+                  Showing {filteredReconciliationDetails.length} detail row(s)
+                  {reconciliationSymbolFilter ? ` for ${reconciliationSymbolFilter}` : " across all symbols"}
+                </div>
+
                 <div style={{ marginTop: 10 }}>
-                  <ReconciliationDetailsTable rows={reconciliationDetails || []} />
+                  <ReconciliationDetailsTable rows={filteredReconciliationDetails} />
                 </div>
               </div>
 
