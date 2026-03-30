@@ -10,6 +10,7 @@ import {
   fetchRiskExposureSummary,
   fetchAlpacaApiLogs,
   fetchAlpacaApiErrors,
+  fetchLatestScanSummary,
 } from "../api/dashboard";
 
 import SummaryCards from "../components/SummaryCards";
@@ -30,6 +31,20 @@ export default function DashboardPage() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [sectionLoading, setSectionLoading] = useState({
+    overview: true,
+    reconciliation: true,
+    risk: true,
+    alpacaLogs: true,
+    sizing: true,
+  });
+  const [sectionErrors, setSectionErrors] = useState({
+    overview: null,
+    reconciliation: null,
+    risk: null,
+    alpacaLogs: null,
+    sizing: null,
+  });
   const [filters, setFilters] = useState({ date: "", symbol: "" });
 
   const [alpacaOpenCount, setAlpacaOpenCount] = useState(null);
@@ -40,8 +55,10 @@ export default function DashboardPage() {
   const [riskExposureSummary, setRiskExposureSummary] = useState(null);
   const [alpacaApiLogs, setAlpacaApiLogs] = useState([]);
   const [alpacaApiErrors, setAlpacaApiErrors] = useState([]);
+  const [latestScanSummary, setLatestScanSummary] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isRunningSync, setIsRunningSync] = useState(false);
   const [toast, setToast] = useState(null);
   const [lastReconciliationStatus, setLastReconciliationStatus] = useState(null);
   const [lastReconciliationAt, setLastReconciliationAt] = useState(null);
@@ -51,54 +68,121 @@ export default function DashboardPage() {
     try {
       setLoading(true);
       setError(null);
+      setSectionLoading({
+        overview: true,
+        reconciliation: true,
+        risk: true,
+        alpacaLogs: true,
+        sizing: true,
+      });
+      setSectionErrors({
+        overview: null,
+        reconciliation: null,
+        risk: null,
+        alpacaLogs: null,
+        sizing: null,
+      });
 
-      const [summaryRes, openRes, lifecycleRes] = await Promise.all([
-        fetchDashboardSummary(activeFilters?.date || undefined),
-        fetchOpenTrades(100),
-        fetchTradeLifecycle(200),
-      ]);
+      try {
+        const [summaryRes, openRes, lifecycleRes, latestScanRes] = await Promise.all([
+          fetchDashboardSummary(activeFilters?.date || undefined),
+          fetchOpenTrades(100),
+          fetchTradeLifecycle(200),
+          fetchLatestScanSummary(),
+        ]);
 
-      const openRows = openRes?.rows || [];
-      const lifecycleRows = lifecycleRes?.rows || [];
+        const openRows = openRes?.rows || [];
+        const lifecycleRows = lifecycleRes?.rows || [];
 
-      if (activeFilters?.symbol) {
-        const normalized = String(activeFilters.symbol).trim().toUpperCase();
-        setOpenTrades(
-          openRows.filter(
-            (row) => String(row?.symbol || "").trim().toUpperCase() === normalized
-          )
-        );
-        setLifecycle(
-          lifecycleRows.filter(
-            (row) => String(row?.symbol || "").trim().toUpperCase() === normalized
-          )
-        );
-      } else {
-        setOpenTrades(openRows);
-        setLifecycle(lifecycleRows);
+        if (activeFilters?.symbol) {
+          const normalized = String(activeFilters.symbol).trim().toUpperCase();
+          setOpenTrades(
+            openRows.filter(
+              (row) => String(row?.symbol || "").trim().toUpperCase() === normalized
+            )
+          );
+          setLifecycle(
+            lifecycleRows.filter(
+              (row) => String(row?.symbol || "").trim().toUpperCase() === normalized
+            )
+          );
+        } else {
+          setOpenTrades(openRows);
+          setLifecycle(lifecycleRows);
+        }
+
+        setSummary(summaryRes || null);
+        setLatestScanSummary(latestScanRes || null);
+        setSectionErrors((prev) => ({ ...prev, sizing: null }));
+        setSectionErrors((prev) => ({ ...prev, overview: null }));
+      } catch (sectionErr) {
+        setSectionErrors((prev) => ({
+          ...prev,
+          overview: sectionErr?.message || "Failed to load dashboard overview",
+        }));
+        setSectionErrors((prev) => ({
+          ...prev,
+          sizing: sectionErr?.message || "Failed to load sizing summary",
+        }));
+      } finally {
+        setSectionLoading((prev) => ({ ...prev, overview: false, sizing: false }));
       }
 
-      setSummary(summaryRes || null);
+      try {
+        const [reconRes, reconDetailsRes, reconHistoryRes, alpacaRes] = await Promise.all([
+          fetchReconciliationSummary(),
+          fetchReconciliationDetails(100),
+          fetchReconciliationHistory(20),
+          fetchAlpacaOpenPositions(),
+        ]);
 
-      const [reconRes, reconDetailsRes, reconHistoryRes, alpacaRes, riskRes, alpacaLogsRes, alpacaErrorsRes] = await Promise.all([
-        fetchReconciliationSummary(),
-        fetchReconciliationDetails(100),
-        fetchReconciliationHistory(20),
-        fetchAlpacaOpenPositions(),
-        fetchRiskExposureSummary(),
-        fetchAlpacaApiLogs(20),
-        fetchAlpacaApiErrors(20),
-      ]);
+        setReconciliationSummary(reconRes || null);
+        setReconciliationDetails(Array.isArray(reconDetailsRes?.rows) ? reconDetailsRes.rows : []);
+        setReconciliationHistory(Array.isArray(reconHistoryRes?.rows) ? reconHistoryRes.rows : []);
+        setLastReconciliationStatus(reconRes?.severity || null);
+        setLastReconciliationAt(new Date().toISOString());
+        setAlpacaOpenCount(alpacaRes?.count ?? null);
+        setSectionErrors((prev) => ({ ...prev, reconciliation: null }));
+      } catch (sectionErr) {
+        setSectionErrors((prev) => ({
+          ...prev,
+          reconciliation: sectionErr?.message || "Failed to load reconciliation data",
+        }));
+      } finally {
+        setSectionLoading((prev) => ({ ...prev, reconciliation: false }));
+      }
 
-      setReconciliationSummary(reconRes || null);
-      setReconciliationDetails(Array.isArray(reconDetailsRes?.rows) ? reconDetailsRes.rows : []);
-      setReconciliationHistory(Array.isArray(reconHistoryRes?.rows) ? reconHistoryRes.rows : []);
-      setRiskExposureSummary(riskRes || null);
-      setAlpacaApiLogs(Array.isArray(alpacaLogsRes?.rows) ? alpacaLogsRes.rows : []);
-      setAlpacaApiErrors(Array.isArray(alpacaErrorsRes?.rows) ? alpacaErrorsRes.rows : []);
-      setLastReconciliationStatus(reconRes?.severity || null);
-      setLastReconciliationAt(new Date().toISOString());
-      setAlpacaOpenCount(alpacaRes?.count ?? null);
+      try {
+        const riskRes = await fetchRiskExposureSummary();
+        setRiskExposureSummary(riskRes || null);
+        setSectionErrors((prev) => ({ ...prev, risk: null }));
+      } catch (sectionErr) {
+        setSectionErrors((prev) => ({
+          ...prev,
+          risk: sectionErr?.message || "Failed to load risk exposure data",
+        }));
+
+      } finally {
+        setSectionLoading((prev) => ({ ...prev, risk: false }));
+      }
+
+      try {
+        const [alpacaLogsRes, alpacaErrorsRes] = await Promise.all([
+          fetchAlpacaApiLogs(20),
+          fetchAlpacaApiErrors(20),
+        ]);
+        setAlpacaApiLogs(Array.isArray(alpacaLogsRes?.rows) ? alpacaLogsRes.rows : []);
+        setAlpacaApiErrors(Array.isArray(alpacaErrorsRes?.rows) ? alpacaErrorsRes.rows : []);
+        setSectionErrors((prev) => ({ ...prev, alpacaLogs: null }));
+      } catch (sectionErr) {
+        setSectionErrors((prev) => ({
+          ...prev,
+          alpacaLogs: sectionErr?.message || "Failed to load Alpaca API logs",
+        }));
+      } finally {
+        setSectionLoading((prev) => ({ ...prev, alpacaLogs: false }));
+      }
+
       setLastUpdated(new Date().toISOString());
     } catch (err) {
       setError(err.message || "Failed to load dashboard");
@@ -160,6 +244,40 @@ export default function DashboardPage() {
 
   const mismatch = reconciliationSummary?.mismatch_count ?? null;
   const mismatchLabel = reconciliationSummary?.severity ?? "-";
+
+  const backendHealthStatus = sectionErrors.overview
+    ? "DEGRADED"
+    : sectionErrors.reconciliation || sectionErrors.risk || sectionErrors.alpacaLogs
+    ? "WARNING"
+    : "OK";
+
+  const syncHealthStatus = isRunningSync
+    ? "RUNNING"
+    : alpacaApiErrors.length > 0
+    ? "ERRORS_PRESENT"
+    : "HEALTHY";
+
+  const reconciliationHealthStatus = lastReconciliationStatus || "-";
+  const latestScanData = latestScanSummary?.summary || latestScanSummary || {};
+  const confidenceMultiplier =
+    latestScanData?.confidence_multiplier ??
+    latestScanData?.sizing_confidence_multiplier ??
+    latestScanData?.scan_confidence_multiplier ??
+    null;
+  const lossMultiplier =
+    latestScanData?.loss_multiplier ??
+    latestScanData?.sizing_loss_multiplier ??
+    latestScanData?.scan_loss_multiplier ??
+    null;
+  const finalSizingMultiplier =
+    latestScanData?.final_sizing_multiplier ??
+    latestScanData?.sizing_multiplier ??
+    latestScanData?.final_multiplier ??
+    null;
+  const multiplierStatus =
+    confidenceMultiplier !== null || lossMultiplier !== null || finalSizingMultiplier !== null
+      ? "EXPOSED"
+      : "NOT_EXPOSED";  
 
   if (loading) {
     return <div style={{ padding: 20 }}>Loading dashboard...</div>;
@@ -267,9 +385,67 @@ export default function DashboardPage() {
         >
           Re-run Reconciliation
         </button>
+
+        <button
+          onClick={async () => {
+            try {
+              setIsRunningSync(true);
+              const res = await fetch("/sync-paper-trades", { method: "POST" });
+              const data = await res.json();
+
+              if (data?.ok) {
+                setToast({ type: "success", message: "Paper trade sync completed successfully" });
+              } else {
+                setToast({
+                  type: "error",
+                  message: "Paper trade sync failed: " + (data?.error || "Unknown error"),
+                });
+              }
+              await loadData(filters);
+            } finally {
+              setIsRunningSync(false);
+            }
+          }}
+          disabled={isRefreshing || isRunningSync}
+          style={{
+            padding: "8px 16px",
+            background: isRunningSync ? "#cbd5e1" : "#475569",
+            color: "#fff",
+            border: "none",
+            borderRadius: 6,
+            cursor: isRefreshing || isRunningSync ? "not-allowed" : "pointer",
+            fontWeight: 500,
+            opacity: isRefreshing || isRunningSync ? 0.8 : 1,
+          }}
+        >
+          {isRunningSync ? "Syncing Trades..." : "Sync Paper Trades"}
+        </button>
+      </div>
+
+      <div style={{ marginTop: 6, marginBottom: 18 }}>
+        <div
+          style={{
+            background: "#fff",
+            borderRadius: 8,
+            padding: 14,
+            boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+          }}
+        >
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Operational Fix Actions</div>
+          <div style={{ fontSize: 13, color: "#6b7280" }}>
+            Use these actions when dashboard state looks stale or inconsistent. Refresh reloads dashboard data,
+            re-run reconciliation rebuilds mismatch visibility, and sync paper trades refreshes trade state from Alpaca.
+          </div>
+        </div>
       </div>
 
       <SummaryCards data={summary} />
+      {sectionLoading.overview && (
+        <div style={{ fontSize: 13, color: "#6b7280", marginTop: 8 }}>Loading overview...</div>
+      )}
+      {sectionErrors.overview && (
+        <div style={{ fontSize: 13, color: "#991b1b", marginTop: 8 }}>{sectionErrors.overview}</div>
+      )}
 
       <div style={{ marginTop: 30 }}>
         <h2>System Health</h2>
@@ -277,6 +453,12 @@ export default function DashboardPage() {
           <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>
             Last updated: {new Date(lastUpdated).toLocaleString()}
           </div>
+        )}
+        {sectionLoading.reconciliation && (
+          <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 8 }}>Loading system health...</div>
+        )}
+        {sectionErrors.reconciliation && (
+          <div style={{ fontSize: 13, color: "#991b1b", marginBottom: 8 }}>{sectionErrors.reconciliation}</div>
         )}
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
           <InsightCard
@@ -300,6 +482,41 @@ export default function DashboardPage() {
                 : undefined
             }
           />
+          <InsightCard
+            title="Backend Health"
+            value={backendHealthStatus}
+            valueColor={
+              backendHealthStatus === "OK"
+                ? "#16a34a"
+                : backendHealthStatus === "WARNING"
+                ? "#f59e0b"
+                : "#dc2626"
+            }
+          />
+          <InsightCard
+            title="Sync Health"
+            value={syncHealthStatus}
+            valueColor={
+              syncHealthStatus === "HEALTHY"
+                ? "#16a34a"
+                : syncHealthStatus === "RUNNING"
+                ? "#2563eb"
+                : "#dc2626"
+            }
+          />
+          <InsightCard
+            title="Reconciliation Health"
+            value={reconciliationHealthStatus}
+            valueColor={
+              reconciliationHealthStatus === "OK"
+                ? "#16a34a"
+                : reconciliationHealthStatus === "WARNING"
+                ? "#f59e0b"
+                : reconciliationHealthStatus === "CRITICAL" || reconciliationHealthStatus === "FAILED"
+                ? "#dc2626"
+                : undefined
+            }
+          />
         </div>
         {mismatch !== null && (
           <div style={{ marginTop: 12, fontSize: 14 }}>
@@ -308,10 +525,21 @@ export default function DashboardPage() {
             </span>
           </div>
         )}
+        <div style={{ marginTop: 12, fontSize: 14, color: "#6b7280" }}>
+          Last Reconciliation: {lastReconciliationAt ? new Date(lastReconciliationAt).toLocaleString() : "-"} |
+          Recent Alpaca Errors: {alpacaApiErrors.length} |
+          Sync Action State: {isRunningSync ? "In progress" : "Idle"}
+        </div>
       </div>
 
       <div style={{ marginTop: 30 }}>
         <h2>Risk Exposure</h2>
+        {sectionLoading.risk && (
+          <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 8 }}>Loading risk exposure...</div>
+        )}
+        {sectionErrors.risk && (
+          <div style={{ fontSize: 13, color: "#991b1b", marginBottom: 8 }}>{sectionErrors.risk}</div>
+        )}
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
           <InsightCard
             title="Open Exposure ($)"
@@ -352,6 +580,12 @@ export default function DashboardPage() {
 
       <div style={{ marginTop: 30 }}>
         <h2>Daily Risk Guardrail</h2>
+        {sectionLoading.risk && (
+          <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 8 }}>Loading guardrail data...</div>
+        )}
+        {sectionErrors.risk && (
+          <div style={{ fontSize: 13, color: "#991b1b", marginBottom: 8 }}>{sectionErrors.risk}</div>
+        )}
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
           <InsightCard
             title="Daily Realized PnL"
@@ -414,7 +648,40 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
-
+      <div style={{ marginTop: 30 }}>
+        <h2>Sizing Multipliers</h2>
+        {sectionLoading.sizing && (
+          <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 8 }}>Loading sizing multipliers...</div>
+        )}
+        {sectionErrors.sizing && (
+          <div style={{ fontSize: 13, color: "#991b1b", marginBottom: 8 }}>{sectionErrors.sizing}</div>
+        )}
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+          <InsightCard
+            title="Confidence Multiplier"
+            value={confidenceMultiplier ?? "-"}
+            valueColor={confidenceMultiplier !== null ? "#2563eb" : undefined}
+          />
+          <InsightCard
+            title="Loss Multiplier"
+            value={lossMultiplier ?? "-"}
+            valueColor={lossMultiplier !== null ? "#7c3aed" : undefined}
+          />
+          <InsightCard
+            title="Final Sizing Multiplier"
+            value={finalSizingMultiplier ?? "-"}
+            valueColor={finalSizingMultiplier !== null ? "#16a34a" : undefined}
+          />
+          <InsightCard
+            title="Exposure Status"
+            value={multiplierStatus}
+            valueColor={multiplierStatus === "EXPOSED" ? "#16a34a" : "#f59e0b"}
+          />
+        </div>
+        <div style={{ marginTop: 12, fontSize: 14, color: "#6b7280" }}>
+          Values are read from the latest scan summary when exposed by the backend. If shown as `-`, backend payload support is still incomplete.
+        </div>
+      </div>
       <div style={{ marginTop: 24, display: "flex", gap: 16, flexWrap: "wrap" }}>
         <InsightCard title="Best Symbol" value={insights?.best_symbol?.symbol || "-"} />
         <InsightCard title="Best Mode" value={insights?.best_mode?.mode || "-"} />
@@ -447,6 +714,12 @@ export default function DashboardPage() {
       
             <div style={{ marginTop: 40 }}>
         <h2>Alpaca API Logs</h2>
+        {sectionLoading.alpacaLogs && (
+          <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 8 }}>Loading Alpaca API logs...</div>
+        )}
+        {sectionErrors.alpacaLogs && (
+          <div style={{ fontSize: 13, color: "#991b1b", marginBottom: 8 }}>{sectionErrors.alpacaLogs}</div>
+        )}
         <div
           style={{
             background: "#fff",
@@ -461,6 +734,26 @@ export default function DashboardPage() {
               title="Recent Errors"
               value={alpacaApiErrors.length}
               valueColor={alpacaApiErrors.length > 0 ? "#dc2626" : "#16a34a"}
+            />
+            <InsightCard
+              title="Last Error At"
+              value={alpacaApiErrors[0]?.logged_at || "-"}
+              valueColor={alpacaApiErrors.length > 0 ? "#dc2626" : undefined}
+            />
+            <InsightCard
+              title="Success Rate"
+              value={
+                alpacaApiLogs.length > 0
+                  ? `${(((alpacaApiLogs.filter((row) => !!row.success).length / alpacaApiLogs.length) * 100).toFixed(1))}%`
+                  : "-"
+              }
+              valueColor={
+                alpacaApiLogs.length > 0 && alpacaApiLogs.filter((row) => !!row.success).length === alpacaApiLogs.length
+                  ? "#16a34a"
+                  : alpacaApiLogs.length > 0
+                  ? "#f59e0b"
+                  : undefined
+              }
             />
           </div>
 
@@ -477,16 +770,18 @@ export default function DashboardPage() {
                       <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e5e7eb", fontSize: 13, color: "#374151", background: "#f9fafb" }}>Method</th>
                       <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e5e7eb", fontSize: 13, color: "#374151", background: "#f9fafb" }}>URL</th>
                       <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e5e7eb", fontSize: 13, color: "#374151", background: "#f9fafb" }}>Status</th>
+                      <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e5e7eb", fontSize: 13, color: "#374151", background: "#f9fafb" }}>Severity</th>
                       <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e5e7eb", fontSize: 13, color: "#374151", background: "#f9fafb" }}>Error</th>
                     </tr>
                   </thead>
                   <tbody>
                     {alpacaApiErrors.map((row, index) => (
-                      <tr key={`${row.id || "alpaca-error"}-${index}`}>
+                        <tr key={`${row.id || "alpaca-error"}-${index}`}>
                         <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13 }}>{row.logged_at || "-"}</td>
                         <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13 }}>{row.method || "-"}</td>
                         <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13, whiteSpace: "nowrap" }}>{row.url || "-"}</td>
                         <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13 }}>{row.status_code ?? "-"}</td>
+                        <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13, color: "#991b1b", fontWeight: 600 }}>ERROR</td>
                         <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13, color: "#991b1b" }}>{row.error_message || "-"}</td>
                       </tr>
                     ))}
@@ -520,7 +815,7 @@ export default function DashboardPage() {
                         <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13 }}>{row.method || "-"}</td>
                         <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13, whiteSpace: "nowrap" }}>{row.url || "-"}</td>
                         <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13 }}>{row.status_code ?? "-"}</td>
-                        <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13, color: row.success ? "#166534" : "#991b1b" }}>{row.success ? "Yes" : "No"}</td>
+                        <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13, color: row.success ? "#166534" : "#991b1b", fontWeight: 600 }}>{row.success ? "Yes" : "No"}</td>
                         <td style={{ padding: "10px 12px", borderBottom: "1px solid #f1f5f9", fontSize: 13 }}>{row.duration_ms ?? "-"}</td>
                       </tr>
                     ))}
@@ -534,6 +829,12 @@ export default function DashboardPage() {
       
       <div style={{ marginTop: 40 }}>
         <h2>Reconciliation</h2>
+        {sectionLoading.reconciliation && (
+          <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 8 }}>Loading reconciliation...</div>
+        )}
+        {sectionErrors.reconciliation && (
+          <div style={{ fontSize: 13, color: "#991b1b", marginBottom: 8 }}>{sectionErrors.reconciliation}</div>
+        )}
         {lastUpdated && (
           <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>
             Data refreshed at: {new Date(lastUpdated).toLocaleString()}

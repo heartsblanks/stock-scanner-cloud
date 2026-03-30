@@ -119,19 +119,82 @@ export async function fetchAlpacaApiLogs(limit = 100) {
   const response = await apiClient.get("/alpaca-api-logs/recent", {
     params: { limit },
   });
-  return response.data;
+  const data = response.data || {};
+
+  return {
+    ...data,
+    rows: Array.isArray(data?.rows)
+      ? data.rows
+      : Array.isArray(data?.logs)
+      ? data.logs
+      : Array.isArray(data)
+      ? data
+      : [],
+    count:
+      data?.count ??
+      (Array.isArray(data?.rows)
+        ? data.rows.length
+        : Array.isArray(data?.logs)
+        ? data.logs.length
+        : Array.isArray(data)
+        ? data.length
+        : 0),
+    limit: data?.limit || limit,
+  };
 }
 
 export async function fetchAlpacaApiErrors(limit = 100) {
   const response = await apiClient.get("/alpaca-api-logs/errors", {
     params: { limit },
   });
-  return response.data;
+  const data = response.data || {};
+
+  return {
+    ...data,
+    rows: Array.isArray(data?.rows)
+      ? data.rows
+      : Array.isArray(data?.errors)
+      ? data.errors
+      : Array.isArray(data)
+      ? data
+      : [],
+    count:
+      data?.count ??
+      (Array.isArray(data?.rows)
+        ? data.rows.length
+        : Array.isArray(data?.errors)
+        ? data.errors.length
+        : Array.isArray(data)
+        ? data.length
+        : 0),
+    limit: data?.limit || limit,
+  };
 }
 
 export async function fetchLatestScanSummary() {
   const response = await apiClient.get("/latest-scan-summary");
-  return response.data;
+  const data = response.data || {};
+  const summary = data?.summary || data;
+
+  return {
+    ...data,
+    summary,
+    confidence_multiplier:
+      summary?.confidence_multiplier ??
+      summary?.sizing_confidence_multiplier ??
+      summary?.scan_confidence_multiplier ??
+      null,
+    loss_multiplier:
+      summary?.loss_multiplier ??
+      summary?.sizing_loss_multiplier ??
+      summary?.scan_loss_multiplier ??
+      null,
+    final_sizing_multiplier:
+      summary?.final_sizing_multiplier ??
+      summary?.sizing_multiplier ??
+      summary?.final_multiplier ??
+      null,
+  };
 }
 
 export async function fetchAlpacaOpenPositions() {

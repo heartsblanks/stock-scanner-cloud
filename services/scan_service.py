@@ -379,6 +379,13 @@ def execute_full_scan(
                             paper_trade_candidate["metrics"]["confidence_multiplier"] = confidence_multiplier
                             paper_trade_candidate["metrics"]["loss_multiplier"] = loss_multiplier
                             paper_trade_candidate["metrics"]["final_multiplier"] = final_multiplier
+                # --- Expose multipliers at response level (latest candidate wins) ---
+                try:
+                    response["confidence_multiplier"] = round(confidence_multiplier, 4)
+                    response["loss_multiplier"] = round(loss_multiplier, 4)
+                    response["final_sizing_multiplier"] = round(final_multiplier, 4)
+                except Exception:
+                    pass
                 paper_metrics = paper_trade_candidate["metrics"]
                 paper_metrics["current_open_positions"] = current_open_positions
                 paper_metrics["current_open_exposure"] = current_open_exposure
