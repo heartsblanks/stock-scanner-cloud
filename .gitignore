@@ -1,0 +1,28 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# macOS
+.DS_Store
+__MACOSX/
+
+# Git internals should never be copied around
+.git/
+
+# Local env / secrets
+.env
+*.local
+dashboard-ui/.env
+
+# Frontend
+dashboard-ui/node_modules/
+dashboard-ui/dist/
+dashboard-ui/.vite/
+
+# Logs / temp
+logs/
+tmp/
+*.log
