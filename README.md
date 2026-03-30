@@ -1,84 +1,219 @@
 # Stock Scanner Cloud
 
-A cloud-based stock scanner application built with Python and deployed to Google Cloud Platform.
+Cloud-native trading workflow system for scanning markets, executing Alpaca paper trades, syncing state, analyzing performance, and visualizing results via a dashboard.
 
-## Overview
+👉 See **ARCHITECTURE.md** for the full system design and current implementation status.
 
-This project provides a stock trading scanner that monitors market conditions and identifies potential trading opportunities. It's containerized with Docker and deployed using Google Cloud Build.
+---
 
-## Features
+## 🚀 What this project does
 
-- Real-time stock market scanning
-- Trade analysis and identification
-- Cloud-native deployment with Docker
-- Automated CI/CD pipeline with Google Cloud Build
-- REST API interface for accessing scan results
+- Schedules market scans and generates trade candidates
+- Places and manages **Alpaca paper trades**
+- Syncs open/closed positions and detects exits
+- Stores data in **PostgreSQL (Cloud SQL)**
+- Builds **trade lifecycle analytics**
+- Runs reconciliation between local and broker data
+- Exports daily snapshots and backs them up to **GitHub**
+- Serves a **React dashboard** for monitoring and insights
 
-## Project Structure
+---
+
+## 🏗️ Tech Stack
+
+- **Backend:** Python (Flask)
+- **Frontend:** React + Vite
+- **Database:** PostgreSQL (Cloud SQL)
+- **Compute:** Google Cloud Run
+- **Scheduling:** Google Cloud Scheduler
+- **CI/CD:** Google Cloud Build
+- **Broker:** Alpaca (paper trading)
+- **Backup:** GitHub (daily snapshots)
+
+---
+
+## 📂 Repository Structure (simplified)
 
 ```
-├── app.py                 # Flask/FastAPI web application
-├── trade_scan.py         # Core stock scanning logic
-├── requirements.txt      # Python dependencies
-├── Dockerfile            # Docker container configuration
-├── cloudbuild.yaml       # Google Cloud Build configuration
-├── .dockerignore         # Files to exclude from Docker build
-├── .gcloudignore        # Files to exclude from Cloud deployment
-└── README.md            # This file
+├── app.py
+├── db.py
+├── storage.py
+├── schema.sql
+├── routes/
+├── services/
+├── repositories/
+├── alpaca/
+├── analysis/
+├── export_daily_snapshot.py
+├── github_export.py
+├── dashboard-ui/
+├── Dockerfile
+├── cloudbuild.yaml
+├── README.md
+├── ARCHITECTURE.md
 ```
 
-## Requirements
+---
 
-- Python 3.x
-- Dependencies listed in `requirements.txt`
+## ⚙️ Setup (local)
 
-## Installation
+### 1. Clone
+```bash
+git clone https://github.com/heartsblanks/stock-scanner-cloud.git
+cd stock-scanner-cloud
+```
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/heartsblanks/stock-scanner-cloud.git
-   cd stock-scanner-cloud
-   ```
+### 2. Python setup
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
 
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-## Running Locally
-
+### 3. Run backend
 ```bash
 python app.py
 ```
 
-## Docker Deployment
-
-Build the Docker image:
-```bash
-docker build -t stock-scanner-cloud .
+API will be available at:
+```
+http://localhost:8080
 ```
 
-Run the container:
+---
+
+## 🐳 Docker
+
 ```bash
+docker build -t stock-scanner-cloud .
 docker run -p 8080:8080 stock-scanner-cloud
 ```
 
-## Cloud Deployment
+---
 
-This project is configured for deployment to Google Cloud Platform using Cloud Build. The `cloudbuild.yaml` file defines the build and deployment pipeline.
+## ☁️ Cloud Deployment
 
-## Usage
+Deployed via **Google Cloud Build → Cloud Run**.
 
-The application provides a REST API for stock scanning operations. Refer to the `app.py` file for available endpoints.
+```bash
+gcloud builds submit --tag gcr.io/<PROJECT_ID>/stock-scanner
 
-## Testing
+gcloud run deploy stock-scanner \
+  --image gcr.io/<PROJECT_ID>/stock-scanner \
+  --region europe-west1
+```
 
-⚠️ **Note**: This project is for testing purposes only and should not be used for real trading decisions.
+---
 
-## License
+## ⏱️ Scheduler Jobs
 
-[Add license information here]
+Cloud Scheduler triggers:
 
-## Contributing
+- market scans
+- trade sync
+- end-of-day close
+- reconciliation
+- analytics generation
+- daily GitHub snapshot export
 
-[Add contribution guidelines here]
+---
+
+## 📊 Dashboard
+
+Located in:
+```
+dashboard-ui/
+```
+
+Run locally:
+```bash
+cd dashboard-ui
+npm install
+npm run dev
+```
+
+Features:
+- summary metrics
+- open trades
+- lifecycle analytics
+- charts (equity, symbol, mode, hourly)
+- insights
+
+---
+
+## 💾 Database
+
+Main tables:
+- `trade_events`
+- `trade_lifecycles`
+- `broker_orders`
+- `reconciliation_runs`
+- `reconciliation_details`
+- `alpaca_api_logs`
+
+Schema defined in:
+```
+schema.sql
+```
+
+---
+
+## 🔁 Daily Snapshot Backup
+
+Endpoint:
+```
+POST /export-daily-snapshot
+```
+
+Flow:
+1. export reports + DB snapshots
+2. clone GitHub repo
+3. copy snapshot files
+4. commit + push
+
+---
+
+## ⚠️ Important Notes
+
+- Paper trading only (Alpaca paper API)
+- Not financial advice
+- Do not use for real capital without validation
+
+---
+
+## 🧹 What NOT to commit
+
+Do **not** commit:
+
+- `__pycache__/`
+- `*.pyc`
+- `.venv/`
+- `dashboard-ui/node_modules/`
+- `dashboard-ui/dist/`
+- `.env`
+- `.DS_Store`
+
+---
+
+## 📌 Current Status
+
+See **ARCHITECTURE.md → Implemented vs Missing** for:
+- completed features
+- partial implementations
+- remaining work
+
+---
+
+## 🤝 Contributing
+
+Before making changes:
+1. update `ARCHITECTURE.md`
+2. define requirement clearly
+3. implement
+4. validate
+
+---
+
+## 📄 License
+
+Add license here.

@@ -10,6 +10,11 @@ def _normalize_trade_key(symbol: str, broker_parent_order_id: str, broker_order_
     return broker_parent_order_id or broker_order_id or symbol
 
 
+def _to_upper_or_none(value: Any) -> str | None:
+    text = str(value or "").strip().upper()
+    return text or None
+
+
 def _infer_direction(entry_price, exit_price, stop_price, target_price) -> str | None:
     try:
         entry_val = float(entry_price) if entry_price not in (None, "") else None
@@ -98,6 +103,17 @@ def _compute_duration_minutes(entry_timestamp, exit_timestamp):
         return None
 
 
+def _resolve_exit_timestamp(sync_result: dict[str, Any], timestamp_utc: str, parse_iso_utc: Callable[[str], Any]):
+    for key in ("exit_filled_at", "exit_time", "filled_at", "updated_at"):
+        raw_value = str(sync_result.get(key, "") or "").strip()
+        if raw_value:
+            try:
+                return parse_iso_utc(raw_value)
+            except Exception:
+                pass
+    return parse_iso_utc(timestamp_utc)
+
+
 
 def execute_sync_paper_trades(
     *,
@@ -174,6 +190,8 @@ def execute_sync_paper_trades(
             continue
 
         timestamp_utc = datetime.now(timezone.utc).isoformat()
+        open_side = _to_upper_or_none(open_row.get("side", ""))
+        lifecycle_side = open_side
 
         try:
             append_trade_log({
@@ -186,7 +204,7 @@ def execute_sync_paper_trades(
                 "broker": "ALPACA",
                 "broker_order_id": parent_order_id,
                 "broker_parent_order_id": parent_order_id,
-                "broker_status": sync_result.get("parent_status", ""),
+                "broker_status": sync_result.get("exit_status", sync_result.get("parent_status", "")),
                 "broker_filled_qty": sync_result.get("exit_filled_qty", ""),
                 "broker_filled_avg_price": sync_result.get("exit_filled_avg_price", ""),
                 "broker_exit_order_id": sync_result.get("exit_order_id", ""),
@@ -213,7 +231,7 @@ def execute_sync_paper_trades(
                 event_time=parse_iso_utc(timestamp_utc),
                 event_type=exit_event,
                 symbol=symbol,
-                side=None,
+                side=lifecycle_side,
                 shares=to_float_or_none(open_row.get("shares", "")),
                 price=to_float_or_none(sync_result.get("exit_price", "")),
                 mode=str(open_row.get("mode", "") or ""),
@@ -224,9 +242,9 @@ def execute_sync_paper_trades(
             safe_insert_broker_order(
                 order_id=str(sync_result.get("exit_order_id", "") or parent_order_id),
                 symbol=symbol,
-                side=None,
+                side=lifecycle_side,
                 order_type="exit",
-                status=str(sync_result.get("parent_status", "") or ""),
+                status=str(sync_result.get("exit_status", sync_result.get("parent_status", "")) or ""),
                 qty=to_float_or_none(open_row.get("shares", "")),
                 filled_qty=to_float_or_none(sync_result.get("exit_filled_qty", "")),
                 avg_fill_price=to_float_or_none(sync_result.get("exit_filled_avg_price", "")),
@@ -241,7 +259,7 @@ def execute_sync_paper_trades(
             shares_value = open_row.get("shares", "")
             entry_timestamp_utc = str(open_row.get("timestamp_utc", "")).strip()
             entry_timestamp = parse_iso_utc(entry_timestamp_utc) if entry_timestamp_utc else None
-            exit_timestamp = parse_iso_utc(timestamp_utc)
+            exit_timestamp = _resolve_exit_timestamp(sync_result, timestamp_utc, parse_iso_utc)
             linked_signal_timestamp_utc = str(open_row.get("linked_signal_timestamp_utc", "")).strip()
             broker_order_id = str(open_row.get("broker_order_id", "") or parent_order_id)
             broker_parent_order_id = str(open_row.get("broker_parent_order_id", "") or parent_order_id)
@@ -255,7 +273,7 @@ def execute_sync_paper_trades(
                 trade_key=trade_key,
                 symbol=symbol,
                 mode=str(open_row.get("mode", "") or ""),
-                side=None,
+                side=lifecycle_side,
                 direction=direction,
                 status="CLOSED",
                 entry_time=entry_timestamp,
@@ -264,7 +282,7 @@ def execute_sync_paper_trades(
                 exit_price=to_float_or_none(exit_price),
                 stop_price=to_float_or_none(stop_price),
                 target_price=to_float_or_none(target_price),
-                exit_reason=str(sync_result.get("exit_reason", exit_event) or exit_event),
+                exit_reason=str(sync_result.get("exit_reason", "") or exit_event),
                 shares=to_float_or_none(shares_value),
                 realized_pnl=realized_pnl,
                 realized_pnl_percent=realized_pnl_percent,
@@ -299,6 +317,7 @@ def execute_sync_paper_trades(
             "exit_price": sync_result.get("exit_price", ""),
             "exit_order_id": sync_result.get("exit_order_id", ""),
             "parent_status": sync_result.get("parent_status", ""),
+            "exit_status": sync_result.get("exit_status", sync_result.get("parent_status", "")),
         })
 
     return {

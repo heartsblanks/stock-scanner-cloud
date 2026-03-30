@@ -99,6 +99,7 @@ def _compute_duration_minutes(entry_timestamp, exit_timestamp):
     except Exception:
         return None
 
+
 def execute_close_all_paper_positions(
     *,
     get_open_positions: Callable[[], list[dict[str, Any]]],
@@ -188,16 +189,19 @@ def execute_close_all_paper_positions(
         close_order_status = str(close_response.get("status", "")).strip()
         close_filled_avg_price = ""
         close_filled_qty = qty
+        close_filled = False
 
         if close_order_id:
             try:
                 close_order = get_order_by_id(close_order_id, nested=False)
                 close_order_status = str(close_order.get("status", close_order_status)).strip()
                 close_filled_qty = str(close_order.get("filled_qty", close_filled_qty)).strip()
+                close_filled = close_order_status.lower() == "filled"
 
                 close_filled_avg_price_raw = close_order.get("filled_avg_price", "")
                 if close_filled_avg_price_raw not in (None, ""):
                     close_filled_avg_price = str(close_filled_avg_price_raw).strip()
+                    close_filled = True
             except Exception as order_read_error:
                 print(f"Paper close order read failed for {symbol}: {order_read_error}", flush=True)
 
@@ -215,7 +219,7 @@ def execute_close_all_paper_positions(
             filled_at=parse_iso_utc(timestamp_utc) if close_filled_avg_price else None,
         )
         open_row = open_paper_rows_by_symbol.get(symbol)
-        if open_row:
+        if open_row and close_filled:
             entry_timestamp_utc = str(open_row.get("timestamp_utc", "")).strip()
             entry_timestamp = parse_iso_utc(entry_timestamp_utc) if entry_timestamp_utc else None
             event_timestamp = parse_iso_utc(timestamp_utc)
@@ -223,7 +227,7 @@ def execute_close_all_paper_positions(
             stop_price = open_row.get("stop_price", "")
             target_price = open_row.get("target_price", "")
             shares_value = open_row.get("shares", qty)
-            exit_price = close_filled_avg_price if close_filled_avg_price else current_price
+            exit_price = close_filled_avg_price
             exit_reason = "EOD_CLOSE"
             mode = str(open_row.get("mode", "")).strip()
             trade_source = str(open_row.get("trade_source", "ALPACA_PAPER")).strip().upper() or "ALPACA_PAPER"
@@ -320,11 +324,12 @@ def execute_close_all_paper_positions(
             "closed": True,
             "qty": qty,
             "side": side,
-            "exit_price": close_filled_avg_price if close_filled_avg_price else current_price,
+            "exit_price": close_filled_avg_price if close_filled else "",
             "close_order_id": close_order_id,
             "close_status": close_order_status,
             "close_filled_qty": close_filled_qty,
             "close_filled_avg_price": close_filled_avg_price,
+            "close_filled": close_filled,
             "canceled_order_count": len(canceled_order_ids),
         })
 
