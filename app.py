@@ -56,6 +56,7 @@ from services.logging_service import (
 
 from trade_scan import (
     run_scan,
+    evaluate_symbol,
     market_time_check,
     MIN_CONFIDENCE,
     PRIMARY_INSTRUMENTS,
@@ -394,6 +395,7 @@ def get_open_paper_trades() -> list[dict]:
     return open_rows
 
 
+
 def get_managed_open_paper_trades_for_eod_close() -> list[dict]:
     open_rows = get_open_paper_trades()
 
@@ -436,6 +438,36 @@ def get_managed_open_paper_trades_for_eod_close() -> list[dict]:
             validated_open_rows.append(row)
 
     return validated_open_rows
+
+
+def get_current_open_position_state() -> tuple[int, float]:
+    try:
+        positions = get_open_positions()
+    except Exception as e:
+        print(f"Failed to read current open positions for sizing context: {e}", flush=True)
+        return 0, 0.0
+
+    current_open_positions = 0
+    current_open_exposure = 0.0
+
+    for position in positions:
+        symbol = str(position.get("symbol", "")).strip().upper()
+        if not symbol:
+            continue
+
+        current_open_positions += 1
+
+        market_value = to_float_or_none(position.get("market_value"))
+        if market_value is not None:
+            current_open_exposure += abs(market_value)
+            continue
+
+        qty = to_float_or_none(position.get("qty"))
+        current_price = to_float_or_none(position.get("current_price"))
+        if qty is not None and current_price is not None:
+            current_open_exposure += abs(qty * current_price)
+
+    return current_open_positions, current_open_exposure
 
 
 def read_all_signal_rows() -> list[dict]:
@@ -769,8 +801,15 @@ def handle_sync_paper_trades():
     )
 
 def handle_scan_request(payload):
+    scan_payload = dict(payload or {})
+    if scan_payload.get("paper_trade"):
+        if "current_open_positions" not in scan_payload or "current_open_exposure" not in scan_payload:
+            current_open_positions, current_open_exposure = get_current_open_position_state()
+            scan_payload.setdefault("current_open_positions", current_open_positions)
+            scan_payload.setdefault("current_open_exposure", current_open_exposure)
+
     return execute_full_scan(
-        payload,
+        scan_payload,
         market_time_check=market_time_check,
         build_scan_id=build_scan_id,
         market_phase_from_timestamp=market_phase_from_timestamp,
@@ -781,6 +820,7 @@ def handle_scan_request(payload):
         trade_to_dict=trade_to_dict,
         debug_to_dict=debug_to_dict,
         paper_candidate_from_evaluation=paper_candidate_from_evaluation,
+        evaluate_symbol=evaluate_symbol,
         get_latest_open_paper_trade_for_symbol=get_latest_open_paper_trade_for_symbol,
         is_symbol_in_paper_cooldown=is_symbol_in_paper_cooldown,
         place_paper_bracket_order_from_trade=place_paper_bracket_order_from_trade,

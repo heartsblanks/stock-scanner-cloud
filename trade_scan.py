@@ -9,6 +9,9 @@ from zoneinfo import ZoneInfo
 import pandas_market_calendars as mcal
 
 MIN_CONFIDENCE = 75
+MAX_POSITIONS = 10
+MAX_CAPITAL_ALLOCATION_PCT = 0.50
+MIN_REMAINING_ALLOCATABLE_CAPITAL = 50.0
 API_KEY = os.getenv("TWELVEDATA_API_KEY")
 BASE_URL = "https://api.twelvedata.com/time_series"
 
@@ -315,7 +318,60 @@ def get_market_direction(candles: list[dict]):
     return "NEUTRAL"
 
 
-def evaluate_symbol(name: str, info: dict, candles: list[dict], account_size: float, benchmark_directions: dict):
+def calculate_position_sizing(account_size: float, entry: float, stop: float, current_open_positions: int = 0, current_open_exposure: float = 0.0):
+    remaining_slots = max(0, MAX_POSITIONS - max(0, int(current_open_positions)))
+    max_total_allocated_capital = account_size * MAX_CAPITAL_ALLOCATION_PCT
+    remaining_allocatable_capital = max(0.0, max_total_allocated_capital - max(0.0, float(current_open_exposure)))
+
+    if remaining_slots <= 0:
+        return {
+            "max_total_allocated_capital": max_total_allocated_capital,
+            "remaining_allocatable_capital": remaining_allocatable_capital,
+            "remaining_slots": remaining_slots,
+            "per_trade_notional": 0.0,
+            "cash_affordable_shares": 0,
+            "notional_capped_shares": 0,
+            "shares": 0,
+            "actual_position_cost": 0.0,
+            "risk_per_share": abs(entry - stop),
+            "actual_risk": 0.0,
+        }
+
+    per_trade_notional = remaining_allocatable_capital / remaining_slots if remaining_slots > 0 else 0.0
+    risk_per_share = abs(entry - stop)
+    cash_affordable_shares = int(account_size / entry) if entry > 0 else 0
+    notional_capped_shares = int(per_trade_notional / entry) if entry > 0 else 0
+    shares = min(cash_affordable_shares, notional_capped_shares)
+    actual_position_cost = shares * entry
+    actual_risk = shares * risk_per_share
+
+    return {
+        "max_total_allocated_capital": max_total_allocated_capital,
+        "remaining_allocatable_capital": remaining_allocatable_capital,
+        "remaining_slots": remaining_slots,
+        "per_trade_notional": per_trade_notional,
+        "cash_affordable_shares": cash_affordable_shares,
+        "notional_capped_shares": notional_capped_shares,
+        "shares": shares,
+        "actual_position_cost": actual_position_cost,
+        "risk_per_share": risk_per_share,
+        "actual_risk": actual_risk,
+    }
+
+
+def calculate_take_profit_dollars(entry: float, target: float, shares: int) -> float:
+    return abs(target - entry) * shares
+
+
+def evaluate_symbol(
+    name: str,
+    info: dict,
+    candles: list[dict],
+    account_size: float,
+    benchmark_directions: dict,
+    current_open_positions: int = 0,
+    current_open_exposure: float = 0.0,
+):
     checks = {}
     metrics = {
         "symbol": info["symbol"],
@@ -515,27 +571,59 @@ def evaluate_symbol(name: str, info: dict, candles: list[dict], account_size: fl
             "metrics": metrics,
         }
 
-    risk_amount = account_size * 0.02
-    risk_per_share = abs(entry - stop)
+    sizing = calculate_position_sizing(
+        account_size=account_size,
+        entry=entry,
+        stop=stop,
+        current_open_positions=current_open_positions,
+        current_open_exposure=current_open_exposure,
+    )
 
-    risk_based_shares = int(risk_amount / risk_per_share) if risk_per_share > 0 else 0
-    cash_affordable_shares = int(account_size / entry) if entry > 0 else 0
-    shares = min(risk_based_shares, cash_affordable_shares)
-
-    actual_position_cost = shares * entry
-    actual_risk = shares * risk_per_share
+    risk_per_share = sizing["risk_per_share"]
+    shares = sizing["shares"]
+    actual_position_cost = sizing["actual_position_cost"]
+    actual_risk = sizing["actual_risk"]
+    take_profit_dollars = calculate_take_profit_dollars(entry, target, shares)
 
     metrics.update({
-        "risk_amount": risk_amount,
+        "max_positions": MAX_POSITIONS,
+        "max_capital_allocation_pct": MAX_CAPITAL_ALLOCATION_PCT,
+        "current_open_positions": current_open_positions,
+        "current_open_exposure": current_open_exposure,
+        "max_total_allocated_capital": sizing["max_total_allocated_capital"],
+        "remaining_allocatable_capital": sizing["remaining_allocatable_capital"],
+        "remaining_slots": sizing["remaining_slots"],
+        "per_trade_notional": sizing["per_trade_notional"],
         "risk_per_share": risk_per_share,
-        "risk_based_shares": risk_based_shares,
-        "cash_affordable_shares": cash_affordable_shares,
+        "cash_affordable_shares": sizing["cash_affordable_shares"],
+        "notional_capped_shares": sizing["notional_capped_shares"],
         "shares": shares,
         "actual_position_cost": actual_position_cost,
         "actual_risk": actual_risk,
+        "take_profit_dollars": take_profit_dollars,
     })
 
-    checks["cash_affordability"] = cash_affordable_shares >= 1
+    checks["remaining_slots_available"] = sizing["remaining_slots"] >= 1
+    if not checks["remaining_slots_available"]:
+        return {
+            "name": name,
+            "decision": "REJECTED",
+            "final_reason": "No remaining position slots available.",
+            "checks": checks,
+            "metrics": metrics,
+        }
+
+    checks["remaining_allocatable_capital_available"] = sizing["remaining_allocatable_capital"] >= MIN_REMAINING_ALLOCATABLE_CAPITAL
+    if not checks["remaining_allocatable_capital_available"]:
+        return {
+            "name": name,
+            "decision": "REJECTED",
+            "final_reason": "No meaningful allocatable capital remains.",
+            "checks": checks,
+            "metrics": metrics,
+        }
+
+    checks["cash_affordability"] = sizing["cash_affordable_shares"] >= 1
     if not checks["cash_affordability"]:
         return {
             "name": name,
@@ -545,12 +633,13 @@ def evaluate_symbol(name: str, info: dict, candles: list[dict], account_size: fl
             "metrics": metrics,
         }
 
+    checks["notional_cap_affordability"] = sizing["notional_capped_shares"] >= 1
     checks["position_size_valid"] = shares >= 1
     if not checks["position_size_valid"]:
         return {
             "name": name,
             "decision": "REJECTED",
-            "final_reason": "Position size too small for account/risk settings.",
+            "final_reason": "Position size too small for current allocation/slot settings.",
             "checks": checks,
             "metrics": metrics,
         }
@@ -638,9 +727,12 @@ Target: {fmt(m['target'])}
 
 Shares: {m['shares']}
 Position Cost: ${fmt(m['actual_position_cost'])}
+Per-Trade Notional Limit: ${fmt(m['per_trade_notional'])}
 Estimated Risk/Share: {fmt(m['risk_per_share'])}
 Actual Risk: ${fmt(m['actual_risk'])}
-Max Allowed Risk: ${fmt(m['risk_amount'])}
+Take Profit Dollars: ${fmt(m['take_profit_dollars'])}
+Remaining Slots: {m['remaining_slots']}
+Remaining Allocatable Capital: ${fmt(m['remaining_allocatable_capital'])}
 
 OR High: {fmt(m['or_high'])}
 OR Low: {fmt(m['or_low'])}
@@ -703,13 +795,21 @@ def format_debug_result(eval_result: dict) -> str:
     if "shares" in m:
         lines.append("")
         lines.append("Sizing:")
-        lines.append(f"- Risk-Based Shares: {m['risk_based_shares']}")
+        lines.append(f"- Max Positions: {m['max_positions']}")
+        lines.append(f"- Allocation %: {m['max_capital_allocation_pct']:.2f}")
+        lines.append(f"- Current Open Positions: {m['current_open_positions']}")
+        lines.append(f"- Current Open Exposure: ${fmt(m['current_open_exposure'])}")
+        lines.append(f"- Max Total Allocated Capital: ${fmt(m['max_total_allocated_capital'])}")
+        lines.append(f"- Remaining Allocatable Capital: ${fmt(m['remaining_allocatable_capital'])}")
+        lines.append(f"- Remaining Slots: {m['remaining_slots']}")
+        lines.append(f"- Per-Trade Notional Limit: ${fmt(m['per_trade_notional'])}")
         lines.append(f"- Cash-Affordable Shares: {m['cash_affordable_shares']}")
+        lines.append(f"- Notional-Capped Shares: {m['notional_capped_shares']}")
         lines.append(f"- Final Shares: {m['shares']}")
         lines.append(f"- Position Cost: ${fmt(m['actual_position_cost'])}")
         lines.append(f"- Risk/Share: {fmt(m['risk_per_share'])}")
         lines.append(f"- Actual Risk: ${fmt(m['actual_risk'])}")
-        lines.append(f"- Max Allowed Risk: ${fmt(m['risk_amount'])}")
+        lines.append(f"- Take Profit Dollars: ${fmt(m['take_profit_dollars'])}")
 
     return "\n".join(lines)
 
@@ -754,7 +854,7 @@ def get_benchmark_directions_from_cache(cache: dict):
     return directions, failures
 
 
-def run_scan(account_size: float, mode: str):
+def run_scan(account_size: float, mode: str, current_open_positions: int = 0, current_open_exposure: float = 0.0):
     if mode == "primary":
         selected_instruments = PRIMARY_INSTRUMENTS
     elif mode == "secondary":
@@ -805,7 +905,15 @@ def run_scan(account_size: float, mode: str):
             continue
 
         try:
-            result = evaluate_symbol(name, info, candles, account_size, benchmark_directions)
+            result = evaluate_symbol(
+                name,
+                info,
+                candles,
+                account_size,
+                benchmark_directions,
+                current_open_positions=current_open_positions,
+                current_open_exposure=current_open_exposure,
+            )
             evaluations.append(result)
             if result["decision"] == "VALID":
                 valid_trades.append(result)
@@ -820,7 +928,7 @@ def run_scan(account_size: float, mode: str):
     return valid_trades, evaluations, fetch_ok, fetch_fail, benchmark_directions, mode.upper()
 
 
-def print_test(account_size: float, mode: str, debug: bool):
+def print_test(account_size: float, mode: str, debug: bool, current_open_positions: int = 0, current_open_exposure: float = 0.0):
     ny_tz = ZoneInfo("America/New_York")
     pl_tz = ZoneInfo("Europe/Warsaw")
     now_ny = datetime.now(ny_tz)
@@ -852,7 +960,12 @@ def print_test(account_size: float, mode: str, debug: bool):
         print("\n".join(lines))
         return
 
-    trades, evaluations, fetch_ok, fetch_fail, benchmark_directions, source = run_scan(account_size, mode)
+    trades, evaluations, fetch_ok, fetch_fail, benchmark_directions, source = run_scan(
+        account_size,
+        mode,
+        current_open_positions=current_open_positions,
+        current_open_exposure=current_open_exposure,
+    )
 
     lines.append("Benchmark Directions:")
     for k, v in benchmark_directions.items():
@@ -905,20 +1018,37 @@ def print_test(account_size: float, mode: str, debug: bool):
 def main():
     args = sys.argv[1:]
     debug = "--debug" in args
+    current_open_positions = 0
+    current_open_exposure = 0.0
     args = [a for a in args if a != "--debug"]
 
+    parsed_args = []
+    i = 0
+    while i < len(args):
+        if args[i] == "--open-positions" and i + 1 < len(args):
+            current_open_positions = int(args[i + 1])
+            i += 2
+            continue
+        if args[i] == "--open-exposure" and i + 1 < len(args):
+            current_open_exposure = float(args[i + 1])
+            i += 2
+            continue
+        parsed_args.append(args[i])
+        i += 1
+    args = parsed_args
+
     if len(args) < 2:
-        print("Usage: python3 trade_scan.py <AccountSize> <primary|secondary|third|fourth|core_one|core_two> [--debug]")
-        print("   or: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|core_one|core_two> [--debug]")
+        print("Usage: python3 trade_scan.py <AccountSize> <primary|secondary|third|fourth|core_one|core_two> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
+        print("   or: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|core_one|core_two> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
         return
 
     if args[0] == "--test":
         if len(args) < 3:
-            print("Usage: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|core_one|core_two> [--debug]")
+            print("Usage: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|core_one|core_two> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
             return
         account_size = float(args[1])
         mode = args[2].lower()
-        print_test(account_size, mode, debug)
+        print_test(account_size, mode, debug, current_open_positions=current_open_positions, current_open_exposure=current_open_exposure)
         return
 
     account_size = float(args[0])
@@ -929,7 +1059,12 @@ def main():
         print(msg)
         return
 
-    trades, evaluations, _, _, _, source = run_scan(account_size, mode)
+    trades, evaluations, _, _, _, source = run_scan(
+        account_size,
+        mode,
+        current_open_positions=current_open_positions,
+        current_open_exposure=current_open_exposure,
+    )
 
     if not trades and not debug:
         print(f"Source: {source} WATCHLIST\n\nNo trade today\n\nNo valid setups above confidence {MIN_CONFIDENCE} right now.")

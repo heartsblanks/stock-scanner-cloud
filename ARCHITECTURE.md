@@ -315,7 +315,74 @@ A stable trade key should be derived from:
 
 ---
 
-## 10. Scheduler Architecture
+## 10. Risk Management and Position Sizing
+
+### 10.1 Position sizing objective
+The system should no longer rely on a fixed `$500` notional per trade as the long-term sizing model.
+
+Target design:
+- use **account-aware position sizing**
+- enforce **maximum 10 concurrent positions**
+- allow deployment of up to **50% of account equity** across open positions
+- distribute remaining allocatable capital across remaining open slots
+- continue to support stop/target-based trade management and symbol cooldown rules
+
+### 10.2 Allocation model
+Definitions:
+- `max_positions = 10`
+- `max_capital_allocation_pct = 0.50`
+- `max_total_allocated_capital = account_equity * max_capital_allocation_pct`
+- `remaining_allocatable_capital = max_total_allocated_capital - current_open_exposure`
+- `remaining_position_slots = max_positions - current_open_positions`
+
+Base sizing rule:
+- `per_trade_notional = remaining_allocatable_capital / remaining_position_slots`
+
+This model ensures:
+- capital is distributed across the remaining available slots
+- position size scales with account size
+- position size becomes smaller as exposure is consumed
+- portfolio allocation remains capped at 50% of account equity
+
+### 10.3 Risk interpretation
+Important distinction:
+- **position notional** is not the same as **risk per trade**
+- actual risk per trade depends on the distance between entry price and stop price
+
+Formula:
+- `risk_per_trade_dollars = abs(entry_price - stop_price) * shares`
+
+Therefore the architecture should track both:
+- notional allocation per trade
+- actual stop-based dollar risk per trade
+
+### 10.4 Take-profit interpretation
+Take profit should continue to be based on the strategy-generated target price, not a fixed dollar amount.
+
+Formula:
+- `take_profit_dollars = abs(target_price - entry_price) * shares`
+
+This means take profit per trade is variable and depends on:
+- entry price
+- target price
+- number of shares
+
+### 10.5 Additional controls
+The sizing model should coexist with these controls:
+- symbol-level cooldown after successive losses
+- optional global daily loss guardrails
+- optional max total open exposure guardrail
+- skip trades when no remaining slots are available
+- skip trades when remaining allocatable capital is not meaningful
+
+### 10.6 Current status
+**Defined in architecture, not fully implemented in trading logic yet**
+- current system historically used a fixed hard cap approach
+- target system is a 50%-allocation / 10-position dynamic sizing model
+
+---
+
+## 11. Scheduler Architecture
 
 Cloud Scheduler triggers operational HTTP endpoints on Cloud Run.
 
@@ -342,7 +409,7 @@ Cloud Scheduler triggers operational HTTP endpoints on Cloud Run.
 
 ---
 
-## 11. Analysis and Reporting
+## 12. Analysis and Reporting
 
 Analytics are generated from trade data and signal data.
 
@@ -362,7 +429,7 @@ Analytics are generated from trade data and signal data.
 
 ---
 
-## 12. Dashboard Architecture
+## 13. Dashboard Architecture
 
 The dashboard is a React/Vite frontend backed by Flask API endpoints.
 
@@ -404,7 +471,7 @@ The dashboard is a React/Vite frontend backed by Flask API endpoints.
 
 ---
 
-## 13. Export and Backup Architecture
+## 14. Export and Backup Architecture
 
 ### Daily snapshot flow
 1. export current reports and DB snapshots into a staging directory
@@ -424,7 +491,7 @@ It should only create copies.
 
 ---
 
-## 14. Reconciliation Architecture
+## 15. Reconciliation Architecture
 
 Reconciliation compares local trade data and broker-side order/exit data.
 
@@ -443,7 +510,7 @@ Reconciliation compares local trade data and broker-side order/exit data.
 
 ---
 
-## 15. Observability and Logging
+## 16. Observability and Logging
 
 ### Logging types
 - Flask / gunicorn runtime logs
@@ -467,7 +534,7 @@ Reconciliation compares local trade data and broker-side order/exit data.
 
 ---
 
-## 16. Security and Configuration
+## 17. Security and Configuration
 
 ### Key environment/config values
 - `GITHUB_TOKEN`
@@ -488,7 +555,7 @@ Reconciliation compares local trade data and broker-side order/exit data.
 
 ---
 
-## 17. Implemented vs Missing
+## 18. Implemented vs Missing
 
 ### Fully implemented
 - Cloud Run backend deployment
@@ -512,12 +579,13 @@ Reconciliation compares local trade data and broker-side order/exit data.
 - finalized static hosting deployment for dashboard UI
 - dashboard section for reconciliation runs/details
 - dashboard section for Alpaca logs/errors
+- dynamic account-aware position sizing using 50% max allocation and 10 max positions
 - retention/cleanup policy for growing DB tables and exported artifacts
 - architecture-aware README refresh
 
 ---
 
-## 18. Repository Hygiene Requirements
+## 19. Repository Hygiene Requirements
 
 ### Must be committed
 - source code
@@ -541,18 +609,19 @@ Reconciliation compares local trade data and broker-side order/exit data.
 
 ---
 
-## 19. Immediate Next Steps
+## 20. Immediate Next Steps
 
-1. validate `trade_lifecycles` population during a real market-driven open/close cycle
-2. add a root `.gitignore` if missing
-3. add dashboard sections for reconciliation and Alpaca logs
-4. finalize static hosting deployment for the dashboard UI
-5. document runtime environment variables and deployment steps more clearly
-6. define retention policy for large operational tables and exported snapshots
+1. implement account-aware dynamic position sizing with 50% max allocation and 10 max positions
+2. validate `trade_lifecycles` population during a real market-driven open/close cycle
+3. add a root `.gitignore` if missing
+4. add dashboard sections for reconciliation and Alpaca logs
+5. finalize static hosting deployment for the dashboard UI
+6. document runtime environment variables and deployment steps more clearly
+7. define retention policy for large operational tables and exported snapshots
 
 ---
 
-## 20. Change Management Rule
+## 21. Change Management Rule
 
 Before implementing any new requirement:
 1. update `ARCHITECTURE.md`

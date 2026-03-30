@@ -41,7 +41,19 @@ def _infer_direction(entry_price, stop_price, target_price, side) -> str | None:
 
     return None
 
+def _to_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
 
+
+def _to_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
+    
 def execute_scan_request(payload: dict[str, Any], *, handler: Callable[[dict[str, Any]], Any]) -> Any:
     return handler(payload)
 
@@ -66,10 +78,11 @@ def execute_full_scan(
     append_signal_log: Callable[[dict[str, Any]], None],
     safe_insert_scan_run: Callable[..., None],
     parse_iso_utc: Callable[[str], Any],
-    run_scan: Callable[[float, str], Any],
+    run_scan: Callable[..., Any],
     trade_to_dict: Callable[[Any], dict[str, Any]],
     debug_to_dict: Callable[[Any], dict[str, Any]],
     paper_candidate_from_evaluation: Callable[[Any], Any],
+    evaluate_symbol: Callable[..., Any],
     get_latest_open_paper_trade_for_symbol: Callable[[str], Any],
     is_symbol_in_paper_cooldown: Callable[[str, str], tuple[bool, str]],
     place_paper_bracket_order_from_trade: Callable[[Any], dict[str, Any]],
@@ -110,6 +123,9 @@ def execute_full_scan(
         account_size = float(account_size)
     except (TypeError, ValueError):
         return {"ok": False, "error": "account_size must be numeric"}, 400
+    
+    current_open_positions = _to_int(payload.get("current_open_positions", 0), 0)
+    current_open_exposure = _to_float(payload.get("current_open_exposure", 0.0), 0.0)
 
     if mode not in {"primary", "secondary", "third", "fourth", "core_one", "core_two"}:
         return {"ok": False, "error": "mode must be primary, secondary, third, fourth, core_one, or core_two"}, 400
@@ -131,6 +147,8 @@ def execute_full_scan(
                 "scan_execution_time_ms": int((datetime.now(timezone.utc) - scan_started_at).total_seconds() * 1000),
                 "mode": mode,
                 "account_size": account_size,
+                "current_open_positions": current_open_positions,
+                "current_open_exposure": current_open_exposure,
                 "timing_ok": False,
                 "source": mode.upper(),
                 "trade_count": 0,
@@ -180,22 +198,27 @@ def execute_full_scan(
             "paper_trade_enabled": paper_trade,
         }
 
-    all_trades, evaluations, _fetch_ok, _fetch_fail, benchmark_directions, source = run_scan(account_size, mode)
+    all_trades, evaluations, _fetch_ok, _fetch_fail, benchmark_directions, source = run_scan(
+        account_size,
+        mode,
+        current_open_positions=current_open_positions,
+        current_open_exposure=current_open_exposure,
+    )
     trades = [t for t in all_trades if t["metrics"].get("direction") == "BUY"]
-    paper_trades = []
+    paper_trade_candidates = []
     for ev in evaluations:
         candidate = paper_candidate_from_evaluation(ev)
         if candidate is not None:
-            paper_trades.append(candidate)
-    paper_long_candidates = [t for t in paper_trades if t["metrics"].get("direction") == "BUY"]
-    paper_short_candidates = [t for t in paper_trades if t["metrics"].get("direction") == "SELL"]
+            paper_trade_candidates.append(candidate)
+    paper_long_candidates = [t for t in paper_trade_candidates if t["metrics"].get("direction") == "BUY"]
+    paper_short_candidates = [t for t in paper_trade_candidates if t["metrics"].get("direction") == "SELL"]
 
     paper_candidate_symbols = ",".join(
-        t["metrics"].get("symbol", "") for t in paper_trades if t["metrics"].get("symbol", "")
+        t["metrics"].get("symbol", "") for t in paper_trade_candidates if t["metrics"].get("symbol", "")
     )
 
     paper_candidate_confidences = ",".join(
-        str(t["metrics"].get("final_confidence", "")) for t in paper_trades if t["metrics"].get("symbol", "")
+        str(t["metrics"].get("final_confidence", "")) for t in paper_trade_candidates if t["metrics"].get("symbol", "")
     )
 
     response = {
@@ -206,12 +229,14 @@ def execute_full_scan(
         "benchmark_directions": benchmark_directions,
         "min_confidence": MIN_CONFIDENCE,
         "trade_count": len(trades),
-        "paper_trade_candidate_count": len(paper_trades),
+        "paper_trade_candidate_count": len(paper_trade_candidates),
         "paper_trade_long_candidate_count": len(paper_long_candidates),
         "paper_trade_short_candidate_count": len(paper_short_candidates),
         "trades": [trade_to_dict(t) for t in trades],
         "paper_trade_enabled": paper_trade,
         "scan_source": scan_source,
+        "current_open_positions": current_open_positions,
+        "current_open_exposure": current_open_exposure,
     }
 
     if debug:
@@ -220,12 +245,12 @@ def execute_full_scan(
     top_trade = trades[0] if trades else None
 
     if paper_trade:
-        if not paper_trades:
+        if not paper_trade_candidates:
             response["paper_trade_result"] = {
                 "attempted": False,
                 "placed": False,
                 "reason": "no_paper_trade_candidates_at_or_above_threshold",
-                "candidate_count": 0,
+                "candidate_count": len(paper_trade_candidates),
                 "long_candidate_count": 0,
                 "short_candidate_count": 0,
                 "placed_long_count": 0,
@@ -240,9 +265,43 @@ def execute_full_scan(
             skip_reasons = []
             placed_trade_ids = []
 
-            for paper_trade_candidate in paper_trades:
+            for paper_trade_candidate in paper_trade_candidates:
                 paper_metrics = paper_trade_candidate["metrics"]
+                paper_metrics["current_open_positions"] = current_open_positions
+                paper_metrics["current_open_exposure"] = current_open_exposure
                 candidate_symbol = str(paper_metrics.get("symbol", "")).strip().upper()
+
+                candidate_name = paper_trade_candidate.get("name", "")
+                candidate_info = paper_trade_candidate.get("info")
+                candidate_candles = paper_trade_candidate.get("candles")
+                candidate_benchmark_directions = paper_trade_candidate.get("benchmark_directions", benchmark_directions)
+
+                if candidate_info is not None and candidate_candles is not None:
+                    refreshed_evaluation = evaluate_symbol(
+                        candidate_name,
+                        candidate_info,
+                        candidate_candles,
+                        account_size,
+                        candidate_benchmark_directions,
+                        current_open_positions=current_open_positions,
+                        current_open_exposure=current_open_exposure,
+                    )
+                    refreshed_candidate = paper_candidate_from_evaluation(refreshed_evaluation)
+                    if refreshed_candidate is None:
+                        paper_results.append({
+                            "attempted": False,
+                            "placed": False,
+                            "reason": refreshed_evaluation.get("final_reason", "candidate_no_longer_valid"),
+                            "symbol": candidate_symbol,
+                        })
+                        skipped_symbols.append(candidate_symbol)
+                        skip_reasons.append(f"{candidate_symbol}:{refreshed_evaluation.get('final_reason', 'candidate_no_longer_valid')}")
+                        continue
+                    paper_trade_candidate = refreshed_candidate
+                    paper_metrics = paper_trade_candidate["metrics"]
+                    paper_metrics["current_open_positions"] = current_open_positions
+                    paper_metrics["current_open_exposure"] = current_open_exposure
+                    candidate_symbol = str(paper_metrics.get("symbol", "")).strip().upper()
 
                 existing_open_trade = get_latest_open_paper_trade_for_symbol(candidate_symbol)
                 if existing_open_trade is not None:
@@ -280,6 +339,8 @@ def execute_full_scan(
                             placed_short_count += 1
 
                         placed_trade_ids.append(str(paper_trade_result.get("client_order_id", "")).strip())
+                        current_open_positions += 1
+                        current_open_exposure += _to_float(paper_trade_result.get("estimated_notional", 0.0), 0.0)
                         append_trade_log({
                             "timestamp_utc": timestamp_utc,
                             "event_type": "OPEN",
@@ -344,6 +405,8 @@ def execute_full_scan(
                         stop_price = paper_metrics.get("stop", "")
                         target_price = paper_metrics.get("target", "")
                         shares_value = paper_trade_result.get("shares", "")
+                        paper_metrics["current_open_positions"] = current_open_positions
+                        paper_metrics["current_open_exposure"] = current_open_exposure
                         direction = _infer_direction(
                             entry_price=entry_price,
                             stop_price=stop_price,
@@ -401,7 +464,7 @@ def execute_full_scan(
             response["paper_trade_result"] = {
                 "attempted": True,
                 "placed": placed_count > 0,
-                "candidate_count": len(paper_trades),
+                "candidate_count": len(paper_trade_candidates),
                 "long_candidate_count": len(paper_long_candidates),
                 "short_candidate_count": len(paper_short_candidates),
                 "placed_count": placed_count,
@@ -455,6 +518,8 @@ def execute_full_scan(
             "scan_execution_time_ms": int((datetime.now(timezone.utc) - scan_started_at).total_seconds() * 1000),
             "mode": mode,
             "account_size": account_size,
+            "current_open_positions": current_open_positions,
+            "current_open_exposure": current_open_exposure,
             "timing_ok": True,
             "source": source,
             "trade_count": len(trades),
@@ -470,7 +535,7 @@ def execute_full_scan(
             "benchmark_sp500": benchmark_directions.get("SP500", ""),
             "benchmark_nasdaq": benchmark_directions.get("NASDAQ", ""),
             "paper_trade_enabled": paper_trade,
-            "paper_trade_candidate_count": len(paper_trades),
+            "paper_trade_candidate_count": len(paper_trade_candidates),
             "paper_trade_long_candidate_count": len(paper_long_candidates),
             "paper_trade_short_candidate_count": len(paper_short_candidates),
             "paper_trade_placed_count": paper_trade_placed_count,
@@ -490,7 +555,7 @@ def execute_full_scan(
         mode=mode,
         scan_source=scan_source,
         market_phase=market_phase,
-        candidate_count=len(paper_trades),
+        candidate_count=len(paper_trade_candidates),
         placed_count=paper_trade_placed_count,
         skipped_count=len([s for s in paper_skipped_symbols.split(",") if s.strip()]),
     )

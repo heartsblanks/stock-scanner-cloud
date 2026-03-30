@@ -6,6 +6,7 @@ from alpaca.alpaca_client import alpaca_client
 from alpaca.alpaca_orders import cancel_order_by_id, fetch_open_orders
 from alpaca.alpaca_positions import close_position_by_symbol, fetch_positions
 ALPACA_MAX_NOTIONAL = float(os.getenv("ALPACA_MAX_NOTIONAL", "5000"))
+MIN_NOTIONAL_TO_PLACE = float(os.getenv("MIN_NOTIONAL_TO_PLACE", "50"))
 
 
 def get_account() -> dict[str, Any]:
@@ -62,6 +63,18 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _resolve_trade_notional_limit(trade: dict, explicit_max_notional: float | None) -> float:
+    if explicit_max_notional is not None:
+        return float(explicit_max_notional)
+
+    metrics = trade.get("metrics", {}) if isinstance(trade, dict) else {}
+    per_trade_notional = _to_float(metrics.get("per_trade_notional"), 0.0)
+    if per_trade_notional > 0:
+        return per_trade_notional
+
+    return ALPACA_MAX_NOTIONAL
+
+
 def _build_client_order_id(symbol: str, direction: str, entry: float, final_shares: int) -> str:
     symbol = str(symbol).strip().upper()
     direction = str(direction).strip().upper()
@@ -71,7 +84,7 @@ def _build_client_order_id(symbol: str, direction: str, entry: float, final_shar
 
 
 def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None = None) -> dict[str, Any]:
-    max_notional = ALPACA_MAX_NOTIONAL if max_notional is None else float(max_notional)
+    max_notional = _resolve_trade_notional_limit(trade, max_notional)
     metrics = trade.get("metrics", {})
     symbol = str(metrics.get("symbol", "")).strip().upper()
     direction = str(metrics.get("direction", "BUY")).strip().upper() or "BUY"
@@ -79,6 +92,13 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
     stop = _to_float(metrics.get("stop"))
     target = _to_float(metrics.get("target"))
     scanner_shares = int(_to_float(metrics.get("shares"), 0))
+    per_trade_notional = _to_float(metrics.get("per_trade_notional"), 0.0)
+    remaining_slots = int(_to_float(metrics.get("remaining_slots"), 0))
+    remaining_allocatable_capital = _to_float(metrics.get("remaining_allocatable_capital"), 0.0)
+    current_open_positions = int(_to_float(metrics.get("current_open_positions"), 0))
+    current_open_exposure = _to_float(metrics.get("current_open_exposure"), 0.0)
+    max_total_allocated_capital = _to_float(metrics.get("max_total_allocated_capital"), 0.0)
+    max_capital_allocation_pct = _to_float(metrics.get("max_capital_allocation_pct"), 0.0)
 
     if not symbol:
         return {"attempted": False, "placed": False, "reason": "missing_symbol"}
@@ -104,6 +124,17 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
         if stop < minimum_short_stop:
             stop = minimum_short_stop
 
+    if max_notional < MIN_NOTIONAL_TO_PLACE:
+        return {
+            "attempted": False,
+            "placed": False,
+            "symbol": symbol,
+            "reason": "notional_limit_too_small",
+            "max_notional": round(max_notional, 2),
+            "minimum_required_notional": round(MIN_NOTIONAL_TO_PLACE, 2),
+            "remaining_slots": remaining_slots,
+            "remaining_allocatable_capital": round(remaining_allocatable_capital, 2),
+        }
     capped_shares = int(max_notional / entry)
     if scanner_shares > 0:
         final_shares = min(scanner_shares, capped_shares)
@@ -120,6 +151,8 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
         }
 
     estimated_notional = round(final_shares * entry, 2)
+    actual_risk = _to_float(metrics.get("actual_risk"), 0.0)
+    take_profit_dollars = _to_float(metrics.get("take_profit_dollars"), 0.0)
     account = get_account()
     account_status = str(account.get("status", "")).strip().upper()
     buying_power = _to_float(account.get("buying_power"))
@@ -133,6 +166,9 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
             "symbol": symbol,
             "shares": final_shares,
             "estimated_notional": estimated_notional,
+            "per_trade_notional": round(max_notional, 2),
+            "remaining_slots": remaining_slots,
+            "remaining_allocatable_capital": round(remaining_allocatable_capital, 2),
             "reason": "account_not_active",
             "account_status": account_status,
         }
@@ -143,6 +179,9 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
             "symbol": symbol,
             "shares": final_shares,
             "estimated_notional": estimated_notional,
+            "per_trade_notional": round(max_notional, 2),
+            "remaining_slots": remaining_slots,
+            "remaining_allocatable_capital": round(remaining_allocatable_capital, 2),
             "reason": "insufficient_buying_power",
             "available_funds": round(available_funds, 2),
         }
@@ -169,6 +208,9 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
             "symbol": symbol,
             "shares": final_shares,
             "estimated_notional": estimated_notional,
+            "per_trade_notional": round(max_notional, 2),
+            "remaining_slots": remaining_slots,
+            "remaining_allocatable_capital": round(remaining_allocatable_capital, 2),
             "reason": "alpaca_order_rejected",
             "details": str(e),
         }
@@ -193,6 +235,15 @@ def place_paper_bracket_order_from_trade(trade: dict, max_notional: float | None
         "stop": round(stop, 4),
         "target": round(target, 4),
         "max_notional": round(max_notional, 2),
+        "per_trade_notional": round(per_trade_notional if per_trade_notional > 0 else max_notional, 2),
+        "remaining_slots": remaining_slots,
+        "remaining_allocatable_capital": round(remaining_allocatable_capital, 2),
+        "current_open_positions": current_open_positions,
+        "current_open_exposure": round(current_open_exposure, 2),
+        "max_total_allocated_capital": round(max_total_allocated_capital, 2),
+        "max_capital_allocation_pct": round(max_capital_allocation_pct, 4),
+        "actual_risk": round(actual_risk, 4),
+        "take_profit_dollars": round(take_profit_dollars, 4),
         "client_order_id": client_order_id,
         "alpaca_order_id": str(order.get("id", "")),
         "alpaca_order_status": str(order.get("status", "")),
