@@ -68,7 +68,8 @@ Market Scan Schedulers
 
 1. **Database-first operational state**
    - Core operational data should live in PostgreSQL.
-   - CSV files are for export, backup, compatibility, and analysis support.
+   - Reconciliation, sync, lifecycle, and dashboard state should be derived from PostgreSQL and broker API data, not operational CSV files.
+   - CSV files are only for export, backup, compatibility, and offline analysis support.
 
 2. **Routes are thin**
    - Route handlers should validate input and delegate to services.
@@ -328,31 +329,33 @@ A stable trade key should be derived from:
 - CLOSED must also be updated when Alpaca position flattening is detected through a separate broker-side exit order that is not the original TP/SL child leg
 
 ### 9.5 Current status
-**Partially implemented, materially improved**
+**Implemented with one remaining edge-case investigation**
 - lifecycle write hooks are present in scan, sync, and close-related flows
 - historical lifecycle backfill and repair utilities exist
-- runtime validation is still required to confirm clean production population across full market sessions and edge cases
-- known gap: some lifecycles can remain OPEN when Friday EOD/manual close requests fill later (for example Monday market open) as separate exit orders not currently mapped back to the original lifecycle
+- delayed broker-side close fills are now materially handled through sync, reconciliation, and repair flows
+- stale OPEN lifecycle rows caused by delayed Friday EOD/manual closes have been repaired in production data
+- auto-heal support now exists for leftover broker positions detected during sync
+- one remaining edge case still requires investigation: a newer trade can be locally closed while the corresponding broker-side exit order is not yet uniquely recoverable during reconciliation for that exact parent order
 
-### 9.6 Known lifecycle gap: delayed broker-side close fills
+### 9.6 Delayed broker-side close fills and leftover-position recovery
 
-A known edge case exists when a position is closed by a separate broker-side order rather than the original TP/SL exit leg.
+This edge case has been materially improved.
 
-Example pattern:
-- end-of-day close request is submitted near session end
-- order remains accepted and does not fill before market close
-- the same order fills at the next session open (for example Monday market open)
-- Alpaca shows the position as closed, but the lifecycle row may remain OPEN if sync logic only evaluates the original bracket order tree
+Implemented behavior now includes:
+- sync logic detects when broker positions are no longer open even if the original TP/SL leg did not record the close locally
+- sync logic can identify separate filled broker-side exit orders that flattened a position outside the original bracket leg flow
+- lifecycle rows are updated to CLOSED using the detected exit time, exit price, and an external/manual close style exit reason
+- reconciliation treats `MANUAL_CLOSE` and `EXTERNAL_EXIT` as equivalent for comparison purposes
+- sync can auto-heal leftover Alpaca positions when the database shows no open paper trades but Alpaca still shows an open position
 
-Required future behavior:
-- sync logic must detect that the broker position is no longer open
-- sync logic must identify the separate filled exit order that flattened the position
-- lifecycle must be updated to CLOSED using the actual exit time, exit price, and appropriate exit reason such as `EOD_CLOSE` or `MANUAL_CLOSE`
+Remaining investigation:
+- if multiple historical trades exist for the same symbol, the system must continue ensuring that a delayed broker-side exit is mapped to the correct parent trade
+- one observed AAPL case still remains as a reconciliation mismatch where the database records a local close but reconciliation cannot yet recover a unique broker-side exit order for that exact 1-share parent trade
 
-Primary implementation areas for future fix:
+Primary implementation areas:
 - `alpaca_sync.py`
 - `services/sync_service.py`
-- optional repair/backfill support in operational scripts if stale rows already exist
+- `alpaca_reconcile.py`
 
 ---
 
@@ -588,7 +591,7 @@ Cloud Scheduler triggers operational HTTP endpoints on Cloud Run.
 - `scheduled-paper-scan-openplus20`
 - `scheduled-paper-scan-10min`
 - `sync-paper-trades`
-- `close-paper-positions-eod`
+- `close-paper-positions-eod` *(implemented, but scheduler/runtime verification is still important because delayed close fills can occur outside the original session window)*
 - `reconcile-paper-trades`
 - `analyze-paper-trades`
 - `analyze-signals`
@@ -660,12 +663,13 @@ The dashboard is a React/Vite frontend backed by Flask API endpoints.
 - insights
 
 ### Current status
-**Substantially implemented, with important gaps remaining**
+**Substantially implemented, with a smaller set of remaining gaps**
 - core dashboard analytics and monitoring UI are in place
 - reconciliation summary, mismatch severity, detail table, and history table are implemented in UI structure
 - system health controls such as manual refresh and manual reconciliation trigger are implemented
-- data quality still depends on backend endpoint completeness and lifecycle/reconciliation correctness
-- Alpaca logs/errors section, risk/exposure widgets, and some backend support endpoints are still missing
+- risk / exposure / adaptive sizing visibility has been materially improved in backend and UI support
+- data quality is now materially improved after lifecycle, sync, and reconciliation fixes
+- Alpaca logs/errors section and some operational polish items are still missing
 - hosted static deployment is not yet finalized in architecture
 ### 13.1 Implemented UI capabilities
 
@@ -689,21 +693,19 @@ The dashboard UI currently includes:
 ### 13.2 Remaining UI work
 
 Pending dashboard UI enhancements:
-- mismatch drilldown by symbol
 - improved non-blocking toast component instead of inline message banner
 - per-widget loading and error states
-- confidence multiplier / loss multiplier / final sizing multiplier visibility
-- manual fix-action buttons for operational recovery workflows
 - richer status indicators for backend jobs and sync health
 - Alpaca logs / API errors section
+- final verification that all reconciliation and risk widgets are fed by production-complete backend data during live sessions
 
 ### 13.3 UI next implementation order
 
 Recommended next UI implementation order:
-1. extend API helpers in `dashboard-ui/src/api/dashboard.js`
-2. add reconciliation details component
-3. wire reconciliation details into `dashboard-ui/src/pages/DashboardPage.jsx`
-4. add risk / exposure / adaptive sizing widgets
+1. add Alpaca logs / API errors section
+2. improve backend job / sync health indicators
+3. add per-widget loading and error states where still missing
+4. replace remaining inline status banners with non-blocking toast behavior
 ---
 
 ## 14. Export and Backup Architecture
@@ -741,10 +743,13 @@ Reconciliation compares local trade data and broker-side order/exit data.
 - `broker_orders` does not contain a `broker` column in the current schema
 
 ### Current status
-**Implemented across storage, API, and UI, with ongoing operational refinement**
+**Implemented across storage, API, and UI, with one remaining operational edge case**
 - reconciliation runs and mismatch detail APIs exist
 - reconciliation summary, detail, and history views exist in the dashboard UI
-- reconciliation quality still depends on correct persistence, broker sync behavior, and mismatch handling over time
+- reconciliation is now database-first and no longer depends on operational CSV pairing for source-of-truth trade matching
+- external broker-side exits are materially recovered and compared correctly
+- `MANUAL_CLOSE` and `EXTERNAL_EXIT` are normalized as equivalent reconciliation outcomes
+- one remaining mismatch pattern has been observed where a local close exists but reconciliation cannot recover a unique broker-side exit order for the exact parent order
 
 ---
 
@@ -765,10 +770,11 @@ Reconciliation compares local trade data and broker-side order/exit data.
 - inspect export and GitHub push failures
 
 ### Current status
-**Partially implemented**
+**Partially implemented, but improved operationally**
 - DB-level Alpaca logging exists
 - Cloud Run logs are useful for runtime debugging
 - reconciliation observability in the dashboard now exists
+- sync and auto-heal behavior can now be inspected through endpoint responses and runtime logs
 - dashboard views for Alpaca API logs/errors are still missing
 
 ---
@@ -808,10 +814,10 @@ Reconciliation compares local trade data and broker-side order/exit data.
 - reconciliation run and mismatch APIs
 
 ### Partially implemented
-- trade lifecycle persistence and runtime validation across live market flows
+- trade lifecycle runtime validation across live market flows and remaining edge-case cleanup
 - dynamic account-aware position sizing and adaptive sizing controls
-- dashboard analytics quality (depends on lifecycle and backend endpoint completeness)
 - observability UI sections
+- scheduler/EOD-close runtime verification and alerting confidence
 - static dashboard hosting rollout
 - repository documentation and cleanup
 - separation of concerns between `app.py`, route modules, and service modules
@@ -823,6 +829,7 @@ Reconciliation compares local trade data and broker-side order/exit data.
 - confidence calibration analytics
 - retention/cleanup policy for growing DB tables and exported artifacts
 - architecture-aware README refresh
+- deeper verification/repair path for the rare case where a local close exists but reconciliation cannot recover a unique broker exit order for the exact parent trade
 
 ---
 
@@ -852,10 +859,10 @@ Reconciliation compares local trade data and broker-side order/exit data.
 
 ## 20. Immediate Next Steps
 
-1. finalize backend support for dashboard endpoints such as `/alpaca-open-positions` and `/risk-exposure-summary`
-2. validate `trade_lifecycles` population during a real market-driven open/close cycle
-3. fix lifecycle closure handling for delayed EOD/manual broker-side exit fills that occur outside the original bracket order tree
-4. add dashboard sections for Alpaca logs/errors and risk/exposure visibility
+1. investigate and fix the final reconciliation edge case where a local close exists but no unique broker-side exit order is recovered for the exact parent trade
+2. verify `trade_lifecycles` population during a full real market-driven open/close cycle after the latest sync and reconciliation fixes
+3. verify `close-paper-positions-eod` scheduler execution and runtime behavior against delayed fills at the next session open
+4. add dashboard sections for Alpaca logs/errors and remaining operational polish
 5. finalize static hosting deployment for the dashboard UI
 6. document runtime environment variables and deployment steps more clearly
 7. define retention policy for large operational tables and exported snapshots

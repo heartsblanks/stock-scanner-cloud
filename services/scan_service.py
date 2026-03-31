@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Callable
+import os
 
 # NOTE: requires implementation
 # def get_recent_closed_trades_for_symbol(symbol: str, limit: int = 5) -> list[dict]
@@ -70,6 +71,67 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except Exception:
         return default
+
+
+def _get_live_alpaca_account_equity(payload: dict[str, Any]) -> float:
+    """
+    Resolve sizing equity from Alpaca first, with a safe fallback chain:
+    1. live Alpaca account equity
+    2. request payload account_size
+    3. env fallback for emergency/manual use
+
+    This keeps scan sizing aligned with the actual broker account while still
+    allowing the service to run if Alpaca is temporarily unavailable.
+    """
+    try:
+        account_getters: list[Callable[[], Any]] = []
+
+        try:
+            from services.paper_alpaca import get_account as _get_account  # type: ignore
+            account_getters.append(_get_account)
+        except Exception:
+            pass
+
+        try:
+            from services.paper_alpaca import get_paper_account as _get_paper_account  # type: ignore
+            account_getters.append(_get_paper_account)
+        except Exception:
+            pass
+
+        for getter in account_getters:
+            try:
+                account = getter()
+                if account is None:
+                    continue
+
+                equity_value = None
+                if isinstance(account, dict):
+                    equity_value = account.get("equity")
+                else:
+                    equity_value = getattr(account, "equity", None)
+                    if equity_value is None and hasattr(account, "get"):
+                        try:
+                            equity_value = account.get("equity")
+                        except Exception:
+                            equity_value = None
+
+                equity = _to_float(equity_value, 0.0)
+                if equity > 0:
+                    return equity
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    payload_account_size = _to_float(payload.get("account_size"), 0.0)
+    if payload_account_size > 0:
+        return payload_account_size
+
+    env_account_size = _to_float(os.getenv("SCHEDULED_PAPER_ACCOUNT_SIZE"), 0.0)
+    if env_account_size > 0:
+        return env_account_size
+
+    raise ValueError("Unable to resolve account equity from Alpaca, payload, or environment")
 
 
 # --- Patch: Minimum viable position sizing for high-priced symbols ---
@@ -161,7 +223,6 @@ def execute_full_scan(
     to_float_or_none: Callable[[Any], float | None],
     MIN_CONFIDENCE: float,
 ) -> dict[str, Any] | tuple[dict[str, Any], int]:
-    account_size = payload.get("account_size")
     mode = str(payload.get("mode", "primary")).lower()
     debug_raw = payload.get("debug", False)
     if isinstance(debug_raw, bool):
@@ -184,16 +245,18 @@ def execute_full_scan(
     else:
         paper_trade = bool(paper_trade_raw)
 
-    if account_size is None:
-        return {"ok": False, "error": "account_size is required"}, 400
-
     try:
-        account_size = float(account_size)
-    except (TypeError, ValueError):
-        return {"ok": False, "error": "account_size must be numeric"}, 400
+        account_size = float(_get_live_alpaca_account_equity(payload))
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": "unable to resolve account_size from Alpaca",
+            "details": str(e),
+        }, 400
     
     current_open_positions = _to_int(payload.get("current_open_positions", 0), 0)
     current_open_exposure = _to_float(payload.get("current_open_exposure", 0.0), 0.0)
+    payload["account_size"] = account_size
 
     if mode not in {"primary", "secondary", "third", "fourth", "core_one", "core_two"}:
         return {"ok": False, "error": "mode must be primary, secondary, third, fourth, core_one, or core_two"}, 400
@@ -272,6 +335,10 @@ def execute_full_scan(
         current_open_positions=current_open_positions,
         current_open_exposure=current_open_exposure,
     )
+    try:
+        print(f"[SIZING] Using live Alpaca equity/account_size: {account_size}", flush=True)
+    except Exception:
+        pass
     trades = [t for t in all_trades if t["metrics"].get("direction") == "BUY"]
     paper_trade_candidates = []
     for ev in evaluations:

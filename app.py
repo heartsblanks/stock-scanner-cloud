@@ -69,7 +69,6 @@ from trade_scan import (
     CORE_TWO_INSTRUMENTS,
 )
 PAPER_TRADE_MIN_CONFIDENCE = 70
-SCHEDULED_PAPER_ACCOUNT_SIZE = float(os.getenv("SCHEDULED_PAPER_ACCOUNT_SIZE", "1000"))
 SCHEDULED_ROUND_ROBIN_MODES = ["primary", "secondary", "third", "fourth", "core_one", "core_two"]
 
 PAPER_STOP_COOLDOWN_MINUTES = int(os.getenv("PAPER_STOP_COOLDOWN_MINUTES", "30"))
@@ -172,10 +171,7 @@ def build_scheduled_scan_payload(payload: dict, now_ny: datetime | None = None) 
     if scheduled_mode is None:
         raise ValueError("outside scheduled paper scan window")
 
-    account_size = payload.get("account_size", SCHEDULED_PAPER_ACCOUNT_SIZE)
-
     return {
-        "account_size": account_size,
         "mode": scheduled_mode,
         "paper_trade": True,
         "debug": payload.get("debug", False),
@@ -559,7 +555,14 @@ def get_risk_exposure_summary() -> dict:
 
     max_positions = 10
     max_capital_allocation_pct = 0.50
-    account_size = SCHEDULED_PAPER_ACCOUNT_SIZE
+
+    account_size = 0.0
+    try:
+        from services.scan_service import _get_live_alpaca_account_equity
+        account_size = float(_get_live_alpaca_account_equity({}))
+    except Exception as e:
+        print(f"Failed to resolve live account equity for risk summary: {e}", flush=True)
+
     max_total_allocated_capital = account_size * max_capital_allocation_pct
     allocation_used_pct = (
         (current_open_exposure / max_total_allocated_capital) * 100.0
@@ -929,17 +932,17 @@ def handle_scan_request(payload):
             scan_payload.setdefault("current_open_positions", current_open_positions)
             scan_payload.setdefault("current_open_exposure", current_open_exposure)
 
-        # Inject live PnL inputs for daily risk guardrail enforcement
+        # Inject live PnL inputs for daily risk guardrail enforcement.
+        # account_size is now resolved inside the scan service from Alpaca,
+        # so only PnL context is passed here.
         try:
             risk_summary = get_risk_exposure_summary()
             scan_payload.setdefault("daily_realized_pnl", risk_summary.get("daily_realized_pnl", 0.0))
             scan_payload.setdefault("daily_unrealized_pnl", risk_summary.get("daily_unrealized_pnl", 0.0))
-            scan_payload.setdefault("account_size", risk_summary.get("account_size", SCHEDULED_PAPER_ACCOUNT_SIZE))
         except Exception as e:
             print(f"Failed to inject risk summary into scan payload: {e}", flush=True)
             scan_payload.setdefault("daily_realized_pnl", 0.0)
             scan_payload.setdefault("daily_unrealized_pnl", 0.0)
-            scan_payload.setdefault("account_size", SCHEDULED_PAPER_ACCOUNT_SIZE)
 
     return execute_full_scan(
         scan_payload,
