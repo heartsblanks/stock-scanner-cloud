@@ -126,11 +126,11 @@ def execute_close_all_paper_positions(
         for row in open_paper_rows
         if str(row.get("symbol", "")).strip()
     }
-    open_paper_rows_by_symbol = {
-        str(row.get("symbol", "")).strip().upper(): row
-        for row in open_paper_rows
-        if str(row.get("symbol", "")).strip()
-    }
+    open_paper_rows_by_symbol: dict[str, dict[str, Any]] = {}
+    for row in open_paper_rows:
+        row_symbol = str(row.get("symbol", "")).strip().upper()
+        if row_symbol and row_symbol not in open_paper_rows_by_symbol:
+            open_paper_rows_by_symbol[row_symbol] = row
 
     results: list[dict[str, Any]] = []
     closed_count = 0
@@ -150,14 +150,8 @@ def execute_close_all_paper_positions(
             })
             continue
 
-        if symbol not in open_paper_symbols:
-            skipped_count += 1
-            results.append({
-                "symbol": symbol,
-                "closed": False,
-                "reason": "not_managed_by_app",
-            })
-            continue
+        open_row = open_paper_rows_by_symbol.get(symbol)
+        managed_by_app = symbol in open_paper_symbols
 
         try:
             canceled_order_ids = cancel_open_orders_for_symbol(symbol)
@@ -209,8 +203,8 @@ def execute_close_all_paper_positions(
         safe_insert_broker_order(
             order_id=close_order_id or f"close-request-{symbol}-{timestamp_utc}",
             symbol=symbol,
-            side=side,
-            order_type="eod_close_request",
+            side="buy" if side == "short" else "sell",
+            order_type="market",
             status=close_order_status,
             qty=to_float_or_none(qty),
             filled_qty=to_float_or_none(close_filled_qty),
@@ -218,7 +212,6 @@ def execute_close_all_paper_positions(
             submitted_at=parse_iso_utc(timestamp_utc),
             filled_at=parse_iso_utc(timestamp_utc) if close_filled_avg_price else None,
         )
-        open_row = open_paper_rows_by_symbol.get(symbol)
         if open_row and close_filled:
             entry_timestamp_utc = str(open_row.get("timestamp_utc", "")).strip()
             entry_timestamp = parse_iso_utc(entry_timestamp_utc) if entry_timestamp_utc else None
@@ -318,6 +311,51 @@ def execute_close_all_paper_positions(
                 parent_order_id=broker_parent_order_id,
                 exit_order_id=close_order_id,
             )
+        if not open_row and close_filled:
+            event_timestamp = parse_iso_utc(timestamp_utc)
+            orphan_trade_key = _normalize_trade_key(symbol, close_order_id, close_order_id)
+            inferred_exit_reason = "EXTERNAL_EXIT"
+
+            safe_insert_trade_event(
+                event_time=event_timestamp,
+                event_type="EOD_CLOSE",
+                symbol=symbol,
+                side=_to_upper_or_none(side),
+                shares=to_float_or_none(close_filled_qty or qty),
+                price=to_float_or_none(close_filled_avg_price or current_price),
+                mode="orphan",
+                order_id=close_order_id,
+                parent_order_id=close_order_id,
+                status="CLOSED",
+            )
+
+            upsert_trade_lifecycle(
+                trade_key=orphan_trade_key,
+                symbol=symbol,
+                mode="orphan",
+                side=_to_upper_or_none(side),
+                direction=None,
+                status="CLOSED",
+                entry_time=None,
+                entry_price=None,
+                exit_time=event_timestamp,
+                exit_price=to_float_or_none(close_filled_avg_price or current_price),
+                stop_price=None,
+                target_price=None,
+                exit_reason=inferred_exit_reason,
+                shares=to_float_or_none(close_filled_qty or qty),
+                realized_pnl=None,
+                realized_pnl_percent=None,
+                duration_minutes=None,
+                signal_timestamp=None,
+                signal_entry=None,
+                signal_stop=None,
+                signal_target=None,
+                signal_confidence=None,
+                order_id=close_order_id,
+                parent_order_id=close_order_id,
+                exit_order_id=close_order_id,
+            )
         closed_count += 1
         results.append({
             "symbol": symbol,
@@ -331,6 +369,9 @@ def execute_close_all_paper_positions(
             "close_filled_avg_price": close_filled_avg_price,
             "close_filled": close_filled,
             "canceled_order_count": len(canceled_order_ids),
+            "managed_by_app": managed_by_app,
+            "local_trade_found": bool(open_row),
+            "close_source": "managed_trade" if open_row else "orphan_alpaca_position",
         })
 
     return {
