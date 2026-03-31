@@ -161,39 +161,60 @@ def _find_external_exit_order(parent_order: dict[str, Any], all_orders: list[dic
         parent_id = str(parent_order.get("id", "")).strip()
         parent_side = str(parent_order.get("side", "")).strip().lower()
         parent_submitted_at = parse_alpaca_datetime(parent_order.get("submitted_at"))
+        parent_filled_qty = to_float(parent_order.get("filled_qty"))
+
+        leg_ids = {
+            str(leg.get("id", "")).strip()
+            for leg in (parent_order.get("legs") or [])
+            if str(leg.get("id", "")).strip()
+        }
+
         opposite_side = "sell" if parent_side == "buy" else "buy"
 
-        candidates: list[dict[str, Any]] = []
+        candidates: list[tuple[int, datetime, str, dict[str, Any]]] = []
         for o in all_orders or []:
             try:
+                candidate_id = str(o.get("id", "")).strip()
+
                 if str(o.get("symbol", "")).strip().upper() != symbol:
                     continue
-                if str(o.get("id", "")).strip() == parent_id:
+                if not candidate_id or candidate_id == parent_id or candidate_id in leg_ids:
                     continue
                 if str(o.get("side", "")).strip().lower() != opposite_side:
                     continue
-                if str(o.get("status", "")).strip().lower() != "filled":
+
+                filled_qty = to_float(o.get("filled_qty"))
+                if filled_qty is None or filled_qty <= 0:
                     continue
-                if to_float(o.get("filled_qty")) in (None, 0):
+
+                status = str(o.get("status", "")).strip().lower()
+                if status != "filled":
                     continue
+
                 submitted_at = parse_alpaca_datetime(o.get("submitted_at"))
-                if parent_submitted_at and submitted_at and submitted_at < parent_submitted_at:
+                filled_at = parse_alpaca_datetime(o.get("filled_at"))
+                effective_time = filled_at or submitted_at
+                if not effective_time:
                     continue
-                candidates.append(o)
+
+                if parent_submitted_at:
+                    if submitted_at and submitted_at < parent_submitted_at:
+                        continue
+                    if filled_at and filled_at < parent_submitted_at:
+                        continue
+
+                qty_rank = 0 if parent_filled_qty and abs(filled_qty - parent_filled_qty) < 1e-9 else 1
+
+                candidates.append((qty_rank, effective_time, candidate_id, o))
             except Exception:
                 continue
 
         if not candidates:
             return None
 
-        candidates.sort(
-            key=lambda o: (
-                parse_alpaca_datetime(o.get("filled_at")) or parse_alpaca_datetime(o.get("submitted_at")) or datetime.min,
-                str(o.get("id", "")),
-            ),
-            reverse=True,
-        )
-        return candidates[0]
+        candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+        return candidates[0][3]
+
     except Exception:
         return None
 

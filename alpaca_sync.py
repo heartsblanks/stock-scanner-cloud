@@ -1,4 +1,5 @@
 """Helpers for syncing Alpaca bracket order state through the centralized order client."""
+from datetime import datetime
 from typing import Any
 
 from alpaca.alpaca_orders import fetch_order_by_id, fetch_orders
@@ -9,6 +10,18 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _parse_alpaca_datetime(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        return datetime.fromisoformat(text)
+    except Exception:
+        return None
 
 
 def get_order_by_id(order_id: str, nested: bool = True) -> dict[str, Any]:
@@ -35,47 +48,74 @@ def _find_exit_legs(order: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[
 def _find_external_exit_order(parent_order: dict[str, Any]) -> dict[str, Any] | None:
     """
     Look for a filled order that closes the position but is NOT a TP/SL leg of the parent.
-    Heuristic:
+
+    Matching rules:
     - same symbol
     - opposite side to parent
     - filled_qty > 0
     - different order id
-    - choose the most recent by filled_at
+    - not one of the parent TP/SL leg ids
+    - submitted/filled after the parent order was submitted
+    - prefer exact quantity match
+    - then prefer the earliest qualifying exit after the parent, not an older historical exit
     """
     try:
         symbol = str(parent_order.get("symbol", "")).strip().upper()
-        parent_id = str(parent_order.get("id", ""))
+        parent_id = str(parent_order.get("id", "")).strip()
         parent_side = str(parent_order.get("side", "")).strip().lower()
+        parent_submitted_at = _parse_alpaca_datetime(parent_order.get("submitted_at"))
+        parent_filled_qty = _to_float(parent_order.get("filled_qty"))
 
-        # Opposite side mapping
+        leg_ids = {
+            str(leg.get("id", "")).strip()
+            for leg in (parent_order.get("legs") or [])
+            if str(leg.get("id", "")).strip()
+        }
+
         opposite_side = "sell" if parent_side == "buy" else "buy"
+        orders = fetch_orders(status="closed", limit=200, nested=False, direction="desc")
 
-        orders = fetch_orders(status="closed", limit=100, nested=False, direction="desc")
-
-        candidates: list[dict[str, Any]] = []
+        candidates: list[tuple[int, datetime, str, dict[str, Any]]] = []
         for o in orders or []:
             try:
+                candidate_id = str(o.get("id", "")).strip()
                 if str(o.get("symbol", "")).strip().upper() != symbol:
                     continue
-                if str(o.get("id", "")) == parent_id:
+                if not candidate_id or candidate_id == parent_id or candidate_id in leg_ids:
                     continue
                 if str(o.get("side", "")).strip().lower() != opposite_side:
                     continue
+
                 filled_qty = _to_float(o.get("filled_qty"))
                 if filled_qty <= 0:
                     continue
-                status = str(o.get("status", "")).lower()
+
+                status = str(o.get("status", "")).strip().lower()
                 if status != "filled":
                     continue
-                candidates.append(o)
+
+                submitted_at = _parse_alpaca_datetime(o.get("submitted_at"))
+                filled_at = _parse_alpaca_datetime(o.get("filled_at"))
+                effective_time = filled_at or submitted_at
+                if not effective_time:
+                    continue
+
+                if parent_submitted_at:
+                    if submitted_at and submitted_at < parent_submitted_at:
+                        continue
+                    if filled_at and filled_at < parent_submitted_at:
+                        continue
+
+                qty_rank = 0 if parent_filled_qty > 0 and abs(filled_qty - parent_filled_qty) < 0.0001 else 1
+                candidates.append((qty_rank, effective_time, candidate_id, o))
             except Exception:
                 continue
 
         if not candidates:
             return None
 
-        # Already sorted desc by API; take first as most recent
-        return candidates[0]
+        candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+        return candidates[0][3]
     except Exception:
         return None
 
