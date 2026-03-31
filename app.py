@@ -371,14 +371,26 @@ def paper_trade_exit_already_logged(parent_order_id: str, exit_event: str) -> bo
     if not parent_order_id or not exit_event:
         return False
 
-    rows = read_all_trade_rows()
-    for row in rows:
-        if str(row.get("trade_source", "")).strip().upper() != "ALPACA_PAPER":
+    try:
+        rows = get_recent_trade_event_rows(limit=1000)
+    except Exception as e:
+        print(f"Failed to read trade events from DB: {e}", flush=True)
+        return False
+
+    for row in rows or []:
+        try:
+            row_parent_order_id = str(row.get("parent_order_id") or "").strip()
+            if row_parent_order_id != parent_order_id:
+                continue
+
+            status = str(row.get("status", "")).strip().upper()
+            event_type = str(row.get("event_type", "")).strip().upper()
+
+            if status == "CLOSED" or event_type in {"STOP_HIT", "TARGET_HIT", "MANUAL_CLOSE", "EOD_CLOSE"}:
+                return True
+        except Exception:
             continue
-        if str(row.get("broker_parent_order_id", "")).strip() != parent_order_id:
-            continue
-        if str(row.get("event_type", "")).strip().upper() == exit_event:
-            return True
+
     return False
 
 
