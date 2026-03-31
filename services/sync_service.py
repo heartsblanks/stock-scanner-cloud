@@ -139,6 +139,8 @@ def execute_sync_paper_trades(
     upsert_trade_lifecycle: Callable[..., None],
     parse_iso_utc: Callable[[str], Any],
     to_float_or_none: Callable[[Any], float | None],
+    get_open_positions: Callable[[], list[dict[str, Any]]] | None = None,
+    close_position: Callable[[str], Any] | None = None,
 ) -> dict[str, Any] | tuple[dict[str, Any], int]:
     try:
         open_rows = get_open_paper_trades()
@@ -335,10 +337,62 @@ def execute_sync_paper_trades(
             "exit_status": sync_result.get("exit_status", sync_result.get("parent_status", "")),
         })
 
+    auto_healed_positions: list[dict[str, Any]] = []
+    auto_heal_errors: list[dict[str, Any]] = []
+
+    if get_open_positions and close_position:
+        try:
+            leftover_positions = get_open_positions() or []
+        except Exception as e:
+            leftover_positions = []
+            auto_heal_errors.append({
+                "symbol": "",
+                "reason": "open_positions_read_failed",
+                "details": str(e),
+            })
+
+        # Build DB open symbol set (source of truth)
+        db_open_symbols = {
+            str(row.get("symbol", "")).strip().upper()
+            for row in open_rows or []
+            if str(row.get("symbol", "")).strip()
+        }
+
+        for position in leftover_positions:
+            try:
+                symbol = str(position.get("symbol", "")).strip().upper()
+                qty = position.get("qty")
+                side = str(position.get("side", "")).strip().lower()
+                if not symbol:
+                    continue
+
+                # Only auto-heal orphan positions (present in broker but not in DB open trades)
+                if symbol in db_open_symbols:
+                    continue
+
+                close_result = close_position(symbol)
+                auto_healed_positions.append({
+                    "symbol": symbol,
+                    "qty": qty,
+                    "side": side,
+                    "closed": True,
+                    "result": close_result,
+                })
+            except Exception as e:
+                auto_heal_errors.append({
+                    "symbol": str(position.get("symbol", "")).strip().upper(),
+                    "reason": "auto_heal_close_failed",
+                    "details": str(e),
+                })
+
     return {
         "ok": True,
         "open_paper_trade_count": len(open_rows),
         "synced_count": synced_count,
         "skipped_count": skipped_count,
         "results": results,
+        "auto_healed_count": len(auto_healed_positions),
+        "auto_healed_positions": auto_healed_positions,
+        "auto_heal_error_count": len(auto_heal_errors),
+        "auto_heal_errors": auto_heal_errors,
     }

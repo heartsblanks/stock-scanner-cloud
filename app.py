@@ -917,6 +917,8 @@ def handle_sync_paper_trades():
         parse_iso_utc=parse_iso_utc,
         to_float_or_none=to_float_or_none,
         upsert_trade_lifecycle=upsert_trade_lifecycle,
+        get_open_positions=get_open_positions,
+        close_position=close_position,
     )
 
 def handle_scan_request(payload):
