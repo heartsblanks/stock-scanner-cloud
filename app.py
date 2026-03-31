@@ -383,25 +383,68 @@ def paper_trade_exit_already_logged(parent_order_id: str, exit_event: str) -> bo
 
 
 def get_open_paper_trades() -> list[dict]:
-    rows = read_all_trade_rows()
-    latest_by_parent_order_id: dict[str, dict] = {}
+    """
+    Use the DB-backed open trade events table as the source of truth for sync/EOD flows.
+    This keeps sync aligned with the dashboard and reconciliation views.
+    """
+    try:
+        rows = get_open_trade_events(limit=1000)
+    except Exception as e:
+        print(f"Failed to read open trade events from DB: {e}", flush=True)
+        return []
 
-    for row in rows:
-        if str(row.get("trade_source", "")).strip().upper() != "ALPACA_PAPER":
+    normalized_rows: list[dict] = []
+    for row in rows or []:
+        try:
+            symbol = str(row.get("symbol", "")).strip().upper()
+            if not symbol:
+                continue
+
+            parent_order_id = str(
+                row.get("parent_order_id")
+                or row.get("broker_parent_order_id")
+                or row.get("order_id")
+                or row.get("broker_order_id")
+                or ""
+            ).strip()
+            if not parent_order_id:
+                continue
+
+            order_id = str(
+                row.get("order_id")
+                or row.get("broker_order_id")
+                or parent_order_id
+            ).strip()
+
+            qty_val = to_float_or_none(row.get("qty"))
+            if qty_val is None:
+                qty_val = to_float_or_none(row.get("shares"))
+
+            entry_price_val = to_float_or_none(row.get("price"))
+            stop_price_val = to_float_or_none(row.get("stop_price"))
+            target_price_val = to_float_or_none(row.get("target_price"))
+
+            normalized_rows.append({
+                "timestamp_utc": row.get("event_time") or row.get("timestamp_utc") or "",
+                "event_type": row.get("event_type") or "OPEN",
+                "symbol": symbol,
+                "name": row.get("name") or "",
+                "side": row.get("side") or "",
+                "shares": qty_val if qty_val is not None else row.get("shares", ""),
+                "entry_price": entry_price_val if entry_price_val is not None else row.get("price", ""),
+                "stop_price": stop_price_val if stop_price_val is not None else row.get("stop_price", ""),
+                "target_price": target_price_val if target_price_val is not None else row.get("target_price", ""),
+                "status": row.get("status") or "OPEN",
+                "exit_reason": row.get("exit_reason") or "",
+                "trade_source": "ALPACA_PAPER",
+                "broker_order_id": order_id,
+                "broker_parent_order_id": parent_order_id,
+                "linked_signal_timestamp_utc": row.get("linked_signal_timestamp_utc") or "",
+            })
+        except Exception:
             continue
 
-        parent_order_id = str(row.get("broker_parent_order_id", "")).strip()
-        if not parent_order_id:
-            continue
-
-        latest_by_parent_order_id[parent_order_id] = row
-
-    open_rows = []
-    for row in latest_by_parent_order_id.values():
-        if str(row.get("status", "")).strip().upper() == "OPEN":
-            open_rows.append(row)
-
-    return open_rows
+    return normalized_rows
 
 
 
@@ -578,10 +621,19 @@ def get_latest_open_paper_trade_for_symbol(symbol: str) -> dict | None:
         return None
 
     open_rows = get_open_paper_trades()
-    for row in reversed(open_rows):
-        if str(row.get("symbol", "")).strip().upper() == symbol:
-            return row
-    return None
+    matching_rows = [
+        row for row in open_rows
+        if str(row.get("symbol", "")).strip().upper() == symbol
+    ]
+    if not matching_rows:
+        return None
+
+    def _sort_key(row: dict) -> tuple:
+        ts = str(row.get("timestamp_utc", "")).strip()
+        return (ts, str(row.get("broker_parent_order_id", "")).strip())
+
+    matching_rows.sort(key=_sort_key)
+    return matching_rows[-1]
 
 
 def get_latest_paper_close_event_for_symbol(symbol: str) -> dict | None:
