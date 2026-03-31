@@ -3,14 +3,12 @@ from __future__ import annotations
 import csv
 import os
 from dataclasses import dataclass
-from io import StringIO
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
- 
 from google.cloud import storage
-from storage import insert_broker_order
+from storage import insert_broker_order, get_recent_trade_event_rows
 
 
 
@@ -77,66 +75,144 @@ def parse_alpaca_datetime(value: Any) -> datetime | None:
         return None
 
 
-def get_gcs_csv_rows(bucket_name: str, object_name: str) -> list[dict[str, str]]:
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob(object_name)
-    if not blob.exists():
-        raise FileNotFoundError(f"Missing gs://{bucket_name}/{object_name}")
-
-    csv_text = blob.download_as_text(encoding="utf-8")
-    return list(csv.DictReader(StringIO(csv_text)))
-
-
-
-
 def fetch_alpaca_orders(limit: int = 500) -> list[dict[str, Any]]:
     return fetch_orders(limit=limit, status="all", nested=True, direction="desc")
 
 
+def get_db_trade_event_rows(limit: int = 5000) -> list[dict[str, Any]]:
+    try:
+        return get_recent_trade_event_rows(limit=limit)
+    except Exception as e:
+        print(f"Failed to read trade events from DB: {e}", flush=True)
+        return []
 
 
-def build_local_trade_pairs(rows: list[dict[str, str]]) -> list[LocalTradePair]:
-    open_by_parent: dict[str, dict[str, str]] = {}
+def build_local_trade_pairs(rows: list[dict[str, Any]]) -> list[LocalTradePair]:
+    open_by_parent: dict[str, dict[str, Any]] = {}
     pairs: list[LocalTradePair] = []
 
-    for row in rows:
-        if str(row.get("trade_source", "")).strip().upper() != "ALPACA_PAPER":
-            continue
+    ordered_rows = sorted(
+        rows or [],
+        key=lambda row: (
+            str(row.get("event_time") or row.get("timestamp_utc") or ""),
+            str(row.get("parent_order_id") or row.get("broker_parent_order_id") or ""),
+        ),
+    )
 
-        parent_id = str(row.get("broker_parent_order_id", "")).strip()
+    for row in ordered_rows:
+        parent_id = str(
+            row.get("parent_order_id")
+            or row.get("broker_parent_order_id")
+            or row.get("order_id")
+            or row.get("broker_order_id")
+            or ""
+        ).strip()
         if not parent_id:
             continue
 
         event_type = str(row.get("event_type", "")).strip().upper()
-        if event_type == "OPEN":
+        status = str(row.get("status", "")).strip().upper()
+
+        if event_type == "OPEN" and status == "OPEN":
             open_by_parent[parent_id] = row
             continue
 
-        if event_type not in CLOSE_EVENT_TYPES:
+        if status != "CLOSED" and event_type not in CLOSE_EVENT_TYPES and event_type != "EXTERNAL_EXIT":
             continue
 
         open_row = open_by_parent.get(parent_id)
         if not open_row:
             continue
 
+        event_time_value = row.get("event_time") or row.get("timestamp_utc") or ""
+        entry_time_value = open_row.get("event_time") or open_row.get("timestamp_utc") or ""
+        exit_reason_value = str(row.get("event_type") or row.get("exit_reason") or "").strip().upper()
+        if exit_reason_value == "MANUAL_CLOSE":
+            exit_reason_value = str(row.get("exit_reason") or "MANUAL_CLOSE").strip().upper() or "MANUAL_CLOSE"
+
+        client_order_id = str(row.get("client_order_id") or open_row.get("client_order_id") or "").strip()
+        if not client_order_id:
+            notes_text = str(open_row.get("notes", ""))
+            if "client_order_id=" in notes_text:
+                client_order_id = notes_text.split("client_order_id=")[-1].strip()
+
         pairs.append(
             LocalTradePair(
                 broker_parent_order_id=parent_id,
                 symbol=str(open_row.get("symbol", "")).strip().upper(),
                 mode=str(open_row.get("mode", "")).strip().lower(),
-                entry_timestamp_utc=str(open_row.get("timestamp_utc", "")).strip(),
-                exit_timestamp_utc=str(row.get("timestamp_utc", "")).strip(),
-                entry_price=to_float(open_row.get("entry_price")),
-                exit_price=to_float(row.get("exit_price")),
-                shares=to_float(open_row.get("shares")),
-                exit_reason=str(row.get("exit_reason", "")).strip().upper(),
-                client_order_id=str(open_row.get("notes", "")).split("client_order_id=")[-1].strip() if "client_order_id=" in str(open_row.get("notes", "")) else "",
+                entry_timestamp_utc=str(entry_time_value).strip(),
+                exit_timestamp_utc=str(event_time_value).strip(),
+                entry_price=to_float(open_row.get("price") if open_row.get("price") not in (None, "") else open_row.get("entry_price")),
+                exit_price=to_float(row.get("price") if row.get("price") not in (None, "") else row.get("exit_price")),
+                shares=to_float(open_row.get("qty") if open_row.get("qty") not in (None, "") else open_row.get("shares")),
+                exit_reason=exit_reason_value,
+                client_order_id=client_order_id,
             )
         )
         del open_by_parent[parent_id]
 
     return pairs
+
+
+def _find_external_exit_order(parent_order: dict[str, Any], all_orders: list[dict[str, Any]]) -> dict[str, Any] | None:
+    try:
+        symbol = str(parent_order.get("symbol", "")).strip().upper()
+        parent_id = str(parent_order.get("id", "")).strip()
+        parent_side = str(parent_order.get("side", "")).strip().lower()
+        parent_submitted_at = parse_alpaca_datetime(parent_order.get("submitted_at"))
+        opposite_side = "sell" if parent_side == "buy" else "buy"
+
+        candidates: list[dict[str, Any]] = []
+        for o in all_orders or []:
+            try:
+                if str(o.get("symbol", "")).strip().upper() != symbol:
+                    continue
+                if str(o.get("id", "")).strip() == parent_id:
+                    continue
+                if str(o.get("side", "")).strip().lower() != opposite_side:
+                    continue
+                if str(o.get("status", "")).strip().lower() != "filled":
+                    continue
+                if to_float(o.get("filled_qty")) in (None, 0):
+                    continue
+                submitted_at = parse_alpaca_datetime(o.get("submitted_at"))
+                if parent_submitted_at and submitted_at and submitted_at < parent_submitted_at:
+                    continue
+                candidates.append(o)
+            except Exception:
+                continue
+
+        if not candidates:
+            return None
+
+        candidates.sort(
+            key=lambda o: (
+                parse_alpaca_datetime(o.get("filled_at")) or parse_alpaca_datetime(o.get("submitted_at")) or datetime.min,
+                str(o.get("id", "")),
+            ),
+            reverse=True,
+        )
+        return candidates[0]
+    except Exception:
+        return None
+
+
+def infer_alpaca_exit_from_order_set(order: dict[str, Any], all_orders: list[dict[str, Any]]) -> tuple[str, float | None, float | None, str]:
+    exit_reason, exit_qty, exit_price, exit_order_id = infer_alpaca_exit(order)
+    if exit_reason != "OPEN_ONLY":
+        return exit_reason, exit_qty, exit_price, exit_order_id
+
+    external = _find_external_exit_order(order, all_orders)
+    if external:
+        return (
+            "EXTERNAL_EXIT",
+            to_float(external.get("filled_qty")),
+            to_float(external.get("filled_avg_price")),
+            str(external.get("id", "")).strip(),
+        )
+
+    return exit_reason, exit_qty, exit_price, exit_order_id
 
 
 def infer_alpaca_exit(order: dict[str, Any]) -> tuple[str, float | None, float | None, str]:
@@ -203,7 +279,7 @@ def persist_alpaca_orders_to_db(orders: list[dict[str, Any]]) -> None:
             print(f"DB broker order persist failed for {order_id}: {e}", flush=True)
 
 
-def build_reconciliation_detail_row(pair: LocalTradePair, order: dict[str, Any] | None) -> ReconciliationDetailRow:
+def build_reconciliation_detail_row(pair: LocalTradePair, order: dict[str, Any] | None, all_orders: list[dict[str, Any]]) -> ReconciliationDetailRow:
     if not order:
         return ReconciliationDetailRow(
             broker_parent_order_id=pair.broker_parent_order_id,
@@ -229,7 +305,7 @@ def build_reconciliation_detail_row(pair: LocalTradePair, order: dict[str, Any] 
 
     alpaca_entry_price = to_float(order.get("filled_avg_price"))
     alpaca_entry_qty = to_float(order.get("filled_qty"))
-    alpaca_exit_reason, alpaca_exit_qty, alpaca_exit_price, alpaca_exit_order_id = infer_alpaca_exit(order)
+    alpaca_exit_reason, alpaca_exit_qty, alpaca_exit_price, alpaca_exit_order_id = infer_alpaca_exit_from_order_set(order, all_orders)
 
     entry_price_diff = (
         round((pair.entry_price or 0.0) - (alpaca_entry_price or 0.0), 6)
@@ -275,12 +351,12 @@ def build_reconciliation_detail_row(pair: LocalTradePair, order: dict[str, Any] 
     )
 
 
-def reconcile(local_pairs: list[LocalTradePair], alpaca_index: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+def reconcile(local_pairs: list[LocalTradePair], alpaca_index: dict[str, dict[str, Any]], alpaca_orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
 
     for pair in local_pairs:
         order = alpaca_index.get(pair.broker_parent_order_id)
-        detail_row = build_reconciliation_detail_row(pair, order)
+        detail_row = build_reconciliation_detail_row(pair, order, alpaca_orders)
         results.append({
             "broker_parent_order_id": detail_row.broker_parent_order_id,
             "symbol": detail_row.symbol,
@@ -373,13 +449,13 @@ def calculate_severity(summary: dict[str, int]) -> tuple[str, int]:
 
 
 def run_reconciliation() -> dict[str, Any]:
-    local_rows = get_gcs_csv_rows(GCS_BUCKET_NAME, GCS_TRADES_OBJECT)
+    local_rows = get_db_trade_event_rows(limit=5000)
     alpaca_orders = fetch_alpaca_orders()
     persist_alpaca_orders_to_db(alpaca_orders)
 
     local_pairs = build_local_trade_pairs(local_rows)
     alpaca_index = build_alpaca_index(alpaca_orders)
-    reconciled_rows = reconcile(local_pairs, alpaca_index)
+    reconciled_rows = reconcile(local_pairs, alpaca_index, alpaca_orders)
     summary = summarize_reconciliation(reconciled_rows)
 
     print(f"Reconciliation summary: {summary}", flush=True)
@@ -410,7 +486,7 @@ def main() -> None:
     result = run_reconciliation()
     print(
         f"Wrote {result['total_rows']} rows to {result['file_path']} using "
-        f"gs://{GCS_BUCKET_NAME}/{GCS_TRADES_OBJECT} and Alpaca API orders"
+        f"DB trade events and Alpaca API orders"
     )
 
 
