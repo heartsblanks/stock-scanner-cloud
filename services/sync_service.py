@@ -212,6 +212,8 @@ def execute_sync_paper_trades(
             stop_price = open_row.get("stop_price", "")
             target_price = open_row.get("target_price", "")
             exit_price = sync_result.get("exit_price", "")
+            direction = _infer_direction(entry_price, exit_price, stop_price, target_price)
+            lifecycle_side = _resolve_lifecycle_side(open_row, direction)
 
             append_trade_log({
                 "timestamp_utc": exit_timestamp_utc,
@@ -261,7 +263,7 @@ def execute_sync_paper_trades(
             safe_insert_broker_order(
                 order_id=str(sync_result.get("exit_order_id", "") or parent_order_id),
                 symbol=symbol,
-                side=_resolve_lifecycle_side(open_row, _infer_direction(open_row.get("entry_price", ""), sync_result.get("exit_price", ""), open_row.get("stop_price", ""), open_row.get("target_price", ""))),
+                side=lifecycle_side,
                 order_type="exit",
                 status=str(sync_result.get("exit_status", sync_result.get("parent_status", "")) or ""),
                 qty=to_float_or_none(open_row.get("shares", "")),
@@ -277,8 +279,6 @@ def execute_sync_paper_trades(
             linked_signal_timestamp_utc = str(open_row.get("linked_signal_timestamp_utc", "")).strip()
             broker_order_id = str(open_row.get("broker_order_id", "") or parent_order_id)
             broker_parent_order_id = str(open_row.get("broker_parent_order_id", "") or parent_order_id)
-            direction = _infer_direction(entry_price, exit_price, stop_price, target_price)
-            lifecycle_side = _resolve_lifecycle_side(open_row, direction)
             realized_pnl = _compute_realized_pnl(entry_price, exit_price, shares_value, direction)
             realized_pnl_percent = _compute_realized_pnl_percent(entry_price, exit_price, direction)
             duration_minutes = _compute_duration_minutes(entry_timestamp, exit_timestamp)
