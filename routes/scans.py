@@ -1,6 +1,7 @@
 
 
 from flask import jsonify, request
+from logging_utils import log_exception
 
 
 
@@ -22,7 +23,7 @@ def register_scan_routes(
                 return jsonify(result)
             return jsonify({"ok": True, "result": result})
         except Exception as e:
-            print(f"scan failed: {e}", flush=True)
+            log_exception("scan failed", e, route="/scan")
             return jsonify({"ok": False, "error": str(e)}), 500
 
     @app.post("/scheduled-paper-scan")
@@ -37,5 +38,5 @@ def register_scan_routes(
                 return jsonify(result)
             return jsonify({"ok": True, "result": result})
         except Exception as e:
-            print(f"scheduled-paper-scan failed: {e}", flush=True)
+            log_exception("scheduled-paper-scan failed", e, route="/scheduled-paper-scan")
             return jsonify({"ok": False, "error": str(e)}), 500

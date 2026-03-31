@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from flask import jsonify
+from logging_utils import log_exception, log_warning
 
 
 def register_analysis_routes(
@@ -22,7 +23,7 @@ def register_analysis_routes(
         try:
             summary_rows, paired_rows, unmatched_closes = run_trade_analysis()
         except Exception as e:
-            print(f"Paper trade analysis failed: {e}", flush=True)
+            log_exception("Paper trade analysis failed", e, route="/analyze-paper-trades")
             return jsonify({"ok": False, "error": str(e)}), 500
 
         summary_gcs_uri = ""
@@ -35,7 +36,7 @@ def register_analysis_routes(
                 trade_analysis_summary_object,
             )
         except Exception as e:
-            print(f"Paper trade analysis summary upload failed: {e}", flush=True)
+            log_warning("Paper trade analysis summary upload failed", route="/analyze-paper-trades", error=str(e))
 
         try:
             paired_gcs_uri = upload_analysis_file_to_gcs(
@@ -44,7 +45,7 @@ def register_analysis_routes(
                 trade_analysis_paired_object,
             )
         except Exception as e:
-            print(f"Paper trade analysis paired upload failed: {e}", flush=True)
+            log_warning("Paper trade analysis paired upload failed", route="/analyze-paper-trades", error=str(e))
 
         return jsonify({
             "ok": True,
@@ -60,7 +61,7 @@ def register_analysis_routes(
         try:
             summary_rows, signal_rows = run_signal_analysis()
         except Exception as e:
-            print(f"Signal analysis failed: {e}", flush=True)
+            log_exception("Signal analysis failed", e, route="/analyze-signals")
             return jsonify({"ok": False, "error": str(e)}), 500
 
         summary_gcs_uri = ""
@@ -73,7 +74,7 @@ def register_analysis_routes(
                 signal_analysis_summary_object,
             )
         except Exception as e:
-            print(f"Signal analysis summary upload failed: {e}", flush=True)
+            log_warning("Signal analysis summary upload failed", route="/analyze-signals", error=str(e))
 
         try:
             rows_gcs_uri = upload_signal_analysis_file_to_gcs(
@@ -82,7 +83,7 @@ def register_analysis_routes(
                 signal_analysis_rows_object,
             )
         except Exception as e:
-            print(f"Signal analysis rows upload failed: {e}", flush=True)
+            log_warning("Signal analysis rows upload failed", route="/analyze-signals", error=str(e))
 
         return jsonify({
             "ok": True,

@@ -53,7 +53,7 @@ Market Scan Schedulers
   Application Services            Export / Analysis Services
         |                               |
         v                               v
- PostgreSQL (Cloud SQL)          CSV / Snapshot / GitHub Backup
+ PostgreSQL (Cloud SQL)          Snapshot / GitHub Backup
         |
         v
  Dashboard API Endpoints
@@ -69,7 +69,7 @@ Market Scan Schedulers
 1. **Database-first operational state**
    - Core operational data should live in PostgreSQL.
    - Reconciliation, sync, lifecycle, and dashboard state should be derived from PostgreSQL and broker API data, not operational CSV files.
-   - CSV files are only for export, backup, compatibility, and offline analysis support.
+   - Export artifacts should be generated from PostgreSQL-backed data and reports, not from operational CSV logs.
 
 2. **Routes are thin**
    - Route handlers should validate input and delegate to services.
@@ -100,7 +100,6 @@ Market Scan Schedulers
 - `services/scan_service.py`
 - `services/sync_service.py`
 - `services/trade_service.py`
-- `services/logging_service.py`
 - `services/paper_trade_service.py` *(currently placeholder / not materially implemented)*
 
 ### Route modules
@@ -717,8 +716,8 @@ Recommended next UI implementation order:
 4. commit and push if there are changes
 
 ### Design requirement
-The export flow must never delete or truncate live operational CSV sources.
-It should only create copies.
+The export flow must never mutate live operational data.
+It should only create DB-derived snapshots and generated report copies.
 
 ### Current status
 **Implemented**

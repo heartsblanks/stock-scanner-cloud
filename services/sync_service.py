@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Callable
+from logging_utils import log_exception
 
 
 # --- Helper functions ---
@@ -145,7 +146,7 @@ def execute_sync_paper_trades(
     try:
         open_rows = get_open_paper_trades()
     except Exception as e:
-        print(f"Open paper trade read failed: {e}", flush=True)
+        log_exception("Open paper trade read failed", e, component="sync_service", operation="execute_sync_paper_trades")
         return {"ok": False, "error": f"open paper trade read failed: {e}"}, 500
 
     results: list[dict[str, Any]] = []
@@ -168,7 +169,14 @@ def execute_sync_paper_trades(
         try:
             sync_result = sync_order_by_id(parent_order_id)
         except Exception as e:
-            print(f"Paper trade sync failed for {symbol} / {parent_order_id}: {e}", flush=True)
+            log_exception(
+                "Paper trade sync failed",
+                e,
+                component="sync_service",
+                operation="execute_sync_paper_trades",
+                symbol=symbol,
+                parent_order_id=parent_order_id,
+            )
             results.append({
                 "symbol": symbol,
                 "parent_order_id": parent_order_id,
@@ -314,7 +322,14 @@ def execute_sync_paper_trades(
                 exit_order_id=str(sync_result.get("exit_order_id", "") or parent_order_id),
             )
         except Exception as e:
-            print(f"Paper trade exit log write failed for {symbol} / {parent_order_id}: {e}", flush=True)
+            log_exception(
+                "Paper trade exit log write failed",
+                e,
+                component="sync_service",
+                operation="execute_sync_paper_trades",
+                symbol=symbol,
+                parent_order_id=parent_order_id,
+            )
             results.append({
                 "symbol": symbol,
                 "parent_order_id": parent_order_id,

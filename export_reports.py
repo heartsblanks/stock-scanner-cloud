@@ -12,8 +12,6 @@ from db import fetch_all
 
 
 LOG_BUCKET = os.getenv("LOG_BUCKET", "stock-scanner-490821-logs")
-SIGNALS_CSV_PATH = os.getenv("SIGNALS_CSV_PATH", "signals/signals.csv")
-TRADES_CSV_PATH = os.getenv("TRADES_CSV_PATH", "trades/trades.csv")
 TRADE_ANALYSIS_SUMMARY_OBJECT = os.getenv("TRADE_ANALYSIS_SUMMARY_OBJECT", "reports/trade_analysis_summary.csv")
 TRADE_ANALYSIS_PAIRED_OBJECT = os.getenv("TRADE_ANALYSIS_PAIRED_OBJECT", "reports/trade_analysis_paired_trades.csv")
 SIGNAL_ANALYSIS_SUMMARY_OBJECT = os.getenv("SIGNAL_ANALYSIS_SUMMARY_OBJECT", "reports/signal_analysis_summary.csv")
@@ -45,37 +43,6 @@ def _download_gcs_file(storage_client: storage.Client, bucket_name: str, source_
     _ensure_dir(local_path.parent)
     blob.download_to_filename(str(local_path))
     return local_path
-
-
-
-def export_original_csv_files(output_dir: str | Path, for_date: Optional[date] = None) -> list[Path]:
-    target_date = for_date or datetime.utcnow().date()
-    base_dir = Path(output_dir) / str(target_date) / "csv"
-    storage_client = storage.Client()
-
-    exported: list[Path] = []
-
-    trades_path = _download_gcs_file(
-        storage_client,
-        LOG_BUCKET,
-        TRADES_CSV_PATH,
-        base_dir / "trades.csv",
-    )
-    if trades_path is not None:
-        exported.append(trades_path)
-
-    signals_path = _download_gcs_file(
-        storage_client,
-        LOG_BUCKET,
-        SIGNALS_CSV_PATH,
-        base_dir / "signals.csv",
-    )
-    if signals_path is not None:
-        exported.append(signals_path)
-
-    return exported
-
-
 
 def export_analysis_files(output_dir: str | Path, for_date: Optional[date] = None) -> list[Path]:
     target_date = for_date or datetime.utcnow().date()
@@ -218,14 +185,116 @@ def export_reconciliation_runs(output_dir: str | Path, for_date: Optional[date] 
     return file_path
 
 
+def export_signal_logs(output_dir: str | Path, for_date: Optional[date] = None) -> Path:
+    target_date = for_date or datetime.utcnow().date()
+    rows = fetch_all(
+        """
+        SELECT *
+        FROM signal_logs
+        WHERE DATE(timestamp_utc) = %(target_date)s
+        ORDER BY timestamp_utc ASC, id ASC
+        """,
+        {"target_date": target_date},
+    )
+    file_path = Path(output_dir) / str(target_date) / "db" / "signal_logs.csv"
+    fieldnames = rows[0].keys() if rows else [
+        "id",
+        "timestamp_utc",
+        "scan_id",
+        "scan_source",
+        "market_phase",
+        "scan_execution_time_ms",
+        "mode",
+        "account_size",
+        "current_open_positions",
+        "current_open_exposure",
+        "timing_ok",
+        "source",
+        "trade_count",
+        "top_name",
+        "top_symbol",
+        "current_price",
+        "entry",
+        "stop",
+        "target",
+        "shares",
+        "confidence",
+        "reason",
+        "benchmark_sp500",
+        "benchmark_nasdaq",
+        "paper_trade_enabled",
+        "paper_trade_candidate_count",
+        "paper_trade_long_candidate_count",
+        "paper_trade_short_candidate_count",
+        "paper_trade_placed_count",
+        "paper_trade_placed_long_count",
+        "paper_trade_placed_short_count",
+        "paper_candidate_symbols",
+        "paper_candidate_confidences",
+        "paper_skipped_symbols",
+        "paper_skip_reasons",
+        "paper_placed_symbols",
+        "paper_trade_ids",
+        "created_at",
+    ]
+    _write_csv(file_path, rows, fieldnames)
+    return file_path
+
+
+def export_trade_lifecycles(output_dir: str | Path, for_date: Optional[date] = None) -> Path:
+    target_date = for_date or datetime.utcnow().date()
+    rows = fetch_all(
+        """
+        SELECT *
+        FROM trade_lifecycles
+        WHERE DATE(COALESCE(exit_time, entry_time, created_at)) = %(target_date)s
+        ORDER BY COALESCE(exit_time, entry_time, created_at) ASC, id ASC
+        """,
+        {"target_date": target_date},
+    )
+    file_path = Path(output_dir) / str(target_date) / "db" / "trade_lifecycles.csv"
+    fieldnames = rows[0].keys() if rows else [
+        "id",
+        "trade_key",
+        "symbol",
+        "mode",
+        "side",
+        "direction",
+        "status",
+        "entry_time",
+        "exit_time",
+        "duration_minutes",
+        "shares",
+        "entry_price",
+        "exit_price",
+        "stop_price",
+        "target_price",
+        "exit_reason",
+        "signal_timestamp",
+        "signal_entry",
+        "signal_stop",
+        "signal_target",
+        "signal_confidence",
+        "order_id",
+        "parent_order_id",
+        "exit_order_id",
+        "realized_pnl",
+        "realized_pnl_percent",
+        "created_at",
+        "updated_at",
+    ]
+    _write_csv(file_path, rows, fieldnames)
+    return file_path
+
 
 def export_all_reports(output_dir: str | Path, for_date: Optional[date] = None) -> list[Path]:
     exported_paths = [
         export_trade_events(output_dir, for_date=for_date),
         export_scan_runs(output_dir, for_date=for_date),
         export_broker_orders(output_dir, for_date=for_date),
+        export_signal_logs(output_dir, for_date=for_date),
+        export_trade_lifecycles(output_dir, for_date=for_date),
         export_reconciliation_runs(output_dir, for_date=for_date),
     ]
-    exported_paths.extend(export_original_csv_files(output_dir, for_date=for_date))
     exported_paths.extend(export_analysis_files(output_dir, for_date=for_date))
     return exported_paths

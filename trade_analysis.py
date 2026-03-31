@@ -6,9 +6,8 @@ import csv
 import os
 from collections import defaultdict
 from dataclasses import dataclass
-from io import StringIO
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable
 
 from google.cloud import storage
 from db import fetch_all
@@ -17,22 +16,12 @@ from db import fetch_all
 CLOSE_EVENT_TYPES = {"STOP_HIT", "TARGET_HIT", "MANUAL_CLOSE"}
 CORE_MODES = {"core_one", "core_two"}
 
-GCS_BUCKET_NAME = os.getenv("TRADE_LOG_BUCKET", "stock-scanner-490821-logs")
-GCS_TRADES_OBJECT = os.getenv("TRADE_LOG_OBJECT", "trades/trades.csv")
-SIGNALS_BUCKET_NAME = os.getenv("SIGNAL_LOG_BUCKET", GCS_BUCKET_NAME)
-SIGNALS_OBJECT = os.getenv("SIGNAL_LOG_OBJECT", "signals/signals.csv")
 ANALYSIS_SUMMARY_OUTPUT = Path("trade_analysis_summary.csv")
-ANALYSIS_SUMMARY_GCS_OUTPUT = Path("trade_analysis_summary_gcs.csv")
-ANALYSIS_SUMMARY_DB_OUTPUT = Path("trade_analysis_summary_db.csv")
 ANALYSIS_PAIRED_OUTPUT = Path("trade_analysis_paired_trades.csv")
-ANALYSIS_PAIRED_GCS_OUTPUT = Path("trade_analysis_paired_trades_gcs.csv")
-ANALYSIS_PAIRED_DB_OUTPUT = Path("trade_analysis_paired_trades_db.csv")
-ANALYSIS_COMPARISON_OUTPUT = Path("trade_analysis_comparison.csv")
-ANALYSIS_GCS_BUCKET = os.getenv("TRADE_ANALYSIS_BUCKET", GCS_BUCKET_NAME)
+ANALYSIS_GCS_BUCKET = os.getenv("TRADE_ANALYSIS_BUCKET", "stock-scanner-490821-logs")
 ANALYSIS_SUMMARY_OBJECT = os.getenv("TRADE_ANALYSIS_SUMMARY_OBJECT", "reports/trade_analysis_summary.csv")
 ANALYSIS_PAIRED_OBJECT = os.getenv("TRADE_ANALYSIS_PAIRED_OBJECT", "reports/trade_analysis_paired_trades.csv")
 
-TRADE_ANALYSIS_SOURCE = os.getenv("TRADE_ANALYSIS_SOURCE", "gcs").strip().lower()
 def stringify_db_row(row: dict[str, Any]) -> dict[str, str]:
     normalized: dict[str, str] = {}
     for key, value in row.items():
@@ -83,34 +72,26 @@ def get_db_signal_rows() -> list[dict[str, str]]:
     rows = fetch_all(
         """
         SELECT
-            scan_time AS timestamp_utc,
+            timestamp_utc,
+            scan_id,
             mode,
             scan_source,
             market_phase,
-            candidate_count,
-            placed_count,
-            skipped_count
-        FROM scan_runs
-        ORDER BY scan_time ASC, id ASC
+            confidence,
+            top_symbol
+        FROM signal_logs
+        ORDER BY timestamp_utc ASC, id ASC
         """
     )
     return [stringify_db_row(row) for row in rows]
 
 
-
-def get_trade_rows(source: str | None = None) -> list[dict[str, str]]:
-    resolved_source = str(source or TRADE_ANALYSIS_SOURCE).strip().lower()
-    if resolved_source == "db":
-        return get_db_trade_rows()
-    return get_gcs_csv_rows(GCS_BUCKET_NAME, GCS_TRADES_OBJECT)
+def get_trade_rows() -> list[dict[str, str]]:
+    return get_db_trade_rows()
 
 
-
-def get_signal_rows(source: str | None = None) -> list[dict[str, str]]:
-    resolved_source = str(source or TRADE_ANALYSIS_SOURCE).strip().lower()
-    if resolved_source == "db":
-        return get_db_signal_rows()
-    return get_gcs_csv_rows(SIGNALS_BUCKET_NAME, SIGNALS_OBJECT)
+def get_signal_rows() -> list[dict[str, str]]:
+    return get_db_signal_rows()
 
 
 @dataclass
@@ -175,17 +156,6 @@ def infer_side(open_row: dict[str, str]) -> str:
         return "BUY"
     return "UNKNOWN"
 
-
-
-def get_gcs_csv_rows(bucket_name: str, object_name: str) -> list[dict[str, str]]:
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob(object_name)
-    if not blob.exists():
-        raise FileNotFoundError(f"Missing gs://{bucket_name}/{object_name}")
-
-    csv_text = blob.download_as_text(encoding="utf-8")
-    return list(csv.DictReader(StringIO(csv_text)))
 
 
 def upload_file_to_gcs(local_path: Path, bucket_name: str, object_name: str) -> str:
@@ -379,77 +349,9 @@ def write_csv(rows: list[dict[str, Any]], path: Path, headers: list[str]) -> Non
             writer.writerow(row)
 
 
-def choose_output_paths(source: str) -> tuple[Path, Path]:
-    normalized = str(source).strip().lower()
-    if normalized == "db":
-        return ANALYSIS_SUMMARY_DB_OUTPUT, ANALYSIS_PAIRED_DB_OUTPUT
-    return ANALYSIS_SUMMARY_GCS_OUTPUT, ANALYSIS_PAIRED_GCS_OUTPUT
-
-
-def build_comparison_rows(
-    gcs_summary_rows: list[dict[str, Any]],
-    db_summary_rows: list[dict[str, Any]],
-    gcs_paired_rows: list[dict[str, Any]],
-    db_paired_rows: list[dict[str, Any]],
-    gcs_unmatched_closes: list[dict[str, str]],
-    db_unmatched_closes: list[dict[str, str]],
-) -> list[dict[str, Any]]:
-    gcs_overall = next((row for row in gcs_summary_rows if row.get("group_name") == "overall"), {})
-    db_overall = next((row for row in db_summary_rows if row.get("group_name") == "overall"), {})
-
-    def metric(row: dict[str, Any], key: str) -> Any:
-        return row.get(key, "") if row else ""
-
-    return [
-        {
-            "metric": "paired_row_count",
-            "gcs_value": len(gcs_paired_rows),
-            "db_value": len(db_paired_rows),
-            "match": len(gcs_paired_rows) == len(db_paired_rows),
-        },
-        {
-            "metric": "unmatched_close_count",
-            "gcs_value": len(gcs_unmatched_closes),
-            "db_value": len(db_unmatched_closes),
-            "match": len(gcs_unmatched_closes) == len(db_unmatched_closes),
-        },
-        {
-            "metric": "overall_trades",
-            "gcs_value": metric(gcs_overall, "trades"),
-            "db_value": metric(db_overall, "trades"),
-            "match": metric(gcs_overall, "trades") == metric(db_overall, "trades"),
-        },
-        {
-            "metric": "overall_wins",
-            "gcs_value": metric(gcs_overall, "wins"),
-            "db_value": metric(db_overall, "wins"),
-            "match": metric(gcs_overall, "wins") == metric(db_overall, "wins"),
-        },
-        {
-            "metric": "overall_losses",
-            "gcs_value": metric(gcs_overall, "losses"),
-            "db_value": metric(db_overall, "losses"),
-            "match": metric(gcs_overall, "losses") == metric(db_overall, "losses"),
-        },
-        {
-            "metric": "overall_gross_pnl",
-            "gcs_value": metric(gcs_overall, "gross_pnl"),
-            "db_value": metric(db_overall, "gross_pnl"),
-            "match": metric(gcs_overall, "gross_pnl") == metric(db_overall, "gross_pnl"),
-        },
-        {
-            "metric": "overall_win_rate_pct",
-            "gcs_value": metric(gcs_overall, "win_rate_pct"),
-            "db_value": metric(db_overall, "win_rate_pct"),
-            "match": metric(gcs_overall, "win_rate_pct") == metric(db_overall, "win_rate_pct"),
-        },
-    ]
-
-
-def run_trade_analysis(source: str | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, str]]]:
-    resolved_source = str(source or TRADE_ANALYSIS_SOURCE).strip().lower()
-    trade_rows = get_trade_rows(source=resolved_source)
-    signal_rows = get_signal_rows(source=resolved_source)
+def run_trade_analysis() -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, str]]]:
+    trade_rows = get_trade_rows()
+    signal_rows = get_signal_rows()
     signal_index = build_signal_index(signal_rows)
 
     paired_trades, unmatched_closes = pair_trades(trade_rows, signal_index=signal_index)
@@ -481,11 +383,10 @@ def run_trade_analysis(source: str | None = None) -> tuple[list[dict[str, Any]],
     summary_rows.extend(build_summary_rows("core_group", by_core_group))
 
     paired_rows = build_paired_trade_rows(paired_trades)
-    summary_output, paired_output = choose_output_paths(resolved_source)
 
     write_csv(
         summary_rows,
-        summary_output,
+        ANALYSIS_SUMMARY_OUTPUT,
         [
             "group_name",
             "group_value",
@@ -502,7 +403,7 @@ def run_trade_analysis(source: str | None = None) -> tuple[list[dict[str, Any]],
     )
     write_csv(
         paired_rows,
-        paired_output,
+        ANALYSIS_PAIRED_OUTPUT,
         [
             "symbol",
             "name",
@@ -524,72 +425,11 @@ def run_trade_analysis(source: str | None = None) -> tuple[list[dict[str, Any]],
         ],
     )
 
-    if resolved_source == TRADE_ANALYSIS_SOURCE:
-        write_csv(
-            summary_rows,
-            ANALYSIS_SUMMARY_OUTPUT,
-            [
-                "group_name",
-                "group_value",
-                "trades",
-                "wins",
-                "losses",
-                "flats",
-                "win_rate_pct",
-                "gross_pnl",
-                "avg_pnl",
-                "avg_win",
-                "avg_loss",
-            ],
-        )
-        write_csv(
-            paired_rows,
-            ANALYSIS_PAIRED_OUTPUT,
-            [
-                "symbol",
-                "name",
-                "mode",
-                "core_group",
-                "scan_source",
-                "market_phase",
-                "side",
-                "shares",
-                "entry_timestamp_utc",
-                "exit_timestamp_utc",
-                "entry_price",
-                "exit_price",
-                "exit_reason",
-                "confidence",
-                "broker_parent_order_id",
-                "pnl",
-                "outcome",
-            ],
-        )
-
     return summary_rows, paired_rows, unmatched_closes
 
 
 def main() -> None:
-    gcs_summary_rows, gcs_paired_rows, gcs_unmatched_closes = run_trade_analysis(source="gcs")
-    db_summary_rows, db_paired_rows, db_unmatched_closes = run_trade_analysis(source="db")
-
-    comparison_rows = build_comparison_rows(
-        gcs_summary_rows,
-        db_summary_rows,
-        gcs_paired_rows,
-        db_paired_rows,
-        gcs_unmatched_closes,
-        db_unmatched_closes,
-    )
-    write_csv(
-        comparison_rows,
-        ANALYSIS_COMPARISON_OUTPUT,
-        ["metric", "gcs_value", "db_value", "match"],
-    )
-
-    active_summary_rows = db_summary_rows if TRADE_ANALYSIS_SOURCE == "db" else gcs_summary_rows
-    active_paired_rows = db_paired_rows if TRADE_ANALYSIS_SOURCE == "db" else gcs_paired_rows
-    active_unmatched_closes = db_unmatched_closes if TRADE_ANALYSIS_SOURCE == "db" else gcs_unmatched_closes
+    active_summary_rows, active_paired_rows, active_unmatched_closes = run_trade_analysis()
 
     overall_rows = [row for row in active_summary_rows if row.get("group_name") == "overall"]
     if overall_rows:
@@ -649,12 +489,9 @@ def main() -> None:
                 f"{row.get('broker_parent_order_id', '')}"
             )
 
-    print(f"\nTrade analysis active source: {TRADE_ANALYSIS_SOURCE.upper()}")
-    print(f"Wrote GCS summary CSV to {ANALYSIS_SUMMARY_GCS_OUTPUT}")
-    print(f"Wrote GCS paired trades CSV to {ANALYSIS_PAIRED_GCS_OUTPUT}")
-    print(f"Wrote DB summary CSV to {ANALYSIS_SUMMARY_DB_OUTPUT}")
-    print(f"Wrote DB paired trades CSV to {ANALYSIS_PAIRED_DB_OUTPUT}")
-    print(f"Wrote comparison CSV to {ANALYSIS_COMPARISON_OUTPUT}")
+    print("\nTrade analysis active source: DB")
+    print(f"Wrote summary CSV to {ANALYSIS_SUMMARY_OUTPUT}")
+    print(f"Wrote paired trades CSV to {ANALYSIS_PAIRED_OUTPUT}")
 
 
 if __name__ == "__main__":

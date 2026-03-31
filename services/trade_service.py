@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Callable
+from logging_utils import log_exception
 
 def _normalize_trade_key(symbol: str, broker_parent_order_id: str, broker_order_id: str) -> str:
     return broker_parent_order_id or broker_order_id or symbol
@@ -117,7 +118,7 @@ def execute_close_all_paper_positions(
     try:
         positions = get_open_positions()
     except Exception as e:
-        print(f"Open position read failed: {e}", flush=True)
+        log_exception("Open position read failed", e, component="trade_service", operation="execute_close_all_paper_positions")
         return {"ok": False, "error": f"open position read failed: {e}"}, 500
 
     open_paper_rows = get_managed_open_paper_trades_for_eod_close()
@@ -156,7 +157,13 @@ def execute_close_all_paper_positions(
         try:
             canceled_order_ids = cancel_open_orders_for_symbol(symbol)
         except Exception as e:
-            print(f"Paper open-order cancel failed for {symbol}: {e}", flush=True)
+            log_exception(
+                "Paper open-order cancel failed",
+                e,
+                component="trade_service",
+                operation="execute_close_all_paper_positions",
+                symbol=symbol,
+            )
             skipped_count += 1
             results.append({
                 "symbol": symbol,
@@ -169,7 +176,13 @@ def execute_close_all_paper_positions(
         try:
             close_response = close_position(symbol, cancel_orders=True)
         except Exception as e:
-            print(f"Paper position close failed for {symbol}: {e}", flush=True)
+            log_exception(
+                "Paper position close failed",
+                e,
+                component="trade_service",
+                operation="execute_close_all_paper_positions",
+                symbol=symbol,
+            )
             skipped_count += 1
             results.append({
                 "symbol": symbol,
@@ -197,7 +210,13 @@ def execute_close_all_paper_positions(
                     close_filled_avg_price = str(close_filled_avg_price_raw).strip()
                     close_filled = True
             except Exception as order_read_error:
-                print(f"Paper close order read failed for {symbol}: {order_read_error}", flush=True)
+                log_exception(
+                    "Paper close order read failed",
+                    order_read_error,
+                    component="trade_service",
+                    operation="execute_close_all_paper_positions",
+                    symbol=symbol,
+                )
 
         timestamp_utc = datetime.now(timezone.utc).isoformat()
         safe_insert_broker_order(

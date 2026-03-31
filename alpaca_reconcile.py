@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -10,10 +9,6 @@ from typing import Any
 from google.cloud import storage
 from storage import insert_broker_order, get_recent_trade_event_rows
 
-
-
-GCS_BUCKET_NAME = os.getenv("TRADE_LOG_BUCKET", "stock-scanner-490821-logs")
-GCS_TRADES_OBJECT = os.getenv("TRADE_LOG_OBJECT", "trades/trades.csv")
 OUTPUT_PATH = Path("alpaca_reconciliation.csv")
 
 from alpaca.alpaca_orders import fetch_orders

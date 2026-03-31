@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from google.cloud import storage
+from logging_utils import log_exception, log_warning
 from paper_alpaca import place_paper_bracket_order_from_trade, get_open_positions, get_open_orders, close_position, cancel_open_orders_for_symbol
 from alpaca_sync import sync_order_by_id, get_order_by_id
 from alpaca_reconcile import run_reconciliation, upload_file_to_gcs
@@ -15,6 +16,7 @@ from signal_analysis import run_signal_analysis, upload_file_to_gcs as upload_si
 from db import healthcheck as db_healthcheck
 from storage import (
     insert_scan_run,
+    insert_signal_log,
     insert_trade_event,
     insert_broker_order,
     insert_reconciliation_run,
@@ -30,7 +32,11 @@ from storage import (
     get_recent_alpaca_api_logs,
     get_recent_alpaca_api_errors,
     get_trade_lifecycles,
+    get_trade_event_rows_for_date,
+    get_signal_log_rows,
     get_trade_lifecycle_summary_from_table,
+    get_recent_closed_trade_lifecycle_for_symbol,
+    get_latest_open_trade_lifecycle,
     upsert_trade_lifecycle,
     get_dashboard_summary,
     get_daily_realized_pnl,
@@ -48,13 +54,6 @@ from routes.sync import register_sync_routes
 from services.sync_service import execute_sync_paper_trades
 from services.scan_service import execute_full_scan
 from services.trade_service import execute_close_all_paper_positions
-from services.logging_service import (
-    append_csv_row as append_csv_row_service,
-    append_signal_log as append_signal_log_service,
-    append_trade_log as append_trade_log_service,
-    read_csv_rows_for_path,
-    read_trade_rows_for_date as read_trade_rows_for_date_service,
-)
 
 from trade_scan import (
     run_scan,
@@ -84,7 +83,6 @@ def env_flag(name: str, default: str = "true") -> bool:
     value = str(os.getenv(name, default)).strip().lower()
     return value in {"1", "true", "yes", "y", "on"}
 
-ENABLE_CSV_LOGGING = env_flag("ENABLE_CSV_LOGGING", "true")
 ENABLE_DB_LOGGING = env_flag("ENABLE_DB_LOGGING", "true")
 
 INSTRUMENT_GROUPS = {
@@ -103,7 +101,16 @@ def safe_insert_scan_run(**kwargs) -> None:
     try:
         insert_scan_run(**kwargs)
     except Exception as e:
-        print(f"DB scan run write failed: {e}", flush=True)
+        log_exception("DB scan run write failed", e, component="app", operation="insert_scan_run")
+
+
+def safe_insert_signal_log(**kwargs) -> None:
+    if not ENABLE_DB_LOGGING:
+        return
+    try:
+        insert_signal_log(**kwargs)
+    except Exception as e:
+        log_exception("DB signal log write failed", e, component="app", operation="insert_signal_log")
 
 
 def safe_insert_trade_event(**kwargs) -> None:
@@ -112,7 +119,7 @@ def safe_insert_trade_event(**kwargs) -> None:
     try:
         insert_trade_event(**kwargs)
     except Exception as e:
-        print(f"DB trade event write failed: {e}", flush=True)
+        log_exception("DB trade event write failed", e, component="app", operation="insert_trade_event")
 
 
 def safe_insert_broker_order(**kwargs) -> None:
@@ -121,7 +128,7 @@ def safe_insert_broker_order(**kwargs) -> None:
     try:
         insert_broker_order(**kwargs)
     except Exception as e:
-        print(f"DB broker order write failed: {e}", flush=True)
+        log_exception("DB broker order write failed", e, component="app", operation="insert_broker_order")
 
 
 
@@ -131,7 +138,7 @@ def safe_insert_reconciliation_run(**kwargs) -> None:
     try:
         insert_reconciliation_run(**kwargs)
     except Exception as e:
-        print(f"DB reconciliation write failed: {e}", flush=True)
+        log_exception("DB reconciliation write failed", e, component="app", operation="insert_reconciliation_run")
 
 
 def safe_insert_reconciliation_detail(**kwargs) -> None:
@@ -140,7 +147,7 @@ def safe_insert_reconciliation_detail(**kwargs) -> None:
     try:
         insert_reconciliation_detail(**kwargs)
     except Exception as e:
-        print(f"DB reconciliation detail write failed: {e}", flush=True)
+        log_exception("DB reconciliation detail write failed", e, component="app", operation="insert_reconciliation_detail")
 
 
 def find_instrument_by_symbol(symbol: str) -> tuple[str, str] | tuple[None, None]:
@@ -179,8 +186,6 @@ def build_scheduled_scan_payload(payload: dict, now_ny: datetime | None = None) 
     }
 
 LOG_BUCKET = os.getenv("LOG_BUCKET", "stock-scanner-490821-logs")
-SIGNALS_CSV_PATH = os.getenv("SIGNALS_CSV_PATH", "signals/signals.csv")
-TRADES_CSV_PATH = os.getenv("TRADES_CSV_PATH", "trades/trades.csv")
 RECONCILIATION_BUCKET = os.getenv("RECONCILIATION_BUCKET", "stock-scanner-490821-logs")
 RECONCILIATION_OBJECT = os.getenv("RECONCILIATION_OBJECT", "reports/alpaca_reconciliation.csv")
 TRADE_ANALYSIS_BUCKET = os.getenv("TRADE_ANALYSIS_BUCKET", "stock-scanner-490821-logs")
@@ -317,46 +322,76 @@ def paper_candidate_from_evaluation(eval_result: dict) -> dict | None:
     }
 
 
-def append_csv_row(path: str, headers: list[str], row: dict) -> None:
-    append_csv_row_service(
-        storage_client_factory=storage.Client,
-        bucket_name=LOG_BUCKET,
-        path=path,
-        headers=headers,
-        row=row,
-    )
-
-
 def append_signal_log(row: dict) -> None:
-    append_signal_log_service(
-        enabled=ENABLE_CSV_LOGGING,
-        append_csv_row_func=append_csv_row,
-        path=SIGNALS_CSV_PATH,
-        row=row,
+    safe_insert_signal_log(
+        timestamp_utc=parse_iso_utc(str(row.get("timestamp_utc", ""))),
+        scan_id=str(row.get("scan_id", "")).strip() or None,
+        scan_source=str(row.get("scan_source", "")).strip() or None,
+        market_phase=str(row.get("market_phase", "")).strip() or None,
+        scan_execution_time_ms=int(row.get("scan_execution_time_ms")) if row.get("scan_execution_time_ms") not in (None, "") else None,
+        mode=str(row.get("mode", "")).strip() or None,
+        account_size=to_float_or_none(row.get("account_size")),
+        current_open_positions=int(float(row.get("current_open_positions"))) if row.get("current_open_positions") not in (None, "") else None,
+        current_open_exposure=to_float_or_none(row.get("current_open_exposure")),
+        timing_ok=bool(row.get("timing_ok")) if row.get("timing_ok") is not None else None,
+        source=str(row.get("source", "")).strip() or None,
+        trade_count=int(row.get("trade_count")) if row.get("trade_count") not in (None, "") else None,
+        top_name=str(row.get("top_name", "")).strip() or None,
+        top_symbol=str(row.get("top_symbol", "")).strip().upper() or None,
+        current_price=to_float_or_none(row.get("current_price")),
+        entry=to_float_or_none(row.get("entry")),
+        stop=to_float_or_none(row.get("stop")),
+        target=to_float_or_none(row.get("target")),
+        shares=to_float_or_none(row.get("shares")),
+        confidence=to_float_or_none(row.get("confidence")),
+        reason=str(row.get("reason", "")).strip() or None,
+        benchmark_sp500=to_float_or_none(row.get("benchmark_sp500")),
+        benchmark_nasdaq=to_float_or_none(row.get("benchmark_nasdaq")),
+        paper_trade_enabled=bool(row.get("paper_trade_enabled")) if row.get("paper_trade_enabled") is not None else None,
+        paper_trade_candidate_count=int(row.get("paper_trade_candidate_count")) if row.get("paper_trade_candidate_count") not in (None, "") else None,
+        paper_trade_long_candidate_count=int(row.get("paper_trade_long_candidate_count")) if row.get("paper_trade_long_candidate_count") not in (None, "") else None,
+        paper_trade_short_candidate_count=int(row.get("paper_trade_short_candidate_count")) if row.get("paper_trade_short_candidate_count") not in (None, "") else None,
+        paper_trade_placed_count=int(row.get("paper_trade_placed_count")) if row.get("paper_trade_placed_count") not in (None, "") else None,
+        paper_trade_placed_long_count=int(row.get("paper_trade_placed_long_count")) if row.get("paper_trade_placed_long_count") not in (None, "") else None,
+        paper_trade_placed_short_count=int(row.get("paper_trade_placed_short_count")) if row.get("paper_trade_placed_short_count") not in (None, "") else None,
+        paper_candidate_symbols=str(row.get("paper_candidate_symbols", "")).strip() or None,
+        paper_candidate_confidences=str(row.get("paper_candidate_confidences", "")).strip() or None,
+        paper_skipped_symbols=str(row.get("paper_skipped_symbols", "")).strip() or None,
+        paper_skip_reasons=str(row.get("paper_skip_reasons", "")).strip() or None,
+        paper_placed_symbols=str(row.get("paper_placed_symbols", "")).strip() or None,
+        paper_trade_ids=str(row.get("paper_trade_ids", "")).strip() or None,
     )
 
 
 def append_trade_log(row: dict) -> None:
-    append_trade_log_service(
-        enabled=ENABLE_CSV_LOGGING,
-        append_csv_row_func=append_csv_row,
-        path=TRADES_CSV_PATH,
-        row=row,
-    )
+    return None
 
 def read_trade_rows_for_date(target_date: str) -> list[dict]:
-    return read_trade_rows_for_date_service(
-        all_rows=read_all_trade_rows(),
-        target_date=target_date,
-    )
+    db_rows = get_trade_event_rows_for_date(target_date=target_date, limit=5000)
+    normalized_rows: list[dict] = []
 
+    for row in db_rows:
+        event_type = str(row.get("event_type", "")).strip().upper()
+        price = str(row.get("price", "") or "").strip()
+        broker_order_id = str(row.get("broker_order_id", "") or "").strip()
+        broker_parent_order_id = str(row.get("broker_parent_order_id", "") or "").strip()
 
-def read_all_trade_rows() -> list[dict]:
-    return read_csv_rows_for_path(
-        storage_client_factory=storage.Client,
-        bucket_name=LOG_BUCKET,
-        path=TRADES_CSV_PATH,
-    )
+        normalized_rows.append({
+            "timestamp_utc": row.get("timestamp_utc", ""),
+            "event_type": event_type,
+            "symbol": row.get("symbol", ""),
+            "mode": row.get("mode", ""),
+            "trade_source": "ALPACA_PAPER" if (broker_order_id or broker_parent_order_id) else "MANUAL",
+            "shares": row.get("shares", ""),
+            "entry_price": price if event_type == "OPEN" else "",
+            "exit_price": price if event_type != "OPEN" else "",
+            "notes": "",
+            "status": row.get("status", ""),
+            "broker_order_id": broker_order_id,
+            "broker_parent_order_id": broker_parent_order_id,
+        })
+
+    return normalized_rows
 
 
 # --- Helper functions for paper trade syncing ---
@@ -370,7 +405,7 @@ def paper_trade_exit_already_logged(parent_order_id: str, exit_event: str) -> bo
     try:
         rows = get_recent_trade_event_rows(limit=1000)
     except Exception as e:
-        print(f"Failed to read trade events from DB: {e}", flush=True)
+        log_exception("Failed to read trade events from DB", e, component="app", operation="paper_trade_exit_already_logged")
         return False
 
     for row in rows or []:
@@ -398,7 +433,7 @@ def get_open_paper_trades() -> list[dict]:
     try:
         rows = get_open_trade_events(limit=1000)
     except Exception as e:
-        print(f"Failed to read open trade events from DB: {e}", flush=True)
+        log_exception("Failed to read open trade events from DB", e, component="app", operation="get_open_paper_trades")
         return []
 
     normalized_rows: list[dict] = []
@@ -463,7 +498,7 @@ def get_managed_open_paper_trades_for_eod_close() -> list[dict]:
         positions = get_open_positions()
         open_orders = get_open_orders()
     except Exception as e:
-        print(f"Broker validation for open paper trades failed: {e}", flush=True)
+        log_exception("Broker validation for open paper trades failed", e, component="app", operation="get_open_paper_trades")
         return open_rows
 
     open_position_symbols = {
@@ -504,7 +539,7 @@ def get_current_open_position_state() -> tuple[int, float]:
     try:
         positions = get_open_positions()
     except Exception as e:
-        print(f"Failed to read current open positions for sizing context: {e}", flush=True)
+        log_exception("Failed to read current open positions for sizing context", e, component="app", operation="get_risk_exposure_summary")
         return 0, 0.0
 
     current_open_positions = 0
@@ -537,14 +572,14 @@ def get_risk_exposure_summary() -> dict:
     try:
         positions = get_open_positions()
     except Exception as e:
-        print(f"Failed to read open positions for risk summary: {e}", flush=True)
+        log_exception("Failed to read open positions for risk summary", e, component="app", operation="get_risk_exposure_summary")
         positions = []
 
     try:
         today_utc = datetime.now(timezone.utc).date().isoformat()
         daily_realized_pnl = get_daily_realized_pnl(today_utc)
     except Exception as e:
-        print(f"Failed to read daily realized PnL: {e}", flush=True)
+        log_exception("Failed to read daily realized PnL", e, component="app", operation="get_risk_exposure_summary")
         daily_realized_pnl = 0.0
 
     daily_unrealized_pnl = 0.0
@@ -561,7 +596,7 @@ def get_risk_exposure_summary() -> dict:
         from services.scan_service import _get_live_alpaca_account_equity
         account_size = float(_get_live_alpaca_account_equity({}))
     except Exception as e:
-        print(f"Failed to resolve live account equity for risk summary: {e}", flush=True)
+        log_exception("Failed to resolve live account equity for risk summary", e, component="app", operation="get_risk_exposure_summary")
 
     max_total_allocated_capital = account_size * max_capital_allocation_pct
     allocation_used_pct = (
@@ -584,11 +619,50 @@ def get_risk_exposure_summary() -> dict:
 
 
 def read_all_signal_rows() -> list[dict]:
-    return read_csv_rows_for_path(
-        storage_client_factory=storage.Client,
-        bucket_name=LOG_BUCKET,
-        path=SIGNALS_CSV_PATH,
-    )
+    rows = get_signal_log_rows(limit=10000)
+    normalized_rows: list[dict] = []
+
+    for row in rows:
+        normalized_rows.append({
+            "timestamp_utc": row.get("timestamp_utc", ""),
+            "scan_id": row.get("scan_id", ""),
+            "scan_source": row.get("scan_source", ""),
+            "market_phase": row.get("market_phase", ""),
+            "scan_execution_time_ms": row.get("scan_execution_time_ms", ""),
+            "mode": row.get("mode", ""),
+            "account_size": row.get("account_size", ""),
+            "current_open_positions": row.get("current_open_positions", ""),
+            "current_open_exposure": row.get("current_open_exposure", ""),
+            "timing_ok": row.get("timing_ok", ""),
+            "source": row.get("source", ""),
+            "trade_count": row.get("trade_count", ""),
+            "top_name": row.get("top_name", ""),
+            "top_symbol": row.get("top_symbol", ""),
+            "current_price": row.get("current_price", ""),
+            "entry": row.get("entry", ""),
+            "stop": row.get("stop", ""),
+            "target": row.get("target", ""),
+            "shares": row.get("shares", ""),
+            "confidence": row.get("confidence", ""),
+            "reason": row.get("reason", ""),
+            "benchmark_sp500": row.get("benchmark_sp500", ""),
+            "benchmark_nasdaq": row.get("benchmark_nasdaq", ""),
+            "paper_trade_enabled": row.get("paper_trade_enabled", ""),
+            "paper_trade_candidate_count": row.get("paper_trade_candidate_count", ""),
+            "paper_trade_long_candidate_count": row.get("paper_trade_long_candidate_count", ""),
+            "paper_trade_short_candidate_count": row.get("paper_trade_short_candidate_count", ""),
+            "paper_trade_placed_count": row.get("paper_trade_placed_count", ""),
+            "paper_trade_placed_long_count": row.get("paper_trade_placed_long_count", ""),
+            "paper_trade_placed_short_count": row.get("paper_trade_placed_short_count", ""),
+            "paper_candidate_symbols": row.get("paper_candidate_symbols", ""),
+            "paper_candidate_confidences": row.get("paper_candidate_confidences", ""),
+            "paper_skipped_symbols": row.get("paper_skipped_symbols", ""),
+            "paper_skip_reasons": row.get("paper_skip_reasons", ""),
+            "paper_placed_symbols": row.get("paper_placed_symbols", ""),
+            "paper_trade_ids": row.get("paper_trade_ids", ""),
+        })
+
+    return normalized_rows
 
 
 def parse_iso_utc(ts: str) -> datetime:
@@ -656,15 +730,18 @@ def get_latest_paper_close_event_for_symbol(symbol: str) -> dict | None:
     if not symbol:
         return None
 
-    for row in reversed(read_all_trade_rows()):
-        if str(row.get("trade_source", "")).strip().upper() != "ALPACA_PAPER":
-            continue
-        if str(row.get("symbol", "")).strip().upper() != symbol:
-            continue
-        if str(row.get("status", "")).strip().upper() != "CLOSED":
-            continue
-        return row
-    return None
+    row = get_recent_closed_trade_lifecycle_for_symbol(symbol)
+    if not row:
+        return None
+
+    return {
+        "timestamp_utc": row.get("exit_time"),
+        "symbol": row.get("symbol", ""),
+        "status": row.get("status", ""),
+        "exit_reason": row.get("exit_reason", ""),
+        "order_id": row.get("order_id", ""),
+        "parent_order_id": row.get("parent_order_id", ""),
+    }
 
 
 def is_symbol_in_paper_cooldown(symbol: str, now_utc: str) -> tuple[bool, str]:
@@ -769,33 +846,30 @@ def find_latest_open_trade(symbol: str, trade_source: str | None = None, broker_
 
         return None
 
-    rows = read_all_trade_rows()
-    current_open = None
+    row = get_latest_open_trade_lifecycle(
+        normalized_symbol,
+        parent_order_id=normalized_parent_order_id or None,
+    )
+    if not row:
+        return None
 
-    for row in rows:
-        row_symbol = str(row.get("symbol", "")).strip().upper()
-        if row_symbol != normalized_symbol:
-            continue
-
-        if normalized_trade_source:
-            row_trade_source = str(row.get("trade_source", "")).strip().upper()
-            if row_trade_source != normalized_trade_source:
-                continue
-
-        if normalized_parent_order_id:
-            row_parent_order_id = str(row.get("broker_parent_order_id", "")).strip()
-            if row_parent_order_id != normalized_parent_order_id:
-                continue
-
-        event_type = str(row.get("event_type", "")).strip().upper()
-        status = str(row.get("status", "")).strip().upper()
-
-        if event_type == "OPEN":
-            current_open = row
-        elif status == "CLOSED":
-            current_open = None
-
-    return current_open
+    return {
+        "timestamp_utc": row.get("entry_time"),
+        "symbol": row.get("symbol", ""),
+        "mode": row.get("mode", ""),
+        "shares": row.get("shares", ""),
+        "entry_price": row.get("entry_price", ""),
+        "stop_price": row.get("stop_price", ""),
+        "target_price": row.get("target_price", ""),
+        "status": row.get("status", ""),
+        "broker_order_id": row.get("order_id", ""),
+        "broker_parent_order_id": row.get("parent_order_id", ""),
+        "linked_signal_timestamp_utc": row.get("signal_timestamp", ""),
+        "linked_signal_entry": row.get("signal_entry", ""),
+        "linked_signal_stop": row.get("signal_stop", ""),
+        "linked_signal_target": row.get("signal_target", ""),
+        "linked_signal_confidence": row.get("signal_confidence", ""),
+    }
 
 
 def fetch_candles_between(symbol: str, start_utc: str, end_utc: str, interval: str = "5min") -> list[dict]:
@@ -940,7 +1014,7 @@ def handle_scan_request(payload):
             scan_payload.setdefault("daily_realized_pnl", risk_summary.get("daily_realized_pnl", 0.0))
             scan_payload.setdefault("daily_unrealized_pnl", risk_summary.get("daily_unrealized_pnl", 0.0))
         except Exception as e:
-            print(f"Failed to inject risk summary into scan payload: {e}", flush=True)
+            log_exception("Failed to inject risk summary into scan payload", e, component="app", operation="run_scan_wrapper")
             scan_payload.setdefault("daily_realized_pnl", 0.0)
             scan_payload.setdefault("daily_unrealized_pnl", 0.0)
 
@@ -1015,7 +1089,6 @@ def close_all_paper_positions():
 register_health_routes(
     app,
     db_healthcheck=db_healthcheck,
-    enable_csv_logging=ENABLE_CSV_LOGGING,
     enable_db_logging=ENABLE_DB_LOGGING,
     get_ops_summary=get_ops_summary,
     get_recent_alpaca_api_logs=get_recent_alpaca_api_logs,
@@ -1103,7 +1176,7 @@ def reconcile_now():
                 destination_blob_name=RECONCILIATION_OBJECT,
             )
         except Exception as upload_err:
-            print(f"GCS upload failed: {upload_err}", flush=True)
+            log_warning("GCS upload failed", component="app", operation="reconcile_now", error=str(upload_err))
 
         # persist reconciliation run summary
         try:
@@ -1126,7 +1199,7 @@ def reconcile_now():
                 notes=f"file_path={file_path}",
             )
         except Exception as db_err:
-            print(f"DB reconciliation summary insert failed: {db_err}", flush=True)
+            log_exception("DB reconciliation summary insert failed", db_err, component="app", operation="reconcile_now")
 
         return {
             "ok": True,

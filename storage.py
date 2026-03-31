@@ -80,6 +80,187 @@ def insert_scan_run(
     )
 
 
+def insert_signal_log(
+    *,
+    timestamp_utc: datetime,
+    scan_id: Optional[str] = None,
+    scan_source: Optional[str] = None,
+    market_phase: Optional[str] = None,
+    scan_execution_time_ms: Optional[int] = None,
+    mode: Optional[str] = None,
+    account_size: Optional[float] = None,
+    current_open_positions: Optional[int] = None,
+    current_open_exposure: Optional[float] = None,
+    timing_ok: Optional[bool] = None,
+    source: Optional[str] = None,
+    trade_count: Optional[int] = None,
+    top_name: Optional[str] = None,
+    top_symbol: Optional[str] = None,
+    current_price: Optional[float] = None,
+    entry: Optional[float] = None,
+    stop: Optional[float] = None,
+    target: Optional[float] = None,
+    shares: Optional[float] = None,
+    confidence: Optional[float] = None,
+    reason: Optional[str] = None,
+    benchmark_sp500: Optional[float] = None,
+    benchmark_nasdaq: Optional[float] = None,
+    paper_trade_enabled: Optional[bool] = None,
+    paper_trade_candidate_count: Optional[int] = None,
+    paper_trade_long_candidate_count: Optional[int] = None,
+    paper_trade_short_candidate_count: Optional[int] = None,
+    paper_trade_placed_count: Optional[int] = None,
+    paper_trade_placed_long_count: Optional[int] = None,
+    paper_trade_placed_short_count: Optional[int] = None,
+    paper_candidate_symbols: Optional[str] = None,
+    paper_candidate_confidences: Optional[str] = None,
+    paper_skipped_symbols: Optional[str] = None,
+    paper_skip_reasons: Optional[str] = None,
+    paper_placed_symbols: Optional[str] = None,
+    paper_trade_ids: Optional[str] = None,
+) -> None:
+    existing = fetch_one(
+        """
+        SELECT id
+        FROM signal_logs
+        WHERE timestamp_utc = %(timestamp_utc)s
+          AND COALESCE(scan_id, '') = %(scan_id)s
+          AND COALESCE(mode, '') = %(mode)s
+          AND COALESCE(top_symbol, '') = %(top_symbol)s
+          AND COALESCE(source, '') = %(source)s
+        LIMIT 1
+        """,
+        {
+            "timestamp_utc": timestamp_utc,
+            "scan_id": _normalize_text(scan_id),
+            "mode": _normalize_text(mode),
+            "top_symbol": _normalize_text(top_symbol).upper(),
+            "source": _normalize_text(source),
+        },
+    )
+    if existing:
+        return
+
+    execute(
+        """
+        INSERT INTO signal_logs (
+            timestamp_utc,
+            scan_id,
+            scan_source,
+            market_phase,
+            scan_execution_time_ms,
+            mode,
+            account_size,
+            current_open_positions,
+            current_open_exposure,
+            timing_ok,
+            source,
+            trade_count,
+            top_name,
+            top_symbol,
+            current_price,
+            entry,
+            stop,
+            target,
+            shares,
+            confidence,
+            reason,
+            benchmark_sp500,
+            benchmark_nasdaq,
+            paper_trade_enabled,
+            paper_trade_candidate_count,
+            paper_trade_long_candidate_count,
+            paper_trade_short_candidate_count,
+            paper_trade_placed_count,
+            paper_trade_placed_long_count,
+            paper_trade_placed_short_count,
+            paper_candidate_symbols,
+            paper_candidate_confidences,
+            paper_skipped_symbols,
+            paper_skip_reasons,
+            paper_placed_symbols,
+            paper_trade_ids
+        )
+        VALUES (
+            %(timestamp_utc)s,
+            %(scan_id)s,
+            %(scan_source)s,
+            %(market_phase)s,
+            %(scan_execution_time_ms)s,
+            %(mode)s,
+            %(account_size)s,
+            %(current_open_positions)s,
+            %(current_open_exposure)s,
+            %(timing_ok)s,
+            %(source)s,
+            %(trade_count)s,
+            %(top_name)s,
+            %(top_symbol)s,
+            %(current_price)s,
+            %(entry)s,
+            %(stop)s,
+            %(target)s,
+            %(shares)s,
+            %(confidence)s,
+            %(reason)s,
+            %(benchmark_sp500)s,
+            %(benchmark_nasdaq)s,
+            %(paper_trade_enabled)s,
+            %(paper_trade_candidate_count)s,
+            %(paper_trade_long_candidate_count)s,
+            %(paper_trade_short_candidate_count)s,
+            %(paper_trade_placed_count)s,
+            %(paper_trade_placed_long_count)s,
+            %(paper_trade_placed_short_count)s,
+            %(paper_candidate_symbols)s,
+            %(paper_candidate_confidences)s,
+            %(paper_skipped_symbols)s,
+            %(paper_skip_reasons)s,
+            %(paper_placed_symbols)s,
+            %(paper_trade_ids)s
+        )
+        """,
+        {
+            "timestamp_utc": timestamp_utc,
+            "scan_id": scan_id,
+            "scan_source": scan_source,
+            "market_phase": market_phase,
+            "scan_execution_time_ms": scan_execution_time_ms,
+            "mode": mode,
+            "account_size": account_size,
+            "current_open_positions": current_open_positions,
+            "current_open_exposure": current_open_exposure,
+            "timing_ok": timing_ok,
+            "source": source,
+            "trade_count": trade_count,
+            "top_name": top_name,
+            "top_symbol": str(top_symbol or "").strip().upper() or None,
+            "current_price": current_price,
+            "entry": entry,
+            "stop": stop,
+            "target": target,
+            "shares": shares,
+            "confidence": confidence,
+            "reason": reason,
+            "benchmark_sp500": benchmark_sp500,
+            "benchmark_nasdaq": benchmark_nasdaq,
+            "paper_trade_enabled": paper_trade_enabled,
+            "paper_trade_candidate_count": paper_trade_candidate_count,
+            "paper_trade_long_candidate_count": paper_trade_long_candidate_count,
+            "paper_trade_short_candidate_count": paper_trade_short_candidate_count,
+            "paper_trade_placed_count": paper_trade_placed_count,
+            "paper_trade_placed_long_count": paper_trade_placed_long_count,
+            "paper_trade_placed_short_count": paper_trade_placed_short_count,
+            "paper_candidate_symbols": paper_candidate_symbols,
+            "paper_candidate_confidences": paper_candidate_confidences,
+            "paper_skipped_symbols": paper_skipped_symbols,
+            "paper_skip_reasons": paper_skip_reasons,
+            "paper_placed_symbols": paper_placed_symbols,
+            "paper_trade_ids": paper_trade_ids,
+        },
+    )
+
+
 
 def insert_trade_event(
     event_time: datetime,
@@ -758,6 +939,77 @@ def get_recent_trade_event_rows(limit: int = 100) -> list[dict[str, Any]]:
     )
 
 
+def get_signal_log_rows(limit: int = 5000) -> list[dict[str, Any]]:
+    return fetch_all(
+        """
+        SELECT
+            timestamp_utc,
+            scan_id,
+            scan_source,
+            market_phase,
+            scan_execution_time_ms,
+            mode,
+            account_size,
+            current_open_positions,
+            current_open_exposure,
+            timing_ok,
+            source,
+            trade_count,
+            top_name,
+            top_symbol,
+            current_price,
+            entry,
+            stop,
+            target,
+            shares,
+            confidence,
+            reason,
+            benchmark_sp500,
+            benchmark_nasdaq,
+            paper_trade_enabled,
+            paper_trade_candidate_count,
+            paper_trade_long_candidate_count,
+            paper_trade_short_candidate_count,
+            paper_trade_placed_count,
+            paper_trade_placed_long_count,
+            paper_trade_placed_short_count,
+            paper_candidate_symbols,
+            paper_candidate_confidences,
+            paper_skipped_symbols,
+            paper_skip_reasons,
+            paper_placed_symbols,
+            paper_trade_ids
+        FROM signal_logs
+        ORDER BY timestamp_utc ASC, id ASC
+        LIMIT %(limit)s
+        """,
+        {"limit": limit},
+    )
+
+
+def get_trade_event_rows_for_date(target_date: str, limit: int = 1000) -> list[dict[str, Any]]:
+    return fetch_all(
+        """
+        SELECT
+            event_time AS timestamp_utc,
+            event_type,
+            symbol,
+            mode,
+            COALESCE(side, '') AS side,
+            COALESCE(shares::text, '') AS shares,
+            COALESCE(price::text, '') AS price,
+            COALESCE(order_id, '') AS broker_order_id,
+            COALESCE(parent_order_id, '') AS broker_parent_order_id,
+            COALESCE(status, '') AS status
+        FROM trade_events
+        WHERE event_time::date = %(target_date)s::date
+        ORDER BY event_time ASC, id ASC
+        LIMIT %(limit)s
+        """,
+        {"target_date": target_date, "limit": limit},
+    )
+
+
 
 def get_trade_event_counts_by_type() -> list[dict[str, Any]]:
     return fetch_all(
@@ -1300,6 +1552,67 @@ def get_trade_lifecycles(limit: int = 100, status: Optional[str] = None) -> list
         LIMIT %(limit)s
         """,
         {"limit": limit},
+    )
+
+
+def get_recent_closed_trade_lifecycle_for_symbol(symbol: str) -> Optional[dict[str, Any]]:
+    normalized_symbol = str(symbol or "").strip().upper()
+    if not normalized_symbol:
+        return None
+
+    return fetch_one(
+        """
+        SELECT *
+        FROM trade_lifecycles
+        WHERE UPPER(symbol) = %(symbol)s
+          AND UPPER(COALESCE(status, '')) = 'CLOSED'
+        ORDER BY COALESCE(exit_time, updated_at, created_at) DESC, id DESC
+        LIMIT 1
+        """,
+        {"symbol": normalized_symbol},
+    )
+
+
+def get_latest_open_trade_lifecycle(
+    symbol: str,
+    *,
+    parent_order_id: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    normalized_symbol = str(symbol or "").strip().upper()
+    normalized_parent_order_id = str(parent_order_id or "").strip()
+
+    if not normalized_symbol:
+        return None
+
+    if normalized_parent_order_id:
+        row = fetch_one(
+            """
+            SELECT *
+            FROM trade_lifecycles
+            WHERE UPPER(symbol) = %(symbol)s
+              AND UPPER(COALESCE(status, '')) = 'OPEN'
+              AND COALESCE(parent_order_id, '') = %(parent_order_id)s
+            ORDER BY COALESCE(entry_time, updated_at, created_at) DESC, id DESC
+            LIMIT 1
+            """,
+            {
+                "symbol": normalized_symbol,
+                "parent_order_id": normalized_parent_order_id,
+            },
+        )
+        if row:
+            return row
+
+    return fetch_one(
+        """
+        SELECT *
+        FROM trade_lifecycles
+        WHERE UPPER(symbol) = %(symbol)s
+          AND UPPER(COALESCE(status, '')) = 'OPEN'
+        ORDER BY COALESCE(entry_time, updated_at, created_at) DESC, id DESC
+        LIMIT 1
+        """,
+        {"symbol": normalized_symbol},
     )
 
 

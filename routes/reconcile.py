@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from flask import jsonify
+from logging_utils import log_exception, log_warning
 
 
 def register_reconcile_routes(
@@ -25,14 +26,14 @@ def register_reconcile_routes(
             total_rows = int(result.get("total_rows", len(reconciled_rows)) or 0)
             severity = result.get("severity")
         except Exception as e:
-            print(f"Paper reconciliation failed: {e}", flush=True)
+            log_exception("Paper reconciliation failed", e, route="/reconcile-paper-trades")
             return jsonify({"ok": False, "error": str(e)}), 500
 
         gcs_uri = ""
         try:
             gcs_uri = upload_file_to_gcs(output_path, reconciliation_bucket, reconciliation_object)
         except Exception as e:
-            print(f"Paper reconciliation upload failed: {e}", flush=True)
+            log_warning("Paper reconciliation upload failed", route="/reconcile-paper-trades", error=str(e))
 
         unmatched_count = mismatch_count
         matched_count = max(total_rows - unmatched_count, 0)
@@ -59,7 +60,7 @@ def register_reconcile_routes(
             )
             run_id = row["id"] if row else None
         except Exception as e:
-            print(f"Failed to fetch reconciliation run id: {e}", flush=True)
+            log_exception("Failed to fetch reconciliation run id", e, route="/reconcile-paper-trades")
 
         for row in reconciled_rows:
             try:
@@ -86,7 +87,7 @@ def register_reconcile_routes(
                     match_status=row.get("match_status"),
                 )
             except Exception as e:
-                print(f"Reconciliation detail insert failed: {e}", flush=True)
+                log_exception("Reconciliation detail insert failed", e, route="/reconcile-paper-trades")
         return jsonify({
             "ok": True,
             "row_count": len(reconciled_rows),
@@ -106,7 +107,7 @@ def register_reconcile_routes(
                 **summary,
             })
         except Exception as e:
-            print(f"Reconciliation summary read failed: {e}", flush=True)
+            log_exception("Reconciliation summary read failed", e, route="/reconcile-summary")
             return jsonify({"ok": False, "error": str(e)}), 500
 
     @app.get("/reconciliation-mismatches")
@@ -138,5 +139,5 @@ def register_reconcile_routes(
                 "rows": rows,
             })
         except Exception as e:
-            print(f"Reconciliation mismatch read failed: {e}", flush=True)
+            log_exception("Reconciliation mismatch read failed", e, route="/reconciliation-mismatches")
             return jsonify({"ok": False, "error": str(e)}), 500

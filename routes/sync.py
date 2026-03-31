@@ -1,6 +1,7 @@
 
 
 from flask import jsonify
+from logging_utils import log_exception
 
 
 
@@ -16,5 +17,5 @@ def register_sync_routes(app, *, sync_paper_trades_handler) -> None:
                 return jsonify(result)
             return jsonify({"ok": True, "result": result})
         except Exception as e:
-            print(f"sync-paper-trades failed: {e}", flush=True)
+            log_exception("sync-paper-trades failed", e, route="/sync-paper-trades")
             return jsonify({"ok": False, "error": str(e)}), 500

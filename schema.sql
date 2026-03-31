@@ -11,6 +11,48 @@ CREATE TABLE IF NOT EXISTS scan_runs (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Signal logs: detailed scan/signal rows used for matching and analysis
+CREATE TABLE IF NOT EXISTS signal_logs (
+    id SERIAL PRIMARY KEY,
+    timestamp_utc TIMESTAMPTZ NOT NULL,
+    scan_id TEXT,
+    scan_source TEXT,
+    market_phase TEXT,
+    scan_execution_time_ms INT,
+    mode TEXT,
+    account_size NUMERIC,
+    current_open_positions INT,
+    current_open_exposure NUMERIC,
+    timing_ok BOOLEAN,
+    source TEXT,
+    trade_count INT,
+    top_name TEXT,
+    top_symbol TEXT,
+    current_price NUMERIC,
+    entry NUMERIC,
+    stop NUMERIC,
+    target NUMERIC,
+    shares NUMERIC,
+    confidence NUMERIC,
+    reason TEXT,
+    benchmark_sp500 NUMERIC,
+    benchmark_nasdaq NUMERIC,
+    paper_trade_enabled BOOLEAN,
+    paper_trade_candidate_count INT,
+    paper_trade_long_candidate_count INT,
+    paper_trade_short_candidate_count INT,
+    paper_trade_placed_count INT,
+    paper_trade_placed_long_count INT,
+    paper_trade_placed_short_count INT,
+    paper_candidate_symbols TEXT,
+    paper_candidate_confidences TEXT,
+    paper_skipped_symbols TEXT,
+    paper_skip_reasons TEXT,
+    paper_placed_symbols TEXT,
+    paper_trade_ids TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Trade events: append-only log of all trade actions
 CREATE TABLE IF NOT EXISTS trade_events (
     id SERIAL PRIMARY KEY,
@@ -83,6 +125,8 @@ CREATE TABLE IF NOT EXISTS reconciliation_details (
 CREATE INDEX IF NOT EXISTS idx_trade_events_symbol ON trade_events(symbol);
 CREATE INDEX IF NOT EXISTS idx_trade_events_time ON trade_events(event_time);
 CREATE INDEX IF NOT EXISTS idx_scan_runs_time ON scan_runs(scan_time);
+CREATE INDEX IF NOT EXISTS idx_signal_logs_timestamp ON signal_logs(timestamp_utc);
+CREATE INDEX IF NOT EXISTS idx_signal_logs_top_symbol ON signal_logs(top_symbol);
 CREATE INDEX IF NOT EXISTS idx_broker_orders_order_id ON broker_orders(order_id);
 
 CREATE INDEX IF NOT EXISTS idx_reconciliation_details_run_id ON reconciliation_details(run_id);

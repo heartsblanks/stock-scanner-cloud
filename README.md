@@ -12,6 +12,7 @@ Cloud-native trading workflow system for scanning markets, executing Alpaca pape
 - Places and manages **Alpaca paper trades**
 - Syncs open/closed positions and detects exits
 - Stores data in **PostgreSQL (Cloud SQL)**
+- Stores detailed scan signal rows in **PostgreSQL**
 - Builds **trade lifecycle analytics**
 - Runs reconciliation between local and broker data
 - Exports daily snapshots and backs them up to **GitHub**
@@ -144,6 +145,7 @@ Features:
 ## 💾 Database
 
 Main tables:
+- `signal_logs`
 - `trade_events`
 - `trade_lifecycles`
 - `broker_orders`
@@ -170,6 +172,8 @@ Flow:
 2. clone GitHub repo
 3. copy snapshot files
 4. commit + push
+
+Snapshots are DB-derived and no longer depend on operational `signals.csv` or `trades.csv` log files.
 
 ---
 

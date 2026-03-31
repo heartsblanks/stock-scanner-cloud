@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from flask import jsonify, request
+from logging_utils import log_exception, log_warning
 
 
 def _normalize_trade_key(symbol: str, broker_parent_order_id: str, broker_order_id: str) -> str:
@@ -209,7 +210,7 @@ def register_trade_routes(
                 try:
                     inference = infer_first_level_hit(open_row, timestamp_utc)
                 except Exception as e:
-                    print(f"Inference failed for {symbol}: {e}", flush=True)
+                    log_warning("Inference failed", route="/log-trade", symbol=symbol, event_type=event_type, error=str(e))
 
             entry_price = ""
             stop_price = linked_signal_stop
@@ -236,7 +237,7 @@ def register_trade_routes(
                 try:
                     inference = infer_first_level_hit(open_row, timestamp_utc)
                 except Exception as e:
-                    print(f"Inference failed for {symbol}: {e}", flush=True)
+                    log_warning("Inference failed", route="/log-trade", symbol=symbol, event_type=event_type, error=str(e))
 
             entry_price = ""
             stop_price = linked_signal_stop
@@ -371,7 +372,7 @@ def register_trade_routes(
                     exit_order_id=broker_exit_order_id,
                 )
         except Exception as e:
-            print(f"Trade log write failed: {e}", flush=True)
+            log_exception("Trade log write failed", e, route="/log-trade", symbol=symbol, event_type=event_type)
             return jsonify({"ok": False, "error": f"trade log write failed: {e}"}), 500
 
         return jsonify({
@@ -408,7 +409,7 @@ def register_trade_routes(
             result = close_all_paper_positions()
             return jsonify({"ok": True, **result})
         except Exception as e:
-            print(f"close-paper-positions failed: {e}", flush=True)
+            log_exception("close-paper-positions failed", e, route="/close-paper-positions")
             return jsonify({"ok": False, "error": str(e)}), 500
 
     @app.post("/read-trades-by-date")
@@ -422,7 +423,7 @@ def register_trade_routes(
         try:
             rows = read_trade_rows_for_date(target_date)
         except Exception as e:
-            print(f"Trade log read failed: {e}", flush=True)
+            log_exception("Trade log read failed", e, route="/read-trades-by-date", target_date=target_date)
             return jsonify({"ok": False, "error": f"trade log read failed: {e}"}), 500
 
         formatted_lines = [f"Trade Log for {target_date}"]
@@ -465,7 +466,7 @@ def register_trade_routes(
                 "rows": rows,
             })
         except Exception as e:
-            print(f"open-trades failed: {e}", flush=True)
+            log_exception("open-trades failed", e, route="/open-trades")
             return jsonify({"ok": False, "error": str(e)}), 500
 
 
@@ -480,7 +481,7 @@ def register_trade_routes(
                 "rows": rows,
             })
         except Exception as e:
-            print(f"closed-trades failed: {e}", flush=True)
+            log_exception("closed-trades failed", e, route="/closed-trades")
             return jsonify({"ok": False, "error": str(e)}), 500
 
 
@@ -495,7 +496,7 @@ def register_trade_routes(
                 "rows": rows,
             })
         except Exception as e:
-            print(f"recent-trades failed: {e}", flush=True)
+            log_exception("recent-trades failed", e, route="/recent-trades")
             return jsonify({"ok": False, "error": str(e)}), 500
 
 
@@ -508,7 +509,7 @@ def register_trade_routes(
                 **summary,
             })
         except Exception as e:
-            print(f"latest-scan-summary failed: {e}", flush=True)
+            log_exception("latest-scan-summary failed", e, route="/latest-scan-summary")
             return jsonify({"ok": False, "error": str(e)}), 500
 
 
@@ -533,7 +534,7 @@ def register_trade_routes(
                 "rows": rows,
             })
         except Exception as e:
-            print(f"trade-lifecycle failed: {e}", flush=True)
+            log_exception("trade-lifecycle failed", e, route="/trade-lifecycle")
             return jsonify({"ok": False, "error": str(e)}), 500
 
 
@@ -555,5 +556,5 @@ def register_trade_routes(
                 **summary,
             })
         except Exception as e:
-            print(f"trade-lifecycle-summary failed: {e}", flush=True)
+            log_exception("trade-lifecycle-summary failed", e, route="/trade-lifecycle-summary")
             return jsonify({"ok": False, "error": str(e)}), 500

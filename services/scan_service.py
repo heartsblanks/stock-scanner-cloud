@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Callable
 import os
+from logging_utils import log_exception, log_info
 
 # NOTE: requires implementation
 # def get_recent_closed_trades_for_symbol(symbol: str, limit: int = 5) -> list[dict]
@@ -86,17 +87,19 @@ def _get_live_alpaca_account_equity(payload: dict[str, Any]) -> float:
     try:
         account_getters: list[Callable[[], Any]] = []
 
-        try:
-            from services.paper_alpaca import get_account as _get_account  # type: ignore
-            account_getters.append(_get_account)
-        except Exception:
-            pass
+        for module_name in ("paper_alpaca", "services.paper_alpaca"):
+            try:
+                module = __import__(module_name, fromlist=["get_account", "get_paper_account"])
+            except Exception:
+                continue
 
-        try:
-            from services.paper_alpaca import get_paper_account as _get_paper_account  # type: ignore
-            account_getters.append(_get_paper_account)
-        except Exception:
-            pass
+            get_account = getattr(module, "get_account", None)
+            if callable(get_account):
+                account_getters.append(get_account)
+
+            get_paper_account = getattr(module, "get_paper_account", None)
+            if callable(get_paper_account):
+                account_getters.append(get_paper_account)
 
         for getter in account_getters:
             try:
@@ -309,7 +312,7 @@ def execute_full_scan(
                 "paper_trade_ids": "",
             })
         except Exception as e:
-            print(f"Signal log write failed: {e}", flush=True)
+            log_exception("Signal log write failed", e, component="scan_service", operation="execute_full_scan", mode=mode)
         safe_insert_scan_run(
             scan_time=parse_iso_utc(timestamp_utc),
             mode=mode,
@@ -336,7 +339,7 @@ def execute_full_scan(
         current_open_exposure=current_open_exposure,
     )
     try:
-        print(f"[SIZING] Using live Alpaca equity/account_size: {account_size}", flush=True)
+        log_info("Using live Alpaca equity/account_size", component="scan_service", operation="execute_full_scan", account_size=account_size, mode=mode)
     except Exception:
         pass
     trades = [t for t in all_trades if t["metrics"].get("direction") == "BUY"]
@@ -706,7 +709,14 @@ def execute_full_scan(
                         skipped_symbols.append(candidate_symbol)
                         skip_reasons.append(f"{candidate_symbol}:{paper_trade_result.get('reason', 'not_placed')}")
                 except Exception as e:
-                    print(f"Paper trade placement failed: {e}", flush=True)
+                    log_exception(
+                        "Paper trade placement failed",
+                        e,
+                        component="scan_service",
+                        operation="execute_full_scan",
+                        symbol=candidate_symbol,
+                        mode=mode,
+                    )
                     paper_results.append({
                         "attempted": True,
                         "placed": False,
@@ -805,7 +815,7 @@ def execute_full_scan(
             "paper_trade_ids": paper_trade_ids,
         })
     except Exception as e:
-        print(f"Signal log write failed: {e}", flush=True)
+        log_exception("Signal log write failed", e, component="scan_service", operation="execute_full_scan", mode=mode)
     safe_insert_scan_run(
         scan_time=parse_iso_utc(timestamp_utc),
         mode=mode,

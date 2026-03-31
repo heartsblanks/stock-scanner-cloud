@@ -1,4 +1,5 @@
 from flask import jsonify, request
+from logging_utils import log_exception
 
 
 
@@ -20,7 +21,7 @@ def register_dashboard_routes(app, *, get_dashboard_summary, get_alpaca_open_pos
                 "insights": summary.get("insights"),
             })
         except Exception as e:
-            print(f"dashboard-summary failed: {e}", flush=True)
+            log_exception("dashboard-summary failed", e, route="/dashboard-summary")
             return jsonify({"ok": False, "error": str(e)}), 500
 
     @app.get("/alpaca-open-positions")
@@ -36,7 +37,7 @@ def register_dashboard_routes(app, *, get_dashboard_summary, get_alpaca_open_pos
                 "count": len(positions or []),
             })
         except Exception as e:
-            print(f"alpaca-open-positions failed: {e}", flush=True)
+            log_exception("alpaca-open-positions failed", e, route="/alpaca-open-positions")
             return jsonify({"ok": False, "error": str(e)}), 500
 
     @app.get("/risk-exposure-summary")
@@ -51,5 +52,5 @@ def register_dashboard_routes(app, *, get_dashboard_summary, get_alpaca_open_pos
                 "summary": summary,
             })
         except Exception as e:
-            print(f"risk-exposure-summary failed: {e}", flush=True)
+            log_exception("risk-exposure-summary failed", e, route="/risk-exposure-summary")
             return jsonify({"ok": False, "error": str(e)}), 500

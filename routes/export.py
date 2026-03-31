@@ -1,4 +1,5 @@
 from flask import jsonify
+from logging_utils import log_exception
 
 
 def register_export_routes(app, *, run_daily_snapshot) -> None:
@@ -8,5 +9,5 @@ def register_export_routes(app, *, run_daily_snapshot) -> None:
             result = run_daily_snapshot()
             return jsonify(result)
         except Exception as e:
-            print(f"Daily snapshot export failed: {e}", flush=True)
+            log_exception("Daily snapshot export failed", e, route="/export-daily-snapshot")
             return jsonify({"ok": False, "error": str(e)}), 500
