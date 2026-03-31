@@ -259,6 +259,14 @@ def infer_alpaca_exit(order: dict[str, Any]) -> tuple[str, float | None, float |
     return "UNKNOWN", None, None, ""
 
 
+# Helper to normalize exit reasons so MANUAL_CLOSE and EXTERNAL_EXIT are treated as equivalent
+def normalize_exit_reason(reason: Any) -> str:
+    normalized = str(reason or "").strip().upper()
+    if normalized in {"MANUAL_CLOSE", "EXTERNAL_EXIT"}:
+        return "EXTERNAL_EXIT"
+    return normalized
+
+
 def build_alpaca_index(orders: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     index: dict[str, dict[str, Any]] = {}
     for order in orders:
@@ -339,10 +347,13 @@ def build_reconciliation_detail_row(pair: LocalTradePair, order: dict[str, Any] 
         else ""
     )
 
+    normalized_local_exit_reason = normalize_exit_reason(pair.exit_reason)
+    normalized_alpaca_exit_reason = normalize_exit_reason(alpaca_exit_reason)
+
     match_status = "matched"
-    if alpaca_exit_reason == "UNKNOWN":
+    if normalized_alpaca_exit_reason == "UNKNOWN":
         match_status = "exit_not_resolved"
-    elif pair.exit_reason and alpaca_exit_reason and pair.exit_reason != alpaca_exit_reason:
+    elif normalized_local_exit_reason and normalized_alpaca_exit_reason and normalized_local_exit_reason != normalized_alpaca_exit_reason:
         match_status = "exit_reason_mismatch"
     elif pair.shares is not None and alpaca_entry_qty is not None and abs(pair.shares - alpaca_entry_qty) > 1e-9:
         match_status = "entry_qty_mismatch"
