@@ -31,7 +31,7 @@ The goal is to make requirements explicit first, so that new work can be added i
 
 Primary hosting and infrastructure:
 - **Compute:** Google Cloud Run
-- **Database:** Cloud SQL for PostgreSQL
+- **Database:** Neon-hosted PostgreSQL
 - **Scheduling:** Google Cloud Scheduler
 - **Storage/Exports:** local runtime export staging and GitHub snapshot backup
 - **Frontend:** React/Vite dashboard UI
@@ -53,7 +53,7 @@ Market Scan Schedulers
   Application Services            Export / Analysis Services
         |                               |
         v                               v
- PostgreSQL (Cloud SQL)          Snapshot / GitHub Backup
+ PostgreSQL (Neon)               Snapshot / GitHub Backup
         |
         v
  Dashboard API Endpoints

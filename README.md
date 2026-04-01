@@ -11,7 +11,7 @@ Cloud-native trading workflow system for scanning markets, executing Alpaca pape
 - Schedules market scans and generates trade candidates
 - Places and manages **Alpaca paper trades**
 - Syncs open/closed positions and detects exits
-- Stores data in **PostgreSQL (Cloud SQL)**
+- Stores data in **PostgreSQL (Neon)**
 - Stores detailed scan signal rows in **PostgreSQL**
 - Builds **trade lifecycle analytics**
 - Runs reconciliation between local and broker data
@@ -24,7 +24,7 @@ Cloud-native trading workflow system for scanning markets, executing Alpaca pape
 
 - **Backend:** Python (Flask)
 - **Frontend:** React + Vite
-- **Database:** PostgreSQL (Cloud SQL)
+- **Database:** PostgreSQL (Neon)
 - **Compute:** Google Cloud Run
 - **Scheduling:** Google Cloud Scheduler
 - **CI/CD:** Google Cloud Build
@@ -94,7 +94,7 @@ docker run -p 8080:8080 stock-scanner-cloud
 
 ## ☁️ Cloud Deployment
 
-Deployed via **Google Cloud Build → Cloud Run**.
+Deployed via **Google Cloud Build → Cloud Run** with a hosted PostgreSQL database on Neon.
 
 ```bash
 gcloud builds submit --tag gcr.io/<PROJECT_ID>/stock-scanner
