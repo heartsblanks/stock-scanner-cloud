@@ -39,7 +39,7 @@ export default function ReconciliationSection({
           {sectionLoading.reconciliation && <div className="dashboard-empty">Loading reconciliation...</div>}
           {sectionErrors.reconciliation && <div className="dashboard-error">{sectionErrors.reconciliation}</div>}
           {lastUpdated && (
-            <div className="dashboard-inline-meta" style={{ marginTop: 0 }}>
+            <div className="dashboard-inline-meta dashboard-inline-meta-tight">
               <span className="dashboard-pill">Data refreshed at: {new Date(lastUpdated).toLocaleString()}</span>
             </div>
           )}
@@ -91,12 +91,15 @@ export default function ReconciliationSection({
                 </span>
               </div>
 
-              <div className="dashboard-section">
-                <div className="dashboard-panel-heading">
+              <div className="dashboard-subsection">
+                <div className="dashboard-subsection-heading">
                   <div>
-                    <h3>Reconciliation Details</h3>
+                    <h3 className="dashboard-subsection-title">Reconciliation Details</h3>
+                    <p className="dashboard-subsection-copy">
+                      Inspect mismatch rows and narrow them quickly by symbol when a run needs follow-up.
+                    </p>
                   </div>
-                  <div className="dashboard-field" style={{ minWidth: 180 }}>
+                  <div className="dashboard-field dashboard-field-compact dashboard-reconciliation-filter">
                     <label htmlFor="reconciliation-symbol-filter">Symbol</label>
                     <select
                       id="reconciliation-symbol-filter"
@@ -124,10 +127,13 @@ export default function ReconciliationSection({
                 <ReconciliationDetailsTable rows={filteredReconciliationDetails} />
               </div>
 
-              <div className="dashboard-section">
-                <div className="dashboard-panel-heading">
+              <div className="dashboard-subsection">
+                <div className="dashboard-subsection-heading">
                   <div>
-                    <h3>Reconciliation History</h3>
+                    <h3 className="dashboard-subsection-title">Reconciliation History</h3>
+                    <p className="dashboard-subsection-copy">
+                      Recent stored runs so you can see whether mismatch pressure is rising or settling down.
+                    </p>
                   </div>
                 </div>
                 <ReconciliationHistoryTable rows={reconciliationHistory || []} />
