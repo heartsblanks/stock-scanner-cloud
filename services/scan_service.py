@@ -218,7 +218,47 @@ def _apply_confidence_loss_sizing(
     metrics["per_trade_notional"] = round(adjusted_notional, 4)
     metrics["actual_position_cost"] = round(adjusted_shares * entry_price, 4)
     metrics["actual_risk"] = round(adjusted_shares * _to_float(metrics.get("risk_per_share"), 0.0), 4)
-    
+
+
+def _apply_hard_notional_cap(metrics: dict[str, Any]) -> None:
+    entry_price = _to_float(metrics.get("entry"), 0.0)
+    if entry_price <= 0:
+        return
+
+    remaining_allocatable_capital = _to_float(metrics.get("remaining_allocatable_capital"), 0.0)
+    configured_hard_cap = _to_float(os.getenv("ALPACA_MAX_NOTIONAL"), 0.0)
+
+    hard_cap_candidates = [value for value in (remaining_allocatable_capital, configured_hard_cap) if value > 0]
+    if not hard_cap_candidates:
+        return
+
+    max_allowed_notional = min(hard_cap_candidates)
+    current_notional = _to_float(metrics.get("per_trade_notional"), 0.0)
+    if current_notional <= 0:
+        return
+
+    capped_notional = min(current_notional, max_allowed_notional)
+    capped_shares = int(capped_notional / entry_price)
+
+    metrics["hard_max_notional"] = round(max_allowed_notional, 4)
+
+    if capped_shares <= 0:
+        metrics["shares"] = 0
+        metrics["per_trade_notional"] = round(capped_notional, 4)
+        metrics["adjusted_per_trade_notional"] = round(capped_notional, 4)
+        metrics["actual_position_cost"] = 0.0
+        metrics["actual_risk"] = 0.0
+        return
+
+    final_notional = capped_shares * entry_price
+    metrics["shares"] = capped_shares
+    metrics["per_trade_notional"] = round(final_notional, 4)
+    metrics["adjusted_per_trade_notional"] = round(final_notional, 4)
+    metrics["notional_capped_shares"] = capped_shares
+    metrics["actual_position_cost"] = round(final_notional, 4)
+    metrics["actual_risk"] = round(capped_shares * _to_float(metrics.get("risk_per_share"), 0.0), 4)
+
+
 def execute_scan_request(payload: dict[str, Any], *, handler: Callable[[dict[str, Any]], Any]) -> Any:
     return handler(payload)
 
@@ -620,6 +660,7 @@ def execute_full_scan(
                     loss_multiplier=loss_multiplier,
                     final_multiplier=final_multiplier,
                 )
+                _apply_hard_notional_cap(paper_trade_candidate["metrics"])
                 # --- Expose multipliers at response level (latest candidate wins) ---
                 try:
                     response["confidence_multiplier"] = round(confidence_multiplier, 4)
@@ -679,6 +720,7 @@ def execute_full_scan(
                         loss_multiplier=loss_multiplier,
                         final_multiplier=final_multiplier,
                     )
+                    _apply_hard_notional_cap(paper_metrics)
                     _apply_minimum_viable_position_sizing(paper_metrics)
 
                 if _to_int(paper_metrics.get("shares"), 0) <= 0:

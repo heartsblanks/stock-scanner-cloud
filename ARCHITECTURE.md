@@ -183,6 +183,7 @@ Current paper-trading config defaults:
 - `PAPER_TRADE_MAX_POSITIONS=10` as the dormant future cap when the flag is re-enabled
 - instrument watchlists are intentionally split across multiple categories to stay below the per-category Twelve Data symbol ceiling
 - these values are now carried through deployment config in `cloudbuild.yaml`, so future changes can be made at deploy-time without editing strategy logic
+- placement sizing is additionally clamped by `ALPACA_MAX_NOTIONAL`, so confidence-based sizing cannot expand a paper trade above the broker-side per-trade hard cap
 
 ---
 

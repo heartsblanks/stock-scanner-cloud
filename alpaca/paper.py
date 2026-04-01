@@ -70,13 +70,25 @@ def _to_float(value: Any, default: float = 0.0) -> float:
 
 
 def _resolve_trade_notional_limit(trade: dict, explicit_max_notional: float | None) -> float:
+    hard_cap_candidates: list[float] = []
     if explicit_max_notional is not None:
-        return float(explicit_max_notional)
+        hard_cap_candidates.append(float(explicit_max_notional))
+
+    if ALPACA_MAX_NOTIONAL > 0:
+        hard_cap_candidates.append(ALPACA_MAX_NOTIONAL)
 
     metrics = trade.get("metrics", {}) if isinstance(trade, dict) else {}
     per_trade_notional = _to_float(metrics.get("per_trade_notional"), 0.0)
+    remaining_allocatable_capital = _to_float(metrics.get("remaining_allocatable_capital"), 0.0)
+
+    if remaining_allocatable_capital > 0:
+        hard_cap_candidates.append(remaining_allocatable_capital)
+
     if per_trade_notional > 0:
-        return per_trade_notional
+        hard_cap_candidates.append(per_trade_notional)
+
+    if hard_cap_candidates:
+        return min(value for value in hard_cap_candidates if value > 0)
 
     return ALPACA_MAX_NOTIONAL
 
