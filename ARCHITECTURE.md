@@ -110,6 +110,8 @@ Architecture documentation is updated alongside implementation so the document r
    - continue the same cleanup for export-related modules by consolidating them under `exports/`
    - continue the same cleanup for trading analysis and scan logic by consolidating them under `analytics/`
    - fold the remaining top-level Alpaca wrappers into the existing `alpaca/` package so broker integration code lives in one place
+   - consolidate scan, paper-trade, scheduler, and app-level orchestration helpers under `orchestration/`
+   - remove dead root-level files such as unused export utilities
 
 3. **Ops / cloud cleanup**
    - keep Neon as the active production database
@@ -158,11 +160,14 @@ Target direction:
 - `db.py` — PostgreSQL connection helpers
 - `storage.py` — thin compatibility facade over repository modules
 - `schema.sql` — database schema definition
-- `scan_context.py` — scan payload and scheduled scan context helpers
-- `paper_trade_context.py` — paper-trade state, cooldown, and risk helpers
-- `app_orchestration.py` — orchestration helpers shared by route handlers
-- `scheduler_ops.py` — consolidated scheduler decision and execution helpers
 - root-level files should stay limited to active runtime entrypoints and cross-cutting foundations
+
+### Orchestration helpers
+- `orchestration/`
+  - `scan_context.py`
+  - `paper_trade_context.py`
+  - `app_orchestration.py`
+  - `scheduler_ops.py`
 
 ### Domain/service modules
 - `services/scan_service.py`
@@ -211,6 +216,8 @@ Current code reality:
 - export-related runtime modules have now been consolidated under `exports/`, which reduces root-level noise without changing hot-path scan/sync behavior
 - analytics and scan modules have now been consolidated under `analytics/`, which makes the repository shape clearer without changing the service boundaries used by the runtime
 - Alpaca integration wrappers have now been folded into the existing `alpaca/` package, so broker code no longer spills across the repository root
+- orchestration and context helpers have now been consolidated under `orchestration/`, which leaves the repository root focused on app entrypoints and shared foundations
+- the unused `export_to_github.py` stub has been removed from the root
 
 ### Repository modules
 - `repositories/scans_repo.py`

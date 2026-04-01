@@ -1,6 +1,6 @@
 import unittest
 
-from app_orchestration import handle_scan_request
+from orchestration.app_orchestration import handle_scan_request
 
 
 class AppOrchestrationTests(unittest.TestCase):

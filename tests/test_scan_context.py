@@ -1,6 +1,6 @@
 import unittest
 
-from scan_context import paper_candidate_from_evaluation
+from orchestration.scan_context import paper_candidate_from_evaluation
 
 
 class ScanContextTests(unittest.TestCase):
@@ -76,4 +76,3 @@ class ScanContextTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

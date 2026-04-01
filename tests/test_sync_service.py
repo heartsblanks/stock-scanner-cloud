@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock
 
-from scan_context import parse_iso_utc, to_float_or_none
+from orchestration.scan_context import parse_iso_utc, to_float_or_none
 from services.sync_service import execute_sync_paper_trades
 
 
@@ -66,4 +66,3 @@ class SyncServiceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
