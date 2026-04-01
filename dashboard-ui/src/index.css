@@ -602,6 +602,9 @@ code {
   border: 1px solid rgba(80, 62, 37, 0.1);
   box-shadow: var(--shadow-soft);
   min-width: 0;
+  position: sticky;
+  top: 18px;
+  z-index: 6;
 }
 
 .dashboard-drilldown-panel {
@@ -1161,6 +1164,10 @@ code {
 
   .dashboard-view-nav {
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+
+  .dashboard-view-nav-panel {
+    position: static;
   }
 
   .dashboard-subsection-heading {

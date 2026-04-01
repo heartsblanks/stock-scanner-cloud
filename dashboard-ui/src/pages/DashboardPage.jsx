@@ -51,8 +51,18 @@ function LazySection({ children }) {
   return <Suspense fallback={<div className="dashboard-empty">Loading section...</div>}>{children}</Suspense>;
 }
 
+function getInitialView() {
+  if (typeof window === "undefined") {
+    return "overview";
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const view = String(params.get("view") || "").trim().toLowerCase();
+  return DASHBOARD_VIEWS.some((item) => item.id === view) ? view : "overview";
+}
+
 export default function DashboardPage() {
-  const [activeView, setActiveView] = useState("overview");
+  const [activeView, setActiveView] = useState(getInitialView);
   const [drilldown, setDrilldown] = useState({ symbol: "", mode: "", hourUtc: "" });
   const [theme, setTheme] = useState(() => {
     if (typeof window === "undefined") {
@@ -162,6 +172,17 @@ export default function DashboardPage() {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem("dashboard-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    const viewLabel = DASHBOARD_VIEWS.find((view) => view.id === activeView)?.label || "Overview";
+    document.title = `${viewLabel} | Stock Scanner Console`;
+
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("view", activeView);
+      window.history.replaceState({}, "", url);
+    }
+  }, [activeView]);
 
   if (loading) {
     return <div className="dashboard-loading">Loading dashboard...</div>;
