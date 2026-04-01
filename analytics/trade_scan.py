@@ -8,6 +8,12 @@ from zoneinfo import ZoneInfo
 
 import pandas_market_calendars as mcal
 
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 MIN_CONFIDENCE = 75
 MAX_POSITIONS = 10
 MAX_CAPITAL_ALLOCATION_PCT = 0.50

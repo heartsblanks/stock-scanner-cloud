@@ -6,7 +6,7 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 try:
-    from trade_scan import evaluate_symbol
+    from analytics.trade_scan import evaluate_symbol
 except ModuleNotFoundError as exc:
     if exc.name == "requests":
         raise SkipTest("requests dependency is not available in this local unittest environment")

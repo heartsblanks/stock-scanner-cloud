@@ -7,8 +7,8 @@ from logging_utils import log_exception
 from paper_alpaca import place_paper_bracket_order_from_trade, get_open_positions, close_position, cancel_open_orders_for_symbol
 from alpaca_sync import sync_order_by_id, get_order_by_id
 from alpaca_reconcile import run_reconciliation, upload_file_to_gcs
-from trade_analysis import run_trade_analysis, upload_file_to_gcs as upload_analysis_file_to_gcs
-from signal_analysis import run_signal_analysis, upload_file_to_gcs as upload_signal_analysis_file_to_gcs
+from analytics.trade_analysis import run_trade_analysis, upload_file_to_gcs as upload_analysis_file_to_gcs
+from analytics.signal_analysis import run_signal_analysis, upload_file_to_gcs as upload_signal_analysis_file_to_gcs
 from db import healthcheck as db_healthcheck
 from storage import (
     insert_scan_run,
@@ -92,7 +92,7 @@ from services.sync_service import execute_sync_paper_trades
 from services.scan_service import execute_full_scan
 from services.trade_service import execute_close_all_paper_positions
 
-from trade_scan import (
+from analytics.trade_scan import (
     run_scan,
     evaluate_symbol,
     market_time_check,

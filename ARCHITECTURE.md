@@ -108,6 +108,7 @@ Architecture documentation is updated alongside implementation so the document r
    - either implement or remove the placeholder `services/paper_trade_service.py`
    - reduce root-directory clutter by moving maintenance, repair, and backfill utilities into `scripts/`
    - continue the same cleanup for export-related modules by consolidating them under `exports/`
+   - continue the same cleanup for trading analysis and scan logic by consolidating them under `analytics/`
 
 3. **Ops / cloud cleanup**
    - keep Neon as the active production database
@@ -188,8 +189,10 @@ Target direction:
 - `alpaca_reconcile.py`
 
 ### Analytics and export
-- `trade_analysis.py`
-- `signal_analysis.py`
+- `analytics/`
+  - `trade_analysis.py`
+  - `signal_analysis.py`
+  - `trade_scan.py`
 - `exports/`
   - `export_reports.py`
   - `export_daily_snapshot.py`
@@ -204,6 +207,7 @@ Target direction:
 Current code reality:
 - this cleanup is in progress; repair and backfill scripts are being moved out of the repository root first because they are low-risk and contribute heavily to perceived root-level sprawl
 - export-related runtime modules have now been consolidated under `exports/`, which reduces root-level noise without changing hot-path scan/sync behavior
+- analytics and scan modules have now been consolidated under `analytics/`, which makes the repository shape clearer without changing the service boundaries used by the runtime
 
 ### Repository modules
 - `repositories/scans_repo.py`
