@@ -56,16 +56,16 @@ export default function ReconciliationHistoryTable({ rows = [] }) {
 
               return (
                 <tr key={`${row.id || "run"}-${index}`} className={rowTone(status)}>
-                  <td className="dashboard-cell-strong">{formatValue(row.id)}</td>
-                  <td className="dashboard-cell-muted">{formatTimestamp(row.run_time || row.run_started_at)}</td>
-                  <td>
+                  <td data-label="Run ID" className="dashboard-cell-strong">{formatValue(row.id)}</td>
+                  <td data-label="Run Time" className="dashboard-cell-muted">{formatTimestamp(row.run_time || row.run_started_at)}</td>
+                  <td data-label="Status">
                     <span className={getStatusClass(status)}>{formatValue(status)}</span>
                   </td>
-                  <td>{formatNumber(mismatchCount, 0)}</td>
-                  <td>{formatNumber(matchedCount, 0)}</td>
-                  <td>{formatNumber(row.unmatched_count ?? row.unmatched_rows, 0)}</td>
-                  <td>{formatValue(row.notes)}</td>
-                  <td className="dashboard-cell-muted">
+                  <td data-label="Mismatch Count">{formatNumber(mismatchCount, 0)}</td>
+                  <td data-label="Matched Count">{formatNumber(matchedCount, 0)}</td>
+                  <td data-label="Unmatched Count">{formatNumber(row.unmatched_count ?? row.unmatched_rows, 0)}</td>
+                  <td data-label="Notes">{formatValue(row.notes)}</td>
+                  <td data-label="Created At" className="dashboard-cell-muted">
                     {formatTimestamp(row.created_at || row.run_completed_at)}
                   </td>
                 </tr>

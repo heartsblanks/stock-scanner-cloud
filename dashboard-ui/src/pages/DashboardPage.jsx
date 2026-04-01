@@ -1,17 +1,21 @@
 import SummaryCards from "../components/SummaryCards";
-import OpenTradesTable from "../components/OpenTradesTable";
-import TradeLifecycleTable from "../components/TradeLifecycleTable";
-import HourlyPerformanceChart from "../components/HourlyPerformanceChart";
-import SymbolPerformanceChart from "../components/SymbolPerformanceChart";
-import ModePerformanceChart from "../components/ModePerformanceChart";
 import DashboardFilters from "../components/DashboardFilters";
-import EquityCurveChart from "../components/EquityCurveChart";
 import InsightCard from "../components/InsightCard";
-import AlpacaApiLogsSection from "../components/dashboard/AlpacaApiLogsSection";
+import AttentionRequiredPanel from "../components/dashboard/AttentionRequiredPanel";
+import ExecutionInsightsSection from "../components/dashboard/ExecutionInsightsSection";
 import HealthOverviewSection from "../components/dashboard/HealthOverviewSection";
-import ReconciliationSection from "../components/dashboard/ReconciliationSection";
+import RefreshStatusPanel from "../components/dashboard/RefreshStatusPanel";
 import { useDashboardData } from "../hooks/useDashboardData";
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
+
+const OpenTradesTable = lazy(() => import("../components/OpenTradesTable"));
+const TradeLifecycleTable = lazy(() => import("../components/TradeLifecycleTable"));
+const EquityCurveChart = lazy(() => import("../components/EquityCurveChart"));
+const HourlyPerformanceChart = lazy(() => import("../components/HourlyPerformanceChart"));
+const SymbolPerformanceChart = lazy(() => import("../components/SymbolPerformanceChart"));
+const ModePerformanceChart = lazy(() => import("../components/ModePerformanceChart"));
+const AlpacaApiLogsSection = lazy(() => import("../components/dashboard/AlpacaApiLogsSection"));
+const ReconciliationSection = lazy(() => import("../components/dashboard/ReconciliationSection"));
 
 const DASHBOARD_VIEWS = [
   { id: "overview", label: "Overview", description: "Best for the first look each session." },
@@ -29,8 +33,27 @@ function formatCurrency(value) {
   return `$${Number(value).toFixed(2)}`;
 }
 
+function getEntryHourUtc(row) {
+  const timestamp = row?.entry_time || row?.timestamp_utc;
+  if (!timestamp) {
+    return null;
+  }
+
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return String(parsed.getUTCHours()).padStart(2, "0");
+}
+
+function LazySection({ children }) {
+  return <Suspense fallback={<div className="dashboard-empty">Loading section...</div>}>{children}</Suspense>;
+}
+
 export default function DashboardPage() {
   const [activeView, setActiveView] = useState("overview");
+  const [drilldown, setDrilldown] = useState({ symbol: "", mode: "", hourUtc: "" });
   const [theme, setTheme] = useState(() => {
     if (typeof window === "undefined") {
       return "light";
@@ -81,6 +104,16 @@ export default function DashboardPage() {
     lossMultiplier,
     finalSizingMultiplier,
     multiplierStatus,
+    topAttemptReasons,
+    stageCounts,
+    paperTradePlacementRate,
+    attentionItems,
+    nextRefreshAt,
+    autoRefreshActive,
+    refreshWindowLabel,
+    autoRefreshMarketTime,
+    paperTradeAttemptRejections,
+    paperTradeAttemptDailySummary,
     handleApplyFilters,
     refreshData,
     rerunReconciliation,
@@ -96,6 +129,34 @@ export default function DashboardPage() {
         : mismatchLabel === "CRITICAL"
           ? "dashboard-pill-danger"
           : "dashboard-pill-info";
+  const hasDrilldown = Boolean(drilldown.symbol || drilldown.mode || drilldown.hourUtc);
+
+  const filteredOpenTrades = openTrades.filter((row) => {
+    const symbolMatch = !drilldown.symbol || String(row?.symbol || "").trim().toUpperCase() === drilldown.symbol;
+    const modeMatch = !drilldown.mode || String(row?.mode || "").trim() === drilldown.mode;
+    const hourMatch = !drilldown.hourUtc || getEntryHourUtc(row) === drilldown.hourUtc;
+    return symbolMatch && modeMatch && hourMatch;
+  });
+
+  const filteredLifecycle = lifecycle.filter((row) => {
+    const symbolMatch = !drilldown.symbol || String(row?.symbol || "").trim().toUpperCase() === drilldown.symbol;
+    const modeMatch = !drilldown.mode || String(row?.mode || "").trim() === drilldown.mode;
+    const hourMatch = !drilldown.hourUtc || getEntryHourUtc(row) === drilldown.hourUtc;
+    return symbolMatch && modeMatch && hourMatch;
+  });
+
+  function applyDrilldown(nextDrilldown) {
+    setDrilldown((current) => ({
+      symbol: nextDrilldown.symbol ?? current.symbol,
+      mode: nextDrilldown.mode ?? current.mode,
+      hourUtc: nextDrilldown.hourUtc ?? current.hourUtc,
+    }));
+    setActiveView("trades");
+  }
+
+  function clearDrilldown() {
+    setDrilldown({ symbol: "", mode: "", hourUtc: "" });
+  }
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -240,8 +301,28 @@ export default function DashboardPage() {
             </div>
           </section>
 
+          {hasDrilldown && (
+            <section className="dashboard-drilldown-panel">
+              <div className="dashboard-view-nav-copy">
+                <div className="dashboard-banner-title">Active Drilldown</div>
+                <div className="dashboard-banner-copy">
+                  The trades view is narrowed by the selections you made from the overview cards or charts.
+                </div>
+              </div>
+              <div className="dashboard-inline-meta">
+                {drilldown.symbol && <span className="dashboard-pill">Symbol {drilldown.symbol}</span>}
+                {drilldown.mode && <span className="dashboard-pill">Mode {drilldown.mode}</span>}
+                {drilldown.hourUtc && <span className="dashboard-pill">Hour {drilldown.hourUtc}:00 UTC</span>}
+                <button type="button" className="dashboard-button dashboard-button-neutral" onClick={clearDrilldown}>
+                  Clear Drilldown
+                </button>
+              </div>
+            </section>
+          )}
+
           {activeView === "overview" && (
             <>
+              <AttentionRequiredPanel items={attentionItems} />
               <SummaryCards data={summary} />
               {sectionLoading.overview && <div className="dashboard-empty">Loading overview...</div>}
               {sectionErrors.overview && <div className="dashboard-error">{sectionErrors.overview}</div>}
@@ -265,29 +346,27 @@ export default function DashboardPage() {
                 lossMultiplier={lossMultiplier}
                 finalSizingMultiplier={finalSizingMultiplier}
                 multiplierStatus={multiplierStatus}
+                compact
               />
 
-              <section className="dashboard-section">
-                <div className="dashboard-panel dashboard-panel-strong">
-                  <div className="dashboard-panel-body">
-                    <div className="dashboard-panel-heading">
-                      <div>
-                        <h2 className="dashboard-panel-title">Performance Readouts</h2>
-                        <p className="dashboard-panel-subtitle">
-                          A quick read on where the system has been strongest by symbol, mode, exit pattern, and time of
-                          day.
-                        </p>
-                      </div>
-                    </div>
-                    <div className="dashboard-metrics-grid">
-                      <InsightCard title="Best Symbol" value={insights?.best_symbol?.symbol || "-"} />
-                      <InsightCard title="Best Mode" value={insights?.best_mode?.mode || "-"} />
-                      <InsightCard title="Most Common Exit" value={insights?.most_common_exit?.exit_reason || "-"} />
-                      <InsightCard title="Best Hour (UTC)" value={insights?.best_hour?.entry_hour_utc ?? "-"} />
-                    </div>
-                  </div>
-                </div>
-              </section>
+              <div className="dashboard-split">
+                <RefreshStatusPanel
+                  lastUpdated={lastUpdated}
+                  nextRefreshAt={nextRefreshAt}
+                  autoRefreshActive={autoRefreshActive}
+                  refreshWindowLabel={refreshWindowLabel}
+                  autoRefreshMarketTime={autoRefreshMarketTime}
+                />
+                <ExecutionInsightsSection
+                  sectionLoading={sectionLoading}
+                  sectionErrors={sectionErrors}
+                  paperTradePlacementRate={paperTradePlacementRate}
+                  stageCounts={stageCounts}
+                  topAttemptReasons={topAttemptReasons}
+                  paperTradeAttemptRejections={paperTradeAttemptRejections}
+                  paperTradeAttemptDailySummary={paperTradeAttemptDailySummary}
+                />
+              </div>
 
               <section className="dashboard-section">
                 <div className="dashboard-panel">
@@ -300,30 +379,9 @@ export default function DashboardPage() {
                         </p>
                       </div>
                     </div>
-                    <EquityCurveChart rows={equityCurve} />
-                  </div>
-                </div>
-              </section>
-
-              <section className="dashboard-section">
-                <div className="dashboard-panel">
-                  <div className="dashboard-panel-body">
-                    <div className="dashboard-panel-heading">
-                      <div>
-                        <h2 className="dashboard-panel-title">Overview Trends</h2>
-                        <p className="dashboard-panel-subtitle">
-                          A compact view of mode performance and the hours that are paying or fading.
-                        </p>
-                      </div>
-                    </div>
-                    <div className="dashboard-chart-grid">
-                      <div>
-                        <ModePerformanceChart rows={modePerformance} />
-                      </div>
-                      <div>
-                        <HourlyPerformanceChart rows={hourlyPerformance} />
-                      </div>
-                    </div>
+                    <LazySection>
+                      <EquityCurveChart rows={equityCurve} />
+                    </LazySection>
                   </div>
                 </div>
               </section>
@@ -343,7 +401,9 @@ export default function DashboardPage() {
                         </p>
                       </div>
                     </div>
-                    <OpenTradesTable trades={openTrades} />
+                    <LazySection>
+                      <OpenTradesTable trades={filteredOpenTrades} />
+                    </LazySection>
                   </div>
                 </div>
               </section>
@@ -359,7 +419,9 @@ export default function DashboardPage() {
                         </p>
                       </div>
                     </div>
-                    <TradeLifecycleTable rows={lifecycle} />
+                    <LazySection>
+                      <TradeLifecycleTable rows={filteredLifecycle} />
+                    </LazySection>
                   </div>
                 </div>
               </section>
@@ -367,28 +429,32 @@ export default function DashboardPage() {
           )}
 
           {activeView === "reconciliation" && (
-            <ReconciliationSection
-              sectionLoading={sectionLoading}
-              sectionErrors={sectionErrors}
-              lastUpdated={lastUpdated}
-              lastReconciliationStatus={lastReconciliationStatus}
-              lastReconciliationAt={lastReconciliationAt}
-              reconciliationSummary={reconciliationSummary}
-              reconciliationSymbolFilter={reconciliationSymbolFilter}
-              setReconciliationSymbolFilter={setReconciliationSymbolFilter}
-              reconciliationSymbols={reconciliationSymbols}
-              filteredReconciliationDetails={filteredReconciliationDetails}
-              reconciliationHistory={reconciliationHistory}
-            />
+            <LazySection>
+              <ReconciliationSection
+                sectionLoading={sectionLoading}
+                sectionErrors={sectionErrors}
+                lastUpdated={lastUpdated}
+                lastReconciliationStatus={lastReconciliationStatus}
+                lastReconciliationAt={lastReconciliationAt}
+                reconciliationSummary={reconciliationSummary}
+                reconciliationSymbolFilter={reconciliationSymbolFilter}
+                setReconciliationSymbolFilter={setReconciliationSymbolFilter}
+                reconciliationSymbols={reconciliationSymbols}
+                filteredReconciliationDetails={filteredReconciliationDetails}
+                reconciliationHistory={reconciliationHistory}
+              />
+            </LazySection>
           )}
 
           {activeView === "broker" && (
-            <AlpacaApiLogsSection
-              sectionLoading={sectionLoading}
-              sectionErrors={sectionErrors}
-              alpacaApiLogs={alpacaApiLogs}
-              alpacaApiErrors={alpacaApiErrors}
-            />
+            <LazySection>
+              <AlpacaApiLogsSection
+                sectionLoading={sectionLoading}
+                sectionErrors={sectionErrors}
+                alpacaApiLogs={alpacaApiLogs}
+                alpacaApiErrors={alpacaApiErrors}
+              />
+            </LazySection>
           )}
 
           {activeView === "analytics" && (
@@ -405,10 +471,47 @@ export default function DashboardPage() {
                       </div>
                     </div>
                     <div className="dashboard-metrics-grid">
-                      <InsightCard title="Best Symbol" value={insights?.best_symbol?.symbol || "-"} />
-                      <InsightCard title="Best Mode" value={insights?.best_mode?.mode || "-"} />
+                      <InsightCard
+                        title="Best Symbol"
+                        value={insights?.best_symbol?.symbol || "-"}
+                        interactive={Boolean(insights?.best_symbol?.symbol)}
+                        onClick={() =>
+                          insights?.best_symbol?.symbol &&
+                          applyDrilldown({
+                            symbol: String(insights.best_symbol.symbol).trim().toUpperCase(),
+                            mode: "",
+                            hourUtc: "",
+                          })
+                        }
+                      />
+                      <InsightCard
+                        title="Best Mode"
+                        value={insights?.best_mode?.mode || "-"}
+                        interactive={Boolean(insights?.best_mode?.mode)}
+                        onClick={() =>
+                          insights?.best_mode?.mode &&
+                          applyDrilldown({
+                            symbol: "",
+                            mode: String(insights.best_mode.mode).trim(),
+                            hourUtc: "",
+                          })
+                        }
+                      />
                       <InsightCard title="Most Common Exit" value={insights?.most_common_exit?.exit_reason || "-"} />
-                      <InsightCard title="Best Hour (UTC)" value={insights?.best_hour?.entry_hour_utc ?? "-"} />
+                      <InsightCard
+                        title="Best Hour (UTC)"
+                        value={insights?.best_hour?.entry_hour_utc ?? "-"}
+                        interactive={insights?.best_hour?.entry_hour_utc !== undefined && insights?.best_hour?.entry_hour_utc !== null}
+                        onClick={() =>
+                          insights?.best_hour?.entry_hour_utc !== undefined &&
+                          insights?.best_hour?.entry_hour_utc !== null &&
+                          applyDrilldown({
+                            symbol: "",
+                            mode: "",
+                            hourUtc: String(insights.best_hour.entry_hour_utc).padStart(2, "0"),
+                          })
+                        }
+                      />
                     </div>
                   </div>
                 </div>
@@ -427,14 +530,51 @@ export default function DashboardPage() {
                     </div>
                     <div className="dashboard-chart-grid">
                       <div>
-                        <SymbolPerformanceChart rows={symbolPerformance} />
+                        <LazySection>
+                          <SymbolPerformanceChart
+                            rows={symbolPerformance}
+                            onSymbolSelect={(symbol) =>
+                              symbol &&
+                              applyDrilldown({
+                                symbol: String(symbol).trim().toUpperCase(),
+                                mode: "",
+                                hourUtc: "",
+                              })
+                            }
+                          />
+                        </LazySection>
                       </div>
                       <div>
-                        <ModePerformanceChart rows={modePerformance} />
+                        <LazySection>
+                          <ModePerformanceChart
+                            rows={modePerformance}
+                            onModeSelect={(mode) =>
+                              mode &&
+                              applyDrilldown({
+                                symbol: "",
+                                mode: String(mode).trim(),
+                                hourUtc: "",
+                              })
+                            }
+                          />
+                        </LazySection>
                       </div>
                     </div>
                     <div style={{ marginTop: 20 }}>
-                      <HourlyPerformanceChart rows={hourlyPerformance} />
+                      <LazySection>
+                        <HourlyPerformanceChart
+                          rows={hourlyPerformance}
+                          onHourSelect={(hour) =>
+                            hour !== undefined &&
+                            hour !== null &&
+                            applyDrilldown({
+                              symbol: "",
+                              mode: "",
+                              hourUtc: String(hour).padStart(2, "0"),
+                            })
+                          }
+                        />
+                      </LazySection>
                     </div>
                   </div>
                 </div>
@@ -451,7 +591,9 @@ export default function DashboardPage() {
                         </p>
                       </div>
                     </div>
-                    <EquityCurveChart rows={equityCurve} />
+                    <LazySection>
+                      <EquityCurveChart rows={equityCurve} />
+                    </LazySection>
                   </div>
                 </div>
               </section>

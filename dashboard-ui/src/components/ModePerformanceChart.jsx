@@ -21,7 +21,7 @@ function PerformanceTooltip({ active, payload, label }) {
   );
 }
 
-export default function ModePerformanceChart({ rows }) {
+export default function ModePerformanceChart({ rows, onModeSelect }) {
   const data = Array.isArray(rows) ? rows : [];
 
   if (!data.length) {
@@ -58,7 +58,14 @@ export default function ModePerformanceChart({ rows }) {
               tickFormatter={formatCurrency}
             />
             <Tooltip content={<PerformanceTooltip />} cursor={{ fill: "rgba(15, 118, 110, 0.08)" }} />
-            <Bar dataKey="realized_pnl_total" name="P&L" fill="#0f766e" radius={[8, 8, 2, 2]} />
+            <Bar
+              dataKey="realized_pnl_total"
+              name="P&L"
+              fill="#0f766e"
+              radius={[8, 8, 2, 2]}
+              onClick={(payload) => onModeSelect?.(payload?.mode)}
+              style={{ cursor: onModeSelect ? "pointer" : "default" }}
+            />
           </BarChart>
         </ResponsiveContainer>
       </div>

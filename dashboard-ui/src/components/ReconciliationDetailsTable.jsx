@@ -62,27 +62,27 @@ export default function ReconciliationDetailsTable({ rows = [] }) {
           <tbody>
             {rows.map((row, index) => (
               <tr key={`${row.broker_parent_order_id || "row"}-${index}`} className={toneForMismatch(row)}>
-                <td>
+                <td data-label="Status">
                   <span className={getStatusClass(row.match_status)}>{formatValue(row.match_status)}</span>
                 </td>
-                <td className="dashboard-cell-strong">{formatValue(row.symbol)}</td>
-                <td>{formatValue(row.mode)}</td>
-                <td className="dashboard-cell-muted">{formatValue(row.broker_parent_order_id)}</td>
-                <td className="dashboard-cell-muted">{formatValue(row.client_order_id)}</td>
-                <td className="dashboard-cell-muted">{formatTimestamp(row.local_entry_timestamp_utc)}</td>
-                <td className="dashboard-cell-muted">{formatTimestamp(row.local_exit_timestamp_utc)}</td>
-                <td>{formatCurrency(row.local_entry_price)}</td>
-                <td>{formatCurrency(row.alpaca_entry_price)}</td>
-                <td>{formatCurrency(row.entry_price_diff)}</td>
-                <td>{formatCurrency(row.local_exit_price)}</td>
-                <td>{formatCurrency(row.alpaca_exit_price)}</td>
-                <td>{formatCurrency(row.exit_price_diff)}</td>
-                <td>{formatNumber(row.local_shares, 0)}</td>
-                <td>{formatNumber(row.alpaca_entry_qty, 0)}</td>
-                <td>{formatNumber(row.alpaca_exit_qty, 0)}</td>
-                <td>{formatValue(row.local_exit_reason)}</td>
-                <td>{formatValue(row.alpaca_exit_reason)}</td>
-                <td className="dashboard-cell-muted">{formatValue(row.alpaca_exit_order_id)}</td>
+                <td data-label="Symbol" className="dashboard-cell-strong">{formatValue(row.symbol)}</td>
+                <td data-label="Mode">{formatValue(row.mode)}</td>
+                <td data-label="Parent Order ID" className="dashboard-cell-muted">{formatValue(row.broker_parent_order_id)}</td>
+                <td data-label="Client Order ID" className="dashboard-cell-muted">{formatValue(row.client_order_id)}</td>
+                <td data-label="Local Entry Time" className="dashboard-cell-muted">{formatTimestamp(row.local_entry_timestamp_utc)}</td>
+                <td data-label="Local Exit Time" className="dashboard-cell-muted">{formatTimestamp(row.local_exit_timestamp_utc)}</td>
+                <td data-label="Local Entry Price">{formatCurrency(row.local_entry_price)}</td>
+                <td data-label="Alpaca Entry Price">{formatCurrency(row.alpaca_entry_price)}</td>
+                <td data-label="Entry Price Diff">{formatCurrency(row.entry_price_diff)}</td>
+                <td data-label="Local Exit Price">{formatCurrency(row.local_exit_price)}</td>
+                <td data-label="Alpaca Exit Price">{formatCurrency(row.alpaca_exit_price)}</td>
+                <td data-label="Exit Price Diff">{formatCurrency(row.exit_price_diff)}</td>
+                <td data-label="Local Shares">{formatNumber(row.local_shares, 0)}</td>
+                <td data-label="Alpaca Entry Qty">{formatNumber(row.alpaca_entry_qty, 0)}</td>
+                <td data-label="Alpaca Exit Qty">{formatNumber(row.alpaca_exit_qty, 0)}</td>
+                <td data-label="Local Exit Reason">{formatValue(row.local_exit_reason)}</td>
+                <td data-label="Alpaca Exit Reason">{formatValue(row.alpaca_exit_reason)}</td>
+                <td data-label="Alpaca Exit Order ID" className="dashboard-cell-muted">{formatValue(row.alpaca_exit_order_id)}</td>
               </tr>
             ))}
           </tbody>

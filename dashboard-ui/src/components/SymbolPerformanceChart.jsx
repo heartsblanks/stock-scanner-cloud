@@ -21,7 +21,7 @@ function PerformanceTooltip({ active, payload, label }) {
   );
 }
 
-export default function SymbolPerformanceChart({ rows }) {
+export default function SymbolPerformanceChart({ rows, onSymbolSelect }) {
   const data = Array.isArray(rows) ? rows : [];
 
   if (!data.length) {
@@ -56,7 +56,14 @@ export default function SymbolPerformanceChart({ rows }) {
               tickFormatter={formatCurrency}
             />
             <Tooltip content={<PerformanceTooltip />} cursor={{ fill: "rgba(187, 90, 42, 0.08)" }} />
-            <Bar dataKey="realized_pnl_total" name="P&L" fill="#bb5a2a" radius={[8, 8, 2, 2]} />
+            <Bar
+              dataKey="realized_pnl_total"
+              name="P&L"
+              fill="#bb5a2a"
+              radius={[8, 8, 2, 2]}
+              onClick={(payload) => onSymbolSelect?.(payload?.symbol)}
+              style={{ cursor: onSymbolSelect ? "pointer" : "default" }}
+            />
           </BarChart>
         </ResponsiveContainer>
       </div>

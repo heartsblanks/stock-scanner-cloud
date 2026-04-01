@@ -11,7 +11,37 @@ import {
   fetchAlpacaApiLogs,
   fetchAlpacaApiErrors,
   fetchLatestScanSummary,
+  fetchOpsSummary,
+  fetchPaperTradeAttemptDailySummary,
+  fetchPaperTradeAttemptRejections,
 } from "../api/dashboard";
+
+const AUTO_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+
+function getEasternMarketSnapshot(now = new Date()) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(now);
+  const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const weekday = lookup.weekday || "";
+  const hour = Number(lookup.hour || 0);
+  const minute = Number(lookup.minute || 0);
+  const totalMinutes = hour * 60 + minute;
+  const isWeekday = !["Sat", "Sun"].includes(weekday);
+  const active = isWeekday && totalMinutes >= 570 && totalMinutes <= 1020;
+
+  return {
+    active,
+    weekday,
+    totalMinutes,
+    label: `${lookup.hour || "00"}:${lookup.minute || "00"} ET`,
+  };
+}
 
 const INITIAL_SECTION_LOADING = {
   overview: true,
@@ -19,6 +49,7 @@ const INITIAL_SECTION_LOADING = {
   risk: true,
   alpacaLogs: true,
   sizing: true,
+  attempts: true,
 };
 
 const INITIAL_SECTION_ERRORS = {
@@ -27,6 +58,7 @@ const INITIAL_SECTION_ERRORS = {
   risk: null,
   alpacaLogs: null,
   sizing: null,
+  attempts: null,
 };
 
 export function useDashboardData() {
@@ -46,13 +78,18 @@ export function useDashboardData() {
   const [riskExposureSummary, setRiskExposureSummary] = useState(null);
   const [alpacaApiLogs, setAlpacaApiLogs] = useState([]);
   const [alpacaApiErrors, setAlpacaApiErrors] = useState([]);
+  const [opsSummary, setOpsSummary] = useState(null);
+  const [paperTradeAttemptRejections, setPaperTradeAttemptRejections] = useState([]);
+  const [paperTradeAttemptDailySummary, setPaperTradeAttemptDailySummary] = useState([]);
   const [latestScanSummary, setLatestScanSummary] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [nextRefreshAt, setNextRefreshAt] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRunningSync, setIsRunningSync] = useState(false);
   const [toast, setToast] = useState(null);
   const [lastReconciliationStatus, setLastReconciliationStatus] = useState(null);
   const [lastReconciliationAt, setLastReconciliationAt] = useState(null);
+  const [currentTime, setCurrentTime] = useState(() => new Date());
   const filtersRef = useRef(filters);
 
   const loadData = useCallback(async (activeFilters = filtersRef.current) => {
@@ -98,6 +135,26 @@ export function useDashboardData() {
         }));
       } finally {
         setSectionLoading((prev) => ({ ...prev, overview: false, sizing: false }));
+      }
+
+      try {
+        const [opsRes, rejectionRes, dailyRes] = await Promise.all([
+          fetchOpsSummary(),
+          fetchPaperTradeAttemptRejections(12),
+          fetchPaperTradeAttemptDailySummary(7),
+        ]);
+
+        setOpsSummary(opsRes || null);
+        setPaperTradeAttemptRejections(Array.isArray(rejectionRes?.rows) ? rejectionRes.rows : []);
+        setPaperTradeAttemptDailySummary(Array.isArray(dailyRes?.rows) ? dailyRes.rows : []);
+        setSectionErrors((prev) => ({ ...prev, attempts: null }));
+      } catch (sectionErr) {
+        setSectionErrors((prev) => ({
+          ...prev,
+          attempts: sectionErr?.message || "Failed to load execution attempt analytics",
+        }));
+      } finally {
+        setSectionLoading((prev) => ({ ...prev, attempts: false }));
       }
 
       try {
@@ -155,6 +212,7 @@ export function useDashboardData() {
       }
 
       setLastUpdated(new Date().toISOString());
+      setNextRefreshAt(new Date(Date.now() + AUTO_REFRESH_INTERVAL_MS).toISOString());
     } catch (err) {
       setError(err.message || "Failed to load dashboard");
     } finally {
@@ -168,13 +226,33 @@ export function useDashboardData() {
 
   useEffect(() => {
     loadData(filtersRef.current);
+  }, [loadData, currentTime]);
 
+  useEffect(() => {
+    const clockId = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 60000);
+
+    return () => clearInterval(clockId);
+  }, []);
+
+  useEffect(() => {
+    const marketSnapshot = getEasternMarketSnapshot(currentTime);
+    if (!marketSnapshot.active) {
+      setNextRefreshAt(null);
+      return undefined;
+    }
+
+    if (!nextRefreshAt && lastUpdated) {
+      setNextRefreshAt(new Date(new Date(lastUpdated).getTime() + AUTO_REFRESH_INTERVAL_MS).toISOString());
+    }
     const intervalId = setInterval(() => {
       loadData(filtersRef.current);
-    }, 900000);
+      setNextRefreshAt(new Date(Date.now() + AUTO_REFRESH_INTERVAL_MS).toISOString());
+    }, AUTO_REFRESH_INTERVAL_MS);
 
     return () => clearInterval(intervalId);
-  }, [loadData]);
+  }, [currentTime, lastUpdated, loadData, nextRefreshAt]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -305,6 +383,72 @@ export function useDashboardData() {
     confidenceMultiplier !== null || lossMultiplier !== null || finalSizingMultiplier !== null
       ? "EXPOSED"
       : "NOT_EXPOSED";
+  const autoRefreshSnapshot = getEasternMarketSnapshot(currentTime);
+  const autoRefreshActive = autoRefreshSnapshot.active;
+  const refreshWindowLabel = "Weekdays 9:30 AM to 5:00 PM ET";
+  const attentionItems = [];
+
+  if ((reconciliationSummary?.mismatch_count ?? 0) > 0) {
+    attentionItems.push({
+      id: "reconciliation",
+      severity: reconciliationSummary?.severity === "CRITICAL" ? "critical" : "warning",
+      title: "Reconciliation mismatch detected",
+      detail: `${reconciliationSummary?.mismatch_count ?? 0} mismatch row(s) need review.`,
+    });
+  }
+
+  if (alpacaApiErrors.length > 0) {
+    attentionItems.push({
+      id: "alpaca-errors",
+      severity: "critical",
+      title: "Recent Alpaca API failures",
+      detail: `${alpacaApiErrors.length} recent broker error call(s) were recorded.`,
+    });
+  }
+
+  if (
+    riskExposureSummary &&
+    (riskExposureSummary.daily_realized_pnl ?? 0) + (riskExposureSummary.daily_unrealized_pnl ?? 0) <=
+      -0.02 * (riskExposureSummary.account_size ?? 0)
+  ) {
+    attentionItems.push({
+      id: "risk-guardrail",
+      severity: "critical",
+      title: "Daily risk guardrail is blocking trading",
+      detail: "Realized plus unrealized P&L has crossed the daily cutoff.",
+    });
+  }
+
+  const topAttemptReasons = Array.isArray(opsSummary?.paper_trade_attempt_top_reasons)
+    ? opsSummary.paper_trade_attempt_top_reasons
+    : [];
+  const stageCounts = Array.isArray(opsSummary?.paper_trade_attempt_stage_counts)
+    ? opsSummary.paper_trade_attempt_stage_counts
+    : [];
+  const placedCount = stageCounts.find((row) => row.decision_stage === "PLACED")?.count ?? 0;
+  const rejectedCount = stageCounts
+    .filter((row) => row.decision_stage !== "PLACED" && row.decision_stage !== "PAPER_CANDIDATE")
+    .reduce((total, row) => total + Number(row.count || 0), 0);
+  const totalResolvedAttempts = placedCount + rejectedCount;
+  const paperTradePlacementRate = totalResolvedAttempts > 0 ? (placedCount / totalResolvedAttempts) * 100 : null;
+
+  if ((topAttemptReasons[0]?.count ?? 0) > 0) {
+    attentionItems.push({
+      id: "top-reason",
+      severity: "warning",
+      title: "Most common non-placement reason",
+      detail: `${topAttemptReasons[0].final_reason} (${topAttemptReasons[0].count})`,
+    });
+  }
+
+  if (!autoRefreshActive) {
+    attentionItems.push({
+      id: "refresh-window",
+      severity: "info",
+      title: "Auto-refresh is paused",
+      detail: `Polling resumes during ${refreshWindowLabel}. Current market clock: ${autoRefreshSnapshot.label}.`,
+    });
+  }
 
   return {
     summary,
@@ -324,8 +468,19 @@ export function useDashboardData() {
     riskExposureSummary,
     alpacaApiLogs,
     alpacaApiErrors,
+    opsSummary,
+    paperTradeAttemptRejections,
+    paperTradeAttemptDailySummary,
+    topAttemptReasons,
+    stageCounts,
+    paperTradePlacementRate,
+    attentionItems,
     latestScanSummary,
     lastUpdated,
+    nextRefreshAt,
+    autoRefreshActive,
+    refreshWindowLabel,
+    autoRefreshMarketTime: autoRefreshSnapshot.label,
     isRefreshing,
     isRunningSync,
     toast,

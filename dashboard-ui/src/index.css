@@ -434,6 +434,22 @@ code {
   pointer-events: none;
 }
 
+.insight-card-interactive {
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    border-color 160ms ease;
+}
+
+.insight-card-interactive:hover,
+.insight-card-interactive:focus-visible {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-soft);
+  border-color: rgba(187, 90, 42, 0.2);
+  outline: none;
+}
+
 .metric-card-featured {
   background:
     radial-gradient(circle at top right, rgba(15, 118, 110, 0.18), transparent 36%),
@@ -543,6 +559,15 @@ code {
   box-shadow: var(--shadow-soft);
 }
 
+.dashboard-drilldown-panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px 20px;
+  border-radius: var(--radius-lg);
+  background: rgba(255, 251, 243, 0.9);
+  border: 1px solid rgba(80, 62, 37, 0.08);
+}
+
 .dashboard-view-nav-copy {
   display: grid;
   gap: 8px;
@@ -598,11 +623,58 @@ code {
   opacity: 0.76;
 }
 
+.dashboard-attention-list {
+  display: grid;
+  gap: 12px;
+}
+
+.dashboard-attention-item {
+  padding: 16px 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(80, 62, 37, 0.08);
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.dashboard-attention-item-critical {
+  background: rgba(180, 65, 47, 0.08);
+  border-color: rgba(180, 65, 47, 0.14);
+}
+
+.dashboard-attention-item-warning {
+  background: rgba(183, 121, 31, 0.08);
+  border-color: rgba(183, 121, 31, 0.16);
+}
+
+.dashboard-attention-item-info {
+  background: rgba(49, 91, 182, 0.07);
+  border-color: rgba(49, 91, 182, 0.14);
+}
+
+.dashboard-attention-title {
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.dashboard-attention-detail {
+  margin-top: 6px;
+  color: var(--text);
+}
+
 .dashboard-inline-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 14px;
+}
+
+.dashboard-inline-kv {
+  display: grid;
+  gap: 10px;
+  color: var(--text);
+}
+
+.dashboard-inline-kv strong {
+  color: var(--text-strong);
 }
 
 .dashboard-pill {
@@ -959,6 +1031,11 @@ code {
   border-color: rgba(230, 217, 191, 0.08);
 }
 
+:root[data-theme="dark"] .dashboard-drilldown-panel {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(230, 217, 191, 0.08);
+}
+
 :root[data-theme="dark"] .dashboard-view-tab {
   background: rgba(255, 255, 255, 0.04);
   border-color: rgba(230, 217, 191, 0.08);
@@ -967,6 +1044,23 @@ code {
 :root[data-theme="dark"] .dashboard-view-tab-active {
   background: linear-gradient(135deg, rgba(225, 140, 80, 0.2), rgba(25, 50, 47, 0.92));
   border-color: rgba(225, 140, 80, 0.2);
+}
+
+:root[data-theme="dark"] .dashboard-attention-item {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(230, 217, 191, 0.08);
+}
+
+:root[data-theme="dark"] .dashboard-attention-item-critical {
+  background: rgba(239, 127, 107, 0.08);
+}
+
+:root[data-theme="dark"] .dashboard-attention-item-warning {
+  background: rgba(227, 175, 82, 0.08);
+}
+
+:root[data-theme="dark"] .dashboard-attention-item-info {
+  background: rgba(120, 167, 255, 0.08);
 }
 
 :root[data-theme="dark"] .dashboard-toast-success {
@@ -1059,6 +1153,50 @@ code {
     font-size: 0.84rem;
   }
 
+  .dashboard-table {
+    min-width: 100%;
+  }
+
+  .dashboard-table thead {
+    display: none;
+  }
+
+  .dashboard-table tbody {
+    display: grid;
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .dashboard-table tbody tr,
+  .dashboard-table tbody tr.dashboard-table-row-positive,
+  .dashboard-table tbody tr.dashboard-table-row-negative {
+    display: grid;
+    gap: 8px;
+    padding: 14px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.7);
+    border: 1px solid rgba(80, 62, 37, 0.08);
+  }
+
+  .dashboard-table tbody td {
+    display: grid;
+    grid-template-columns: minmax(110px, 130px) minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+    padding: 0;
+    white-space: normal;
+    border-bottom: none;
+  }
+
+  .dashboard-table tbody td::before {
+    content: attr(data-label);
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
   .dashboard-table-wrap {
     margin-inline: -6px;
     border-radius: 16px;
@@ -1072,5 +1210,12 @@ code {
   .dashboard-pill-status {
     width: 100%;
     justify-content: center;
+  }
+
+  :root[data-theme="dark"] .dashboard-table tbody tr,
+  :root[data-theme="dark"] .dashboard-table tbody tr.dashboard-table-row-positive,
+  :root[data-theme="dark"] .dashboard-table tbody tr.dashboard-table-row-negative {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(230, 217, 191, 0.08);
   }
 }

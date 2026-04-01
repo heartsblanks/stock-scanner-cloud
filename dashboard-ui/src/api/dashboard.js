@@ -53,6 +53,32 @@ export async function fetchOpsSummary() {
   return response.data;
 }
 
+export async function fetchPaperTradeAttemptRejections(limit = 25) {
+  const response = await apiClient.get("/paper-trade-attempts/rejections", {
+    params: { limit },
+  });
+  const data = response.data || {};
+  return {
+    ...data,
+    rows: Array.isArray(data?.rows) ? data.rows : [],
+    count: data?.count ?? (Array.isArray(data?.rows) ? data.rows.length : 0),
+    limit: data?.limit || limit,
+  };
+}
+
+export async function fetchPaperTradeAttemptDailySummary(limitDays = 7) {
+  const response = await apiClient.get("/paper-trade-attempts/daily-summary", {
+    params: { limit_days: limitDays },
+  });
+  const data = response.data || {};
+  return {
+    ...data,
+    rows: Array.isArray(data?.rows) ? data.rows : [],
+    count: data?.count ?? (Array.isArray(data?.rows) ? data.rows.length : 0),
+    limit_days: data?.limit_days || limitDays,
+  };
+}
+
 export async function fetchReconcileSummary() {
   const response = await apiClient.get("/reconcile-summary");
   return response.data;

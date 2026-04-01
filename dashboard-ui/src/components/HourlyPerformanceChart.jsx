@@ -46,7 +46,7 @@ function HourlyTooltip({ active, payload, label }) {
   );
 }
 
-export default function HourlyPerformanceChart({ rows }) {
+export default function HourlyPerformanceChart({ rows, onHourSelect }) {
   const data = normalizeChartData(rows);
 
   if (!data.length) {
@@ -83,7 +83,14 @@ export default function HourlyPerformanceChart({ rows }) {
               tickFormatter={formatCurrency}
             />
             <Tooltip content={<HourlyTooltip />} cursor={{ fill: "rgba(49, 91, 182, 0.08)" }} />
-            <Bar dataKey="realizedPnlTotal" name="Realized P&L" fill="#315bb6" radius={[8, 8, 2, 2]} />
+            <Bar
+              dataKey="realizedPnlTotal"
+              name="Realized P&L"
+              fill="#315bb6"
+              radius={[8, 8, 2, 2]}
+              onClick={(payload) => onHourSelect?.(payload?.entryHourUtc)}
+              style={{ cursor: onHourSelect ? "pointer" : "default" }}
+            />
           </BarChart>
         </ResponsiveContainer>
       </div>
