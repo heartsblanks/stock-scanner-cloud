@@ -3,102 +3,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Callable
 from logging_utils import log_exception
-
-def _normalize_trade_key(symbol: str, broker_parent_order_id: str, broker_order_id: str) -> str:
-    return broker_parent_order_id or broker_order_id or symbol
-
-
-def _to_upper_or_none(value: Any) -> str | None:
-    text = str(value or "").strip().upper()
-    return text or None
-
-
-def _infer_direction(entry_price, exit_price, stop_price, target_price) -> str | None:
-    try:
-        entry_val = float(entry_price) if entry_price not in (None, "") else None
-    except Exception:
-        entry_val = None
-    try:
-        exit_val = float(exit_price) if exit_price not in (None, "") else None
-    except Exception:
-        exit_val = None
-    try:
-        stop_val = float(stop_price) if stop_price not in (None, "") else None
-    except Exception:
-        stop_val = None
-    try:
-        target_val = float(target_price) if target_price not in (None, "") else None
-    except Exception:
-        target_val = None
-
-    if entry_val is not None and target_val is not None and stop_val is not None:
-        if target_val > entry_val and stop_val < entry_val:
-            return "LONG"
-        if target_val < entry_val and stop_val > entry_val:
-            return "SHORT"
-
-    if entry_val is not None and exit_val is not None:
-        if exit_val > entry_val:
-            return "LONG"
-        if exit_val < entry_val:
-            return "SHORT"
-
-    return None
-
-
-def _compute_realized_pnl(entry_price, exit_price, shares, direction):
-    try:
-        entry_val = float(entry_price) if entry_price not in (None, "") else None
-    except Exception:
-        entry_val = None
-    try:
-        exit_val = float(exit_price) if exit_price not in (None, "") else None
-    except Exception:
-        exit_val = None
-    try:
-        shares_val = float(shares) if shares not in (None, "") else None
-    except Exception:
-        shares_val = None
-
-    if entry_val is None or exit_val is None or shares_val is None:
-        return None
-
-    direction_val = str(direction or "").strip().upper()
-    if direction_val == "LONG":
-        return round((exit_val - entry_val) * shares_val, 6)
-    if direction_val == "SHORT":
-        return round((entry_val - exit_val) * shares_val, 6)
-    return None
-
-
-def _compute_realized_pnl_percent(entry_price, exit_price, direction):
-    try:
-        entry_val = float(entry_price) if entry_price not in (None, "") else None
-    except Exception:
-        entry_val = None
-    try:
-        exit_val = float(exit_price) if exit_price not in (None, "") else None
-    except Exception:
-        exit_val = None
-
-    if entry_val in (None, 0) or exit_val is None:
-        return None
-
-    direction_val = str(direction or "").strip().upper()
-    if direction_val == "LONG":
-        return round(((exit_val - entry_val) / entry_val) * 100.0, 6)
-    if direction_val == "SHORT":
-        return round(((entry_val - exit_val) / entry_val) * 100.0, 6)
-    return None
-
-
-def _compute_duration_minutes(entry_timestamp, exit_timestamp):
-    if entry_timestamp is None or exit_timestamp is None:
-        return None
-    try:
-        return round((exit_timestamp - entry_timestamp).total_seconds() / 60.0, 2)
-    except Exception:
-        return None
+from trade_math import (
+    compute_duration_minutes,
+    compute_realized_pnl,
+    compute_realized_pnl_percent,
+    infer_direction,
+    normalize_trade_key,
+    to_upper_or_none,
+)
 
 
 def execute_close_all_paper_positions(
@@ -250,11 +162,11 @@ def execute_close_all_paper_positions(
             linked_signal_stop = open_row.get("linked_signal_stop", "")
             linked_signal_target = open_row.get("linked_signal_target", "")
             linked_signal_confidence = open_row.get("linked_signal_confidence", "")
-            direction = _infer_direction(entry_price, exit_price, stop_price, target_price)
-            realized_pnl = _compute_realized_pnl(entry_price, exit_price, shares_value, direction)
-            realized_pnl_percent = _compute_realized_pnl_percent(entry_price, exit_price, direction)
-            duration_minutes = _compute_duration_minutes(entry_timestamp, event_timestamp)
-            trade_key = _normalize_trade_key(symbol, broker_parent_order_id, broker_order_id)
+            direction = infer_direction(entry_price, exit_price, stop_price, target_price, side)
+            realized_pnl = compute_realized_pnl(entry_price, exit_price, shares_value, direction)
+            realized_pnl_percent = compute_realized_pnl_percent(entry_price, exit_price, direction)
+            duration_minutes = compute_duration_minutes(entry_timestamp, event_timestamp)
+            trade_key = normalize_trade_key(symbol, broker_parent_order_id, broker_order_id)
 
             append_trade_log({
                 "timestamp_utc": timestamp_utc,
@@ -294,7 +206,7 @@ def execute_close_all_paper_positions(
                 event_time=event_timestamp,
                 event_type="EOD_CLOSE",
                 symbol=symbol,
-                side=_to_upper_or_none(side),
+                side=to_upper_or_none(side),
                 shares=to_float_or_none(shares_value),
                 price=to_float_or_none(exit_price),
                 mode=mode,
@@ -307,7 +219,7 @@ def execute_close_all_paper_positions(
                 trade_key=trade_key,
                 symbol=symbol,
                 mode=mode,
-                side=_to_upper_or_none(side),
+                side=to_upper_or_none(side),
                 direction=direction,
                 status="CLOSED",
                 entry_time=entry_timestamp,
@@ -332,14 +244,14 @@ def execute_close_all_paper_positions(
             )
         if not open_row and close_filled:
             event_timestamp = parse_iso_utc(timestamp_utc)
-            orphan_trade_key = _normalize_trade_key(symbol, close_order_id, close_order_id)
+            orphan_trade_key = normalize_trade_key(symbol, close_order_id, close_order_id)
             inferred_exit_reason = "EXTERNAL_EXIT"
 
             safe_insert_trade_event(
                 event_time=event_timestamp,
                 event_type="EOD_CLOSE",
                 symbol=symbol,
-                side=_to_upper_or_none(side),
+                side=to_upper_or_none(side),
                 shares=to_float_or_none(close_filled_qty or qty),
                 price=to_float_or_none(close_filled_avg_price or current_price),
                 mode="orphan",
@@ -352,7 +264,7 @@ def execute_close_all_paper_positions(
                 trade_key=orphan_trade_key,
                 symbol=symbol,
                 mode="orphan",
-                side=_to_upper_or_none(side),
+                side=to_upper_or_none(side),
                 direction=None,
                 status="CLOSED",
                 entry_time=None,

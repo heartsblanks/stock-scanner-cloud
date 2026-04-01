@@ -9,54 +9,43 @@ export default function DashboardFilters({ onApply }) {
   }
 
   return (
-    <div
-      style={{
-        background: "#fff",
-        padding: 16,
-        borderRadius: 8,
-        boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
-        marginBottom: 20,
-        display: "flex",
-        gap: 12,
-        flexWrap: "wrap",
-        alignItems: "center",
-      }}
-    >
-      <div>
-        <label style={{ fontSize: 12 }}>Date</label>
-        <br />
+    <div className="dashboard-panel">
+      <div className="dashboard-panel-body dashboard-filter-panel">
+        <div>
+          <h2 className="dashboard-panel-title">Filters</h2>
+          <p className="dashboard-panel-subtitle">
+            Narrow the dashboard to a specific date or symbol without leaving the main operating view.
+          </p>
+        </div>
+        <div className="dashboard-filter-row">
+          <div className="dashboard-field">
+            <label htmlFor="dashboard-filter-date">Date</label>
         <input
+          id="dashboard-filter-date"
+          className="dashboard-input"
           type="date"
           value={date}
           onChange={(e) => setDate(e.target.value)}
         />
-      </div>
+          </div>
 
-      <div>
-        <label style={{ fontSize: 12 }}>Symbol</label>
-        <br />
+          <div className="dashboard-field">
+            <label htmlFor="dashboard-filter-symbol">Symbol</label>
         <input
+          id="dashboard-filter-symbol"
+          className="dashboard-input"
           type="text"
           placeholder="e.g. NVDA"
           value={symbol}
           onChange={(e) => setSymbol(e.target.value)}
         />
-      </div>
+          </div>
 
-      <button
-        onClick={handleApply}
-        style={{
-          height: 32,
-          padding: "0 12px",
-          borderRadius: 6,
-          border: "none",
-          background: "#2563eb",
-          color: "#fff",
-          cursor: "pointer",
-        }}
-      >
-        Apply
-      </button>
+          <button className="dashboard-button dashboard-button-primary" onClick={handleApply}>
+            Apply Filters
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

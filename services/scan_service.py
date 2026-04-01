@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Callable
 import os
-from logging_utils import log_exception, log_info
+from logging_utils import log_exception, log_info, log_warning
 
 # NOTE: requires implementation
 # def get_recent_closed_trades_for_symbol(symbol: str, limit: int = 5) -> list[dict]
@@ -186,6 +186,38 @@ def _apply_minimum_viable_position_sizing(metrics: dict[str, Any]) -> None:
     metrics["cash_affordable_shares"] = max(_to_int(metrics.get("cash_affordable_shares"), 0), adjusted_shares)
     metrics["actual_position_cost"] = round(actual_position_cost, 4)
     metrics["actual_risk"] = round(adjusted_shares * _to_float(metrics.get("risk_per_share"), 0.0), 4)
+
+
+def _apply_confidence_loss_sizing(
+    metrics: dict[str, Any],
+    *,
+    confidence_multiplier: float,
+    loss_multiplier: float,
+    final_multiplier: float,
+) -> None:
+    if final_multiplier == 1.0:
+        metrics["confidence_multiplier"] = confidence_multiplier
+        metrics["loss_multiplier"] = loss_multiplier
+        metrics["final_multiplier"] = final_multiplier
+        return
+
+    base_notional = _to_float(metrics.get("per_trade_notional"), 0.0)
+    entry_price = _to_float(metrics.get("entry"), 0.0)
+    adjusted_notional = base_notional * final_multiplier
+
+    metrics["confidence_multiplier"] = confidence_multiplier
+    metrics["loss_multiplier"] = loss_multiplier
+    metrics["final_multiplier"] = final_multiplier
+    metrics["adjusted_per_trade_notional"] = round(adjusted_notional, 4)
+
+    if entry_price <= 0 or adjusted_notional <= 0:
+        return
+
+    adjusted_shares = int(adjusted_notional / entry_price)
+    metrics["shares"] = adjusted_shares
+    metrics["per_trade_notional"] = round(adjusted_notional, 4)
+    metrics["actual_position_cost"] = round(adjusted_shares * entry_price, 4)
+    metrics["actual_risk"] = round(adjusted_shares * _to_float(metrics.get("risk_per_share"), 0.0), 4)
     
 def execute_scan_request(payload: dict[str, Any], *, handler: Callable[[dict[str, Any]], Any]) -> Any:
     return handler(payload)
@@ -209,6 +241,7 @@ def execute_full_scan(
     build_scan_id: Callable[[str, str], str],
     market_phase_from_timestamp: Callable[[str], str],
     append_signal_log: Callable[[dict[str, Any]], None],
+    safe_insert_paper_trade_attempt: Callable[..., None],
     safe_insert_scan_run: Callable[..., None],
     parse_iso_utc: Callable[[str], Any],
     run_scan: Callable[..., Any],
@@ -270,6 +303,52 @@ def execute_full_scan(
 
     scan_id = build_scan_id(timestamp_utc, mode)
     market_phase = market_phase_from_timestamp(timestamp_utc)
+
+    def record_attempt(
+        decision_stage: str,
+        *,
+        symbol: str,
+        metrics: dict[str, Any] | None = None,
+        final_reason: str | None = None,
+        placed: bool | None = None,
+        broker_order_id: str | None = None,
+        broker_parent_order_id: str | None = None,
+        broker_rejection_reason: str | None = None,
+    ) -> None:
+        attempt_metrics = metrics or {}
+        safe_insert_paper_trade_attempt(
+            timestamp_utc=parse_iso_utc(timestamp_utc),
+            scan_id=scan_id,
+            mode=mode,
+            scan_source=scan_source,
+            market_phase=market_phase,
+            symbol=symbol,
+            decision_stage=decision_stage,
+            final_reason=final_reason,
+            direction=str(attempt_metrics.get("direction", "") or ""),
+            entry=to_float_or_none(attempt_metrics.get("entry", "")),
+            stop=to_float_or_none(attempt_metrics.get("stop", "")),
+            target=to_float_or_none(attempt_metrics.get("target", "")),
+            confidence=to_float_or_none(attempt_metrics.get("final_confidence", "")),
+            account_size=account_size,
+            current_open_positions=_to_int(attempt_metrics.get("current_open_positions", current_open_positions), current_open_positions),
+            current_open_exposure=_to_float(attempt_metrics.get("current_open_exposure", current_open_exposure), current_open_exposure),
+            remaining_slots=_to_int(attempt_metrics.get("remaining_slots", 0), 0),
+            effective_remaining_slots=_to_int(attempt_metrics.get("effective_remaining_slots", 0), 0),
+            remaining_allocatable_capital=_to_float(attempt_metrics.get("remaining_allocatable_capital", 0.0), 0.0),
+            per_trade_notional=to_float_or_none(attempt_metrics.get("per_trade_notional", "")),
+            adjusted_per_trade_notional=to_float_or_none(attempt_metrics.get("adjusted_per_trade_notional", "")),
+            shares=to_float_or_none(attempt_metrics.get("shares", "")),
+            cash_affordable_shares=_to_int(attempt_metrics.get("cash_affordable_shares", 0), 0),
+            notional_capped_shares=_to_int(attempt_metrics.get("notional_capped_shares", 0), 0),
+            confidence_multiplier=to_float_or_none(attempt_metrics.get("confidence_multiplier", "")),
+            loss_multiplier=to_float_or_none(attempt_metrics.get("loss_multiplier", "")),
+            final_multiplier=to_float_or_none(attempt_metrics.get("final_multiplier", "")),
+            placed=placed,
+            broker_order_id=broker_order_id,
+            broker_parent_order_id=broker_parent_order_id,
+            broker_rejection_reason=broker_rejection_reason,
+        )
 
     if not ok:
         try:
@@ -345,9 +424,36 @@ def execute_full_scan(
     trades = [t for t in all_trades if t["metrics"].get("direction") == "BUY"]
     paper_trade_candidates = []
     for ev in evaluations:
+        ev_metrics = ev.get("metrics") or {}
+        rejected_symbol = str(ev_metrics.get("symbol", "")).strip().upper()
+        if paper_trade and str(ev.get("decision", "")).strip().upper() != "VALID":
+            if rejected_symbol:
+                record_attempt(
+                    "SCAN_REJECTED",
+                    symbol=rejected_symbol,
+                    metrics=ev_metrics,
+                    final_reason=str(ev.get("final_reason", "") or "scan_rejected"),
+                    placed=False,
+                )
         candidate = paper_candidate_from_evaluation(ev)
         if candidate is not None:
+            if paper_trade:
+                record_attempt(
+                    "PAPER_CANDIDATE",
+                    symbol=str(candidate["metrics"].get("symbol", "")).strip().upper(),
+                    metrics=candidate["metrics"],
+                    final_reason=str(candidate.get("final_reason", "") or "paper_candidate"),
+                    placed=False,
+                )
             paper_trade_candidates.append(candidate)
+        elif paper_trade and rejected_symbol and str(ev.get("decision", "")).strip().upper() == "VALID":
+            record_attempt(
+                "SCAN_REJECTED",
+                symbol=rejected_symbol,
+                metrics=ev_metrics,
+                final_reason="below_paper_trade_confidence_threshold",
+                placed=False,
+            )
     paper_long_candidates = [t for t in paper_trade_candidates if t["metrics"].get("direction") == "BUY"]
     paper_short_candidates = [t for t in paper_trade_candidates if t["metrics"].get("direction") == "SELL"]
 
@@ -404,6 +510,17 @@ def execute_full_scan(
     if paper_trade:
         # Enforce daily risk guardrail
         if trading_blocked:
+            for candidate in paper_trade_candidates:
+                candidate_metrics = candidate.get("metrics") or {}
+                candidate_symbol = str(candidate_metrics.get("symbol", "")).strip().upper()
+                if candidate_symbol:
+                    record_attempt(
+                        "PLACEMENT_SKIPPED",
+                        symbol=candidate_symbol,
+                        metrics=candidate_metrics,
+                        final_reason="daily_loss_guardrail_blocked",
+                        placed=False,
+                    )
             response["paper_trade_result"] = {
                 "attempted": False,
                 "placed": False,
@@ -459,6 +576,13 @@ def execute_full_scan(
                             now_dt = parse_iso_utc(timestamp_utc)
                             minutes_since = (now_dt - last_dt).total_seconds() / 60
                             if minutes_since < cooldown_minutes:
+                                record_attempt(
+                                    "PLACEMENT_SKIPPED",
+                                    symbol=candidate_symbol,
+                                    metrics=paper_trade_candidate["metrics"],
+                                    final_reason=f"cooldown_active_{int(minutes_since)}m",
+                                    placed=False,
+                                )
                                 paper_results.append({
                                     "attempted": False,
                                     "placed": False,
@@ -487,19 +611,12 @@ def execute_full_scan(
 
                 final_multiplier = confidence_multiplier * loss_multiplier
 
-                if final_multiplier < 1.0 or final_multiplier > 1.0:
-                    base_notional = _to_float(paper_trade_candidate["metrics"].get("per_trade_notional"), 0.0)
-                    adjusted_notional = base_notional * final_multiplier
-                    entry_price = _to_float(paper_trade_candidate["metrics"].get("entry", 0.0))
-
-                    if entry_price > 0:
-                        adjusted_shares = int(adjusted_notional / entry_price)
-                        if adjusted_shares > 0:
-                            paper_trade_candidate["metrics"]["shares"] = adjusted_shares
-                            paper_trade_candidate["metrics"]["per_trade_notional"] = adjusted_notional
-                            paper_trade_candidate["metrics"]["confidence_multiplier"] = confidence_multiplier
-                            paper_trade_candidate["metrics"]["loss_multiplier"] = loss_multiplier
-                            paper_trade_candidate["metrics"]["final_multiplier"] = final_multiplier
+                _apply_confidence_loss_sizing(
+                    paper_trade_candidate["metrics"],
+                    confidence_multiplier=confidence_multiplier,
+                    loss_multiplier=loss_multiplier,
+                    final_multiplier=final_multiplier,
+                )
                 # --- Expose multipliers at response level (latest candidate wins) ---
                 try:
                     response["confidence_multiplier"] = round(confidence_multiplier, 4)
@@ -531,6 +648,13 @@ def execute_full_scan(
                     )
                     refreshed_candidate = paper_candidate_from_evaluation(refreshed_evaluation)
                     if refreshed_candidate is None:
+                        record_attempt(
+                            "REFRESH_REJECTED",
+                            symbol=candidate_symbol,
+                            metrics=paper_metrics,
+                            final_reason=str(refreshed_evaluation.get("final_reason", "") or "candidate_no_longer_valid"),
+                            placed=False,
+                        )
                         paper_results.append({
                             "attempted": False,
                             "placed": False,
@@ -546,9 +670,49 @@ def execute_full_scan(
                     paper_metrics["current_open_exposure"] = current_open_exposure
                     candidate_symbol = str(paper_metrics.get("symbol", "")).strip().upper()
 
+                    _apply_confidence_loss_sizing(
+                        paper_metrics,
+                        confidence_multiplier=confidence_multiplier,
+                        loss_multiplier=loss_multiplier,
+                        final_multiplier=final_multiplier,
+                    )
                     _apply_minimum_viable_position_sizing(paper_metrics)
 
                 if _to_int(paper_metrics.get("shares"), 0) <= 0:
+                    log_warning(
+                        "Paper trade candidate rejected after sizing",
+                        component="scan_service",
+                        operation="execute_full_scan",
+                        scan_id=scan_id,
+                        symbol=candidate_symbol,
+                        mode=mode,
+                        reason="position_size_too_small_after_slot_compression",
+                        account_size=account_size,
+                        current_open_positions=current_open_positions,
+                        current_open_exposure=current_open_exposure,
+                        entry_price=_to_float(paper_metrics.get("entry"), 0.0),
+                        stop_price=_to_float(paper_metrics.get("stop"), 0.0),
+                        target_price=_to_float(paper_metrics.get("target"), 0.0),
+                        shares=_to_int(paper_metrics.get("shares"), 0),
+                        remaining_slots=_to_int(paper_metrics.get("remaining_slots"), 0),
+                        effective_remaining_slots=_to_int(paper_metrics.get("effective_remaining_slots"), 0),
+                        remaining_allocatable_capital=_to_float(paper_metrics.get("remaining_allocatable_capital"), 0.0),
+                        per_trade_notional=_to_float(paper_metrics.get("per_trade_notional"), 0.0),
+                        adjusted_per_trade_notional=_to_float(paper_metrics.get("adjusted_per_trade_notional"), 0.0),
+                        cash_affordable_shares=_to_int(paper_metrics.get("cash_affordable_shares"), 0),
+                        notional_capped_shares=_to_int(paper_metrics.get("notional_capped_shares"), 0),
+                        confidence=_to_float(paper_metrics.get("final_confidence"), 0.0),
+                        confidence_multiplier=_to_float(paper_metrics.get("confidence_multiplier"), 0.0),
+                        loss_multiplier=_to_float(paper_metrics.get("loss_multiplier"), 0.0),
+                        final_multiplier=_to_float(paper_metrics.get("final_multiplier"), 0.0),
+                    )
+                    record_attempt(
+                        "PLACEMENT_SKIPPED",
+                        symbol=candidate_symbol,
+                        metrics=paper_metrics,
+                        final_reason="position_size_too_small_after_slot_compression",
+                        placed=False,
+                    )
                     paper_results.append({
                         "attempted": False,
                         "placed": False,
@@ -564,6 +728,13 @@ def execute_full_scan(
 
                 existing_open_trade = get_latest_open_paper_trade_for_symbol(candidate_symbol)
                 if existing_open_trade is not None:
+                    record_attempt(
+                        "PLACEMENT_SKIPPED",
+                        symbol=candidate_symbol,
+                        metrics=paper_metrics,
+                        final_reason="symbol_already_open",
+                        placed=False,
+                    )
                     paper_results.append({
                         "attempted": False,
                         "placed": False,
@@ -576,6 +747,13 @@ def execute_full_scan(
 
                 in_cooldown, cooldown_reason = is_symbol_in_paper_cooldown(candidate_symbol, timestamp_utc)
                 if in_cooldown:
+                    record_attempt(
+                        "PLACEMENT_SKIPPED",
+                        symbol=candidate_symbol,
+                        metrics=paper_metrics,
+                        final_reason=cooldown_reason,
+                        placed=False,
+                    )
                     paper_results.append({
                         "attempted": False,
                         "placed": False,
@@ -591,6 +769,17 @@ def execute_full_scan(
                     paper_results.append(paper_trade_result)
 
                     if paper_trade_result.get("placed"):
+                        broker_order_id = str(paper_trade_result.get("alpaca_order_id", "") or "")
+                        broker_parent_order_id = str(paper_trade_result.get("alpaca_order_id", "") or "")
+                        record_attempt(
+                            "PLACED",
+                            symbol=candidate_symbol,
+                            metrics=paper_metrics,
+                            final_reason="placed",
+                            placed=True,
+                            broker_order_id=broker_order_id,
+                            broker_parent_order_id=broker_parent_order_id,
+                        )
                         placed_count += 1
                         if paper_metrics.get("direction") == "BUY":
                             placed_long_count += 1
@@ -658,8 +847,6 @@ def execute_full_scan(
                             filled_at=None,
                         )
 
-                        broker_order_id = str(paper_trade_result.get("alpaca_order_id", "") or "")
-                        broker_parent_order_id = str(paper_trade_result.get("alpaca_order_id", "") or "")
                         entry_price = paper_metrics.get("entry", "")
                         stop_price = paper_metrics.get("stop", "")
                         target_price = paper_metrics.get("target", "")
@@ -706,6 +893,16 @@ def execute_full_scan(
                             exit_order_id=None,
                         )
                     else:
+                        record_attempt(
+                            "PLACEMENT_REJECTED",
+                            symbol=candidate_symbol,
+                            metrics=paper_metrics,
+                            final_reason=str(paper_trade_result.get("reason", "") or "not_placed"),
+                            placed=False,
+                            broker_order_id=str(paper_trade_result.get("alpaca_order_id", "") or ""),
+                            broker_parent_order_id=str(paper_trade_result.get("alpaca_order_id", "") or ""),
+                            broker_rejection_reason=str(paper_trade_result.get("details", "") or paper_trade_result.get("reason", "") or ""),
+                        )
                         skipped_symbols.append(candidate_symbol)
                         skip_reasons.append(f"{candidate_symbol}:{paper_trade_result.get('reason', 'not_placed')}")
                 except Exception as e:
@@ -716,6 +913,14 @@ def execute_full_scan(
                         operation="execute_full_scan",
                         symbol=candidate_symbol,
                         mode=mode,
+                    )
+                    record_attempt(
+                        "PLACEMENT_REJECTED",
+                        symbol=candidate_symbol,
+                        metrics=paper_metrics,
+                        final_reason="paper_trade_exception",
+                        placed=False,
+                        broker_rejection_reason=str(e),
                     )
                     paper_results.append({
                         "attempted": True,

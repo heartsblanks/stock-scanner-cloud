@@ -53,6 +53,43 @@ CREATE TABLE IF NOT EXISTS signal_logs (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Paper trade attempts: one row per candidate/outcome
+CREATE TABLE IF NOT EXISTS paper_trade_attempts (
+    id SERIAL PRIMARY KEY,
+    timestamp_utc TIMESTAMPTZ NOT NULL,
+    scan_id TEXT,
+    mode TEXT,
+    scan_source TEXT,
+    market_phase TEXT,
+    symbol TEXT NOT NULL,
+    decision_stage TEXT NOT NULL,
+    final_reason TEXT,
+    direction TEXT,
+    entry NUMERIC,
+    stop NUMERIC,
+    target NUMERIC,
+    confidence NUMERIC,
+    account_size NUMERIC,
+    current_open_positions INT,
+    current_open_exposure NUMERIC,
+    remaining_slots INT,
+    effective_remaining_slots INT,
+    remaining_allocatable_capital NUMERIC,
+    per_trade_notional NUMERIC,
+    adjusted_per_trade_notional NUMERIC,
+    shares NUMERIC,
+    cash_affordable_shares INT,
+    notional_capped_shares INT,
+    confidence_multiplier NUMERIC,
+    loss_multiplier NUMERIC,
+    final_multiplier NUMERIC,
+    placed BOOLEAN,
+    broker_order_id TEXT,
+    broker_parent_order_id TEXT,
+    broker_rejection_reason TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Trade events: append-only log of all trade actions
 CREATE TABLE IF NOT EXISTS trade_events (
     id SERIAL PRIMARY KEY,
@@ -128,6 +165,10 @@ CREATE INDEX IF NOT EXISTS idx_scan_runs_time ON scan_runs(scan_time);
 CREATE INDEX IF NOT EXISTS idx_signal_logs_timestamp ON signal_logs(timestamp_utc);
 CREATE INDEX IF NOT EXISTS idx_signal_logs_top_symbol ON signal_logs(top_symbol);
 CREATE INDEX IF NOT EXISTS idx_broker_orders_order_id ON broker_orders(order_id);
+CREATE INDEX IF NOT EXISTS idx_paper_trade_attempts_timestamp ON paper_trade_attempts(timestamp_utc);
+CREATE INDEX IF NOT EXISTS idx_paper_trade_attempts_scan_id ON paper_trade_attempts(scan_id);
+CREATE INDEX IF NOT EXISTS idx_paper_trade_attempts_symbol_timestamp ON paper_trade_attempts(symbol, timestamp_utc);
+CREATE INDEX IF NOT EXISTS idx_paper_trade_attempts_stage_timestamp ON paper_trade_attempts(decision_stage, timestamp_utc);
 
 CREATE INDEX IF NOT EXISTS idx_reconciliation_details_run_id ON reconciliation_details(run_id);
 CREATE INDEX IF NOT EXISTS idx_reconciliation_details_symbol ON reconciliation_details(symbol);
@@ -152,6 +193,7 @@ CREATE TABLE IF NOT EXISTS alpaca_api_logs (
 
 CREATE INDEX IF NOT EXISTS idx_alpaca_api_logs_logged_at ON alpaca_api_logs(logged_at);
 CREATE INDEX IF NOT EXISTS idx_alpaca_api_logs_method ON alpaca_api_logs(method);
+CREATE INDEX IF NOT EXISTS idx_alpaca_api_logs_success_logged_at ON alpaca_api_logs(success, logged_at);
 
 -- Trade lifecycles: one row per trade (OPEN → CLOSED unified)
 CREATE TABLE IF NOT EXISTS trade_lifecycles (
@@ -202,6 +244,105 @@ CREATE INDEX IF NOT EXISTS idx_trade_lifecycles_symbol ON trade_lifecycles(symbo
 CREATE INDEX IF NOT EXISTS idx_trade_lifecycles_status ON trade_lifecycles(status);
 CREATE INDEX IF NOT EXISTS idx_trade_lifecycles_entry_time ON trade_lifecycles(entry_time);
 CREATE INDEX IF NOT EXISTS idx_trade_lifecycles_trade_key ON trade_lifecycles(trade_key);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_trade_lifecycles_trade_key ON trade_lifecycles(trade_key);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_broker_orders_order_id ON broker_orders(order_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_scan_runs_scan_time_mode_source ON scan_runs(scan_time, mode, scan_source);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'reconciliation_details_run_id_fkey'
+    ) THEN
+        ALTER TABLE reconciliation_details
+        ADD CONSTRAINT reconciliation_details_run_id_fkey
+        FOREIGN KEY (run_id) REFERENCES reconciliation_runs(id)
+        ON DELETE CASCADE;
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'trade_lifecycles_status_check'
+    ) THEN
+        ALTER TABLE trade_lifecycles
+        ADD CONSTRAINT trade_lifecycles_status_check
+        CHECK (status IS NULL OR UPPER(status) IN ('OPEN', 'CLOSED'));
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'trade_lifecycles_side_check'
+    ) THEN
+        ALTER TABLE trade_lifecycles
+        ADD CONSTRAINT trade_lifecycles_side_check
+        CHECK (side IS NULL OR UPPER(side) IN ('BUY', 'SELL'));
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'trade_lifecycles_direction_check'
+    ) THEN
+        ALTER TABLE trade_lifecycles
+        ADD CONSTRAINT trade_lifecycles_direction_check
+        CHECK (direction IS NULL OR UPPER(direction) IN ('LONG', 'SHORT'));
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'trade_events_event_type_check'
+    ) THEN
+        ALTER TABLE trade_events
+        ADD CONSTRAINT trade_events_event_type_check
+        CHECK (
+            UPPER(event_type) IN (
+                'OPEN',
+                'STOP_HIT',
+                'TARGET_HIT',
+                'MANUAL_CLOSE',
+                'EOD_CLOSE'
+            )
+        );
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'paper_trade_attempts_decision_stage_check'
+    ) THEN
+        ALTER TABLE paper_trade_attempts
+        ADD CONSTRAINT paper_trade_attempts_decision_stage_check
+        CHECK (
+            UPPER(decision_stage) IN (
+                'SCAN_REJECTED',
+                'PAPER_CANDIDATE',
+                'REFRESH_REJECTED',
+                'PLACEMENT_SKIPPED',
+                'PLACEMENT_REJECTED',
+                'PLACED'
+            )
+        );
+    END IF;
+END $$;
 
 ALTER TABLE reconciliation_runs
 ADD COLUMN IF NOT EXISTS severity TEXT;

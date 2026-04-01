@@ -1,6 +1,4 @@
-
-
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 function normalizeChartData(rows) {
   if (!Array.isArray(rows)) {
@@ -17,39 +15,75 @@ function normalizeChartData(rows) {
   }));
 }
 
-function formatTooltipValue(value, name) {
-  if (typeof value === "number") {
-    return [value.toFixed(2), name];
+function formatCurrency(value) {
+  const numeric = Number(value ?? 0);
+  return `${numeric < 0 ? "-" : ""}$${Math.abs(numeric).toFixed(2)}`;
+}
+
+function HourlyTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) {
+    return null;
   }
-  return [value, name];
+
+  const row = payload[0]?.payload || {};
+
+  return (
+    <div className="dashboard-chart-tooltip">
+      <div className="dashboard-chart-tooltip-label">Hour {label ?? "-"}</div>
+      <div className="dashboard-chart-tooltip-row">
+        <span className="dashboard-chart-tooltip-name">Realized P&amp;L</span>
+        <span className="dashboard-chart-tooltip-value">{formatCurrency(row.realizedPnlTotal)}</span>
+      </div>
+      <div className="dashboard-chart-tooltip-row">
+        <span className="dashboard-chart-tooltip-name">Trades</span>
+        <span className="dashboard-chart-tooltip-value">{row.tradeCount ?? 0}</span>
+      </div>
+      <div className="dashboard-chart-tooltip-row">
+        <span className="dashboard-chart-tooltip-name">Avg Duration</span>
+        <span className="dashboard-chart-tooltip-value">{Number(row.averageDurationMinutes ?? 0).toFixed(1)}m</span>
+      </div>
+    </div>
+  );
 }
 
 export default function HourlyPerformanceChart({ rows }) {
   const data = normalizeChartData(rows);
 
   if (!data.length) {
-    return <div style={{ marginTop: 12 }}>No hourly performance data.</div>;
+    return <div className="dashboard-chart-empty">No hourly performance data.</div>;
   }
 
   return (
-    <div
-      style={{
-        background: "#fff",
-        borderRadius: 8,
-        padding: 16,
-        boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
-        marginTop: 12,
-      }}
-    >
-      <h3 style={{ marginTop: 0, marginBottom: 12 }}>Hourly Performance (UTC)</h3>
-      <div style={{ width: "100%", height: 280 }}>
+    <div className="dashboard-chart-card">
+      <div className="dashboard-chart-header">
+        <div>
+          <div className="dashboard-chart-title">Hourly Performance (UTC)</div>
+          <div className="dashboard-chart-subtitle">
+            Reveals where the edge improves or fades across the intraday schedule.
+          </div>
+        </div>
+        <div className="dashboard-chart-meta">Intraday</div>
+      </div>
+      <div style={{ width: "100%", height: 300 }}>
         <ResponsiveContainer>
-          <BarChart data={data}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="entryHourUtc" />
-            <YAxis />
-            <Tooltip formatter={formatTooltipValue} />
-            <Bar dataKey="realizedPnlTotal" name="Realized P&amp;L" />
+          <BarChart data={data} margin={{ top: 10, right: 10, left: -16, bottom: 0 }}>
+            <CartesianGrid stroke="rgba(80, 62, 37, 0.08)" strokeDasharray="4 8" vertical={false} />
+            <XAxis
+              dataKey="entryHourUtc"
+              stroke="#8c7f69"
+              tick={{ fill: "#7b705f", fontSize: 12 }}
+              tickLine={false}
+              axisLine={false}
+            />
+            <YAxis
+              stroke="#8c7f69"
+              tick={{ fill: "#7b705f", fontSize: 12 }}
+              tickLine={false}
+              axisLine={false}
+              tickFormatter={formatCurrency}
+            />
+            <Tooltip content={<HourlyTooltip />} cursor={{ fill: "rgba(49, 91, 182, 0.08)" }} />
+            <Bar dataKey="realizedPnlTotal" name="Realized P&L" fill="#315bb6" radius={[8, 8, 2, 2]} />
           </BarChart>
         </ResponsiveContainer>
       </div>

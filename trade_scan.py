@@ -914,6 +914,9 @@ def run_scan(account_size: float, mode: str, current_open_positions: int = 0, cu
                 current_open_positions=current_open_positions,
                 current_open_exposure=current_open_exposure,
             )
+            result["info"] = info
+            result["candles"] = candles
+            result["benchmark_directions"] = benchmark_directions
             evaluations.append(result)
             if result["decision"] == "VALID":
                 valid_trades.append(result)

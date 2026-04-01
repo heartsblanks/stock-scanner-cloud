@@ -1,88 +1,99 @@
-function formatValue(value) {
-  if (value === null || value === undefined || value === "") {
-    return "-";
+import {
+  formatCurrency,
+  formatNumber,
+  formatPercent,
+  formatTimestamp,
+  formatValue,
+  signedTone,
+} from "./tableFormatters";
+
+function statusBadge(status) {
+  if (status === "CLOSED") {
+    return "dashboard-badge dashboard-badge-neutral";
   }
-  if (typeof value === "number") {
-    return value.toFixed(2);
+  if (status === "OPEN") {
+    return "dashboard-badge dashboard-badge-ok";
   }
-  return String(value);
+  return "dashboard-badge dashboard-badge-warn";
+}
+
+function directionBadge(direction) {
+  if (direction === "LONG") {
+    return "dashboard-badge dashboard-badge-ok";
+  }
+  if (direction === "SHORT") {
+    return "dashboard-badge dashboard-badge-info";
+  }
+  return "dashboard-badge dashboard-badge-neutral";
 }
 
 export default function TradeLifecycleTable({ rows }) {
   if (!rows || rows.length === 0) {
-    return <div style={{ marginTop: 12 }}>No trade lifecycle data.</div>;
+    return <div className="dashboard-empty">No trade lifecycle data.</div>;
   }
 
   return (
-    <div style={{ overflowX: "auto", marginTop: 12 }}>
-      <table
-        style={{
-          width: "100%",
-          borderCollapse: "collapse",
-          background: "#fff",
-        }}
-      >
+    <div className="dashboard-table-wrap">
+      <table className="dashboard-table">
         <thead>
           <tr>
-            <th style={thStyle}>Symbol</th>
-            <th style={thStyle}>Mode</th>
-            <th style={thStyle}>Status</th>
-            <th style={thStyle}>Direction</th>
-            <th style={thStyle}>Shares</th>
-            <th style={thStyle}>Position Cost</th>
-            <th style={thStyle}>Per Trade Notional</th>
-            <th style={thStyle}>Remaining Slots</th>
-            <th style={thStyle}>Entry Price</th>
-            <th style={thStyle}>Exit Price</th>
-            <th style={thStyle}>P&amp;L</th>
-            <th style={thStyle}>Take Profit ($)</th>
-            <th style={thStyle}>P&amp;L %</th>
-            <th style={thStyle}>Exit Reason</th>
-            <th style={thStyle}>Duration (min)</th>
-            <th style={thStyle}>Entry Time</th>
-            <th style={thStyle}>Exit Time</th>
+            <th>Symbol</th>
+            <th>Mode</th>
+            <th>Status</th>
+            <th>Direction</th>
+            <th>Shares</th>
+            <th>Position Cost</th>
+            <th>Per Trade Notional</th>
+            <th>Remaining Slots</th>
+            <th>Entry Price</th>
+            <th>Exit Price</th>
+            <th>P&amp;L</th>
+            <th>Take Profit</th>
+            <th>P&amp;L %</th>
+            <th>Exit Reason</th>
+            <th>Duration</th>
+            <th>Entry Time</th>
+            <th>Exit Time</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, index) => (
-            <tr key={`${row.trade_key || row.symbol || "lifecycle"}-${index}`}>
-              <td style={tdStyle}>{formatValue(row.symbol)}</td>
-              <td style={tdStyle}>{formatValue(row.mode)}</td>
-              <td style={tdStyle}>{formatValue(row.status)}</td>
-              <td style={tdStyle}>{formatValue(row.direction)}</td>
-              <td style={tdStyle}>{formatValue(row.shares)}</td>
-              <td style={tdStyle}>{formatValue(row.position_cost)}</td>
-              <td style={tdStyle}>{formatValue(row.per_trade_notional)}</td>
-              <td style={tdStyle}>{formatValue(row.remaining_slots)}</td>
-              <td style={tdStyle}>{formatValue(row.entry_price)}</td>
-              <td style={tdStyle}>{formatValue(row.exit_price)}</td>
-              <td style={tdStyle}>{formatValue(row.realized_pnl)}</td>
-              <td style={tdStyle}>{formatValue(row.take_profit_dollars)}</td>
-              <td style={tdStyle}>{formatValue(row.realized_pnl_percent)}</td>
-              <td style={tdStyle}>{formatValue(row.exit_reason)}</td>
-              <td style={tdStyle}>{formatValue(row.duration_minutes)}</td>
-              <td style={tdStyle}>{formatValue(row.entry_time)}</td>
-              <td style={tdStyle}>{formatValue(row.exit_time)}</td>
-            </tr>
-          ))}
+          {rows.map((row, index) => {
+            const pnlTone = signedTone(row.realized_pnl);
+            const rowTone =
+              pnlTone === "dashboard-cell-positive"
+                ? "dashboard-table-row-positive"
+                : pnlTone === "dashboard-cell-negative"
+                  ? "dashboard-table-row-negative"
+                  : "";
+
+            return (
+              <tr key={`${row.trade_key || row.symbol || "lifecycle"}-${index}`} className={rowTone}>
+                <td className="dashboard-cell-strong">{formatValue(row.symbol)}</td>
+                <td>{formatValue(row.mode)}</td>
+                <td>
+                  <span className={statusBadge(row.status)}>{formatValue(row.status)}</span>
+                </td>
+                <td>
+                  <span className={directionBadge(row.direction)}>{formatValue(row.direction)}</span>
+                </td>
+                <td>{formatNumber(row.shares, 0)}</td>
+                <td>{formatCurrency(row.position_cost)}</td>
+                <td>{formatCurrency(row.per_trade_notional)}</td>
+                <td>{formatNumber(row.remaining_slots, 0)}</td>
+                <td>{formatCurrency(row.entry_price)}</td>
+                <td>{formatCurrency(row.exit_price)}</td>
+                <td className={pnlTone}>{formatCurrency(row.realized_pnl)}</td>
+                <td>{formatCurrency(row.take_profit_dollars)}</td>
+                <td className={signedTone(row.realized_pnl_percent)}>{formatPercent(row.realized_pnl_percent)}</td>
+                <td>{formatValue(row.exit_reason)}</td>
+                <td>{formatNumber(row.duration_minutes, 1)} min</td>
+                <td className="dashboard-cell-muted">{formatTimestamp(row.entry_time)}</td>
+                <td className="dashboard-cell-muted">{formatTimestamp(row.exit_time)}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
   );
 }
-
-const thStyle = {
-  textAlign: "left",
-  padding: "12px 10px",
-  borderBottom: "1px solid #ddd",
-  background: "#f7f7f7",
-  fontSize: 14,
-  whiteSpace: "nowrap",
-};
-
-const tdStyle = {
-  padding: "10px",
-  borderBottom: "1px solid #eee",
-  fontSize: 14,
-  whiteSpace: "nowrap",
-};

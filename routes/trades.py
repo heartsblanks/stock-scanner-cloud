@@ -2,82 +2,13 @@ from datetime import datetime, timezone
 
 from flask import jsonify, request
 from logging_utils import log_exception, log_warning
-
-
-def _normalize_trade_key(symbol: str, broker_parent_order_id: str, broker_order_id: str) -> str:
-    return broker_parent_order_id or broker_order_id or symbol
-
-
-def _infer_direction_from_prices(entry_price, exit_price, stop_price, target_price) -> str | None:
-    entry_val = to_float_fallback(entry_price)
-    stop_val = to_float_fallback(stop_price)
-    target_val = to_float_fallback(target_price)
-    exit_val = to_float_fallback(exit_price)
-
-    if entry_val is not None and target_val is not None and stop_val is not None:
-        if target_val > entry_val and stop_val < entry_val:
-            return "LONG"
-        if target_val < entry_val and stop_val > entry_val:
-            return "SHORT"
-
-    if entry_val is not None and exit_val is not None:
-        if exit_val > entry_val:
-            return "LONG"
-        if exit_val < entry_val:
-            return "SHORT"
-
-    return None
-
-
-def _compute_realized_pnl(entry_price, exit_price, shares, direction):
-    entry_val = to_float_fallback(entry_price)
-    exit_val = to_float_fallback(exit_price)
-    shares_val = to_float_fallback(shares)
-    direction_val = str(direction or "").strip().upper()
-
-    if entry_val is None or exit_val is None or shares_val is None:
-        return None
-
-    if direction_val == "LONG":
-        return round((exit_val - entry_val) * shares_val, 6)
-    if direction_val == "SHORT":
-        return round((entry_val - exit_val) * shares_val, 6)
-    return None
-
-
-def _compute_realized_pnl_percent(entry_price, exit_price, direction):
-    entry_val = to_float_fallback(entry_price)
-    exit_val = to_float_fallback(exit_price)
-    direction_val = str(direction or "").strip().upper()
-
-    if entry_val in (None, 0) or exit_val is None:
-        return None
-
-    if direction_val == "LONG":
-        return round(((exit_val - entry_val) / entry_val) * 100.0, 6)
-    if direction_val == "SHORT":
-        return round(((entry_val - exit_val) / entry_val) * 100.0, 6)
-    return None
-
-
-def _compute_duration_minutes(entry_timestamp_utc: str | None, exit_timestamp_utc: str | None, parse_iso_utc_func):
-    if not entry_timestamp_utc or not exit_timestamp_utc:
-        return None
-    try:
-        entry_dt = parse_iso_utc_func(entry_timestamp_utc)
-        exit_dt = parse_iso_utc_func(exit_timestamp_utc)
-        return round((exit_dt - entry_dt).total_seconds() / 60.0, 2)
-    except Exception:
-        return None
-
-
-def to_float_fallback(value):
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+from trade_math import (
+    compute_duration_minutes,
+    compute_realized_pnl,
+    compute_realized_pnl_percent,
+    infer_direction,
+    normalize_trade_key,
+)
 
 
 
@@ -142,7 +73,7 @@ def register_trade_routes(
         actual_entry_price = to_float_or_none(price)
 
         timestamp_utc = datetime.now(timezone.utc).isoformat()
-        trade_key = _normalize_trade_key(symbol, broker_parent_order_id, broker_order_id)
+        trade_key = normalize_trade_key(symbol, broker_parent_order_id, broker_order_id)
 
         linked_signal_timestamp_utc = ""
         linked_signal_entry = ""
@@ -173,7 +104,7 @@ def register_trade_routes(
             exit_price = ""
             exit_reason = ""
             status = "OPEN"
-            direction = _infer_direction_from_prices(entry_price, exit_price, stop_price, target_price)
+            direction = infer_direction(entry_price, exit_price, stop_price, target_price)
 
         elif event_type == "STOP_HIT":
             open_row = find_latest_open_trade(symbol, trade_source=trade_source, broker_parent_order_id=broker_parent_order_id)
@@ -193,10 +124,13 @@ def register_trade_routes(
             status = "CLOSED"
             open_timestamp_utc = open_row.get("timestamp_utc", "") if open_row else ""
             open_entry_price = open_row.get("entry_price", "") if open_row else ""
-            direction = _infer_direction_from_prices(open_entry_price, exit_price, stop_price, target_price)
-            realized_pnl = _compute_realized_pnl(open_entry_price, exit_price, shares, direction)
-            realized_pnl_percent = _compute_realized_pnl_percent(open_entry_price, exit_price, direction)
-            duration_minutes = _compute_duration_minutes(open_timestamp_utc, timestamp_utc, parse_iso_utc)
+            direction = infer_direction(open_entry_price, exit_price, stop_price, target_price)
+            realized_pnl = compute_realized_pnl(open_entry_price, exit_price, shares, direction)
+            realized_pnl_percent = compute_realized_pnl_percent(open_entry_price, exit_price, direction)
+            duration_minutes = compute_duration_minutes(
+                parse_iso_utc(open_timestamp_utc) if open_timestamp_utc else None,
+                parse_iso_utc(timestamp_utc),
+            )
 
         elif event_type == "TARGET_HIT":
             open_row = find_latest_open_trade(symbol, trade_source=trade_source, broker_parent_order_id=broker_parent_order_id)
@@ -220,10 +154,13 @@ def register_trade_routes(
             status = "CLOSED"
             open_timestamp_utc = open_row.get("timestamp_utc", "") if open_row else ""
             open_entry_price = open_row.get("entry_price", "") if open_row else ""
-            direction = _infer_direction_from_prices(open_entry_price, exit_price, stop_price, target_price)
-            realized_pnl = _compute_realized_pnl(open_entry_price, exit_price, shares, direction)
-            realized_pnl_percent = _compute_realized_pnl_percent(open_entry_price, exit_price, direction)
-            duration_minutes = _compute_duration_minutes(open_timestamp_utc, timestamp_utc, parse_iso_utc)
+            direction = infer_direction(open_entry_price, exit_price, stop_price, target_price)
+            realized_pnl = compute_realized_pnl(open_entry_price, exit_price, shares, direction)
+            realized_pnl_percent = compute_realized_pnl_percent(open_entry_price, exit_price, direction)
+            duration_minutes = compute_duration_minutes(
+                parse_iso_utc(open_timestamp_utc) if open_timestamp_utc else None,
+                parse_iso_utc(timestamp_utc),
+            )
 
         else:
             open_row = find_latest_open_trade(symbol, trade_source=trade_source, broker_parent_order_id=broker_parent_order_id)
@@ -247,10 +184,13 @@ def register_trade_routes(
             status = "CLOSED"
             open_timestamp_utc = open_row.get("timestamp_utc", "") if open_row else ""
             open_entry_price = open_row.get("entry_price", "") if open_row else ""
-            direction = _infer_direction_from_prices(open_entry_price, exit_price, stop_price, target_price)
-            realized_pnl = _compute_realized_pnl(open_entry_price, exit_price, shares, direction)
-            realized_pnl_percent = _compute_realized_pnl_percent(open_entry_price, exit_price, direction)
-            duration_minutes = _compute_duration_minutes(open_timestamp_utc, timestamp_utc, parse_iso_utc)
+            direction = infer_direction(open_entry_price, exit_price, stop_price, target_price)
+            realized_pnl = compute_realized_pnl(open_entry_price, exit_price, shares, direction)
+            realized_pnl_percent = compute_realized_pnl_percent(open_entry_price, exit_price, direction)
+            duration_minutes = compute_duration_minutes(
+                parse_iso_utc(open_timestamp_utc) if open_timestamp_utc else None,
+                parse_iso_utc(timestamp_utc),
+            )
 
         if event_type == "OPEN":
             realized_pnl = None
@@ -459,7 +399,7 @@ def register_trade_routes(
     def open_trades():
         try:
             limit = int(request.args.get("limit", 100))
-            rows = get_open_trade_events(limit=limit)
+            rows = get_trade_lifecycles(limit=limit, status="OPEN")
             return jsonify({
                 "ok": True,
                 "count": len(rows),
@@ -474,7 +414,7 @@ def register_trade_routes(
     def closed_trades():
         try:
             limit = int(request.args.get("limit", 100))
-            rows = get_closed_trade_events(limit=limit)
+            rows = get_trade_lifecycles(limit=limit, status="CLOSED")
             return jsonify({
                 "ok": True,
                 "count": len(rows),

@@ -1,53 +1,10 @@
-import React from "react";
+import { formatCurrency, formatNumber, formatTimestamp, formatValue } from "./tableFormatters";
 
-function formatValue(value) {
-  if (value === null || value === undefined || value === "") {
-    return "-";
-  }
-  return value;
-}
-
-const tableWrapStyle = {
-  background: "#fff",
-  borderRadius: 8,
-  padding: 16,
-  boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
-  overflowX: "auto",
-};
-
-const tableStyle = {
-  width: "100%",
-  borderCollapse: "collapse",
-  minWidth: 1200,
-};
-
-const thStyle = {
-  textAlign: "left",
-  padding: "10px 12px",
-  borderBottom: "1px solid #e5e7eb",
-  fontSize: 13,
-  color: "#374151",
-  background: "#f9fafb",
-  whiteSpace: "nowrap",
-};
-
-const tdStyle = {
-  padding: "10px 12px",
-  borderBottom: "1px solid #f1f5f9",
-  fontSize: 13,
-  color: "#111827",
-  verticalAlign: "top",
-  whiteSpace: "nowrap",
-};
-
-function getStatusStyle(status) {
+function getStatusClass(status) {
   const normalized = String(status || "").trim().toLowerCase();
 
   if (normalized === "matched") {
-    return {
-      background: "#dcfce7",
-      color: "#166534",
-    };
+    return "dashboard-badge dashboard-badge-ok";
   }
 
   if (
@@ -55,94 +12,77 @@ function getStatusStyle(status) {
     normalized === "missing_in_db" ||
     normalized === "exit_not_resolved"
   ) {
-    return {
-      background: "#fee2e2",
-      color: "#991b1b",
-    };
+    return "dashboard-badge dashboard-badge-danger";
   }
 
-  return {
-    background: "#fef3c7",
-    color: "#92400e",
-  };
+  return "dashboard-badge dashboard-badge-warn";
 }
 
-function StatusBadge({ status }) {
-  const style = getStatusStyle(status);
-
-  return (
-    <span
-      style={{
-        display: "inline-block",
-        padding: "4px 8px",
-        borderRadius: 999,
-        fontSize: 12,
-        fontWeight: 600,
-        background: style.background,
-        color: style.color,
-      }}
-    >
-      {formatValue(status)}
-    </span>
-  );
+function toneForMismatch(row) {
+  const status = String(row?.match_status || "").trim().toLowerCase();
+  if (status === "matched") {
+    return "";
+  }
+  if (status === "missing_in_alpaca" || status === "missing_in_db" || status === "exit_not_resolved") {
+    return "dashboard-table-row-negative";
+  }
+  return "";
 }
 
 export default function ReconciliationDetailsTable({ rows = [] }) {
   return (
-    <div style={tableWrapStyle}>
+    <div className="dashboard-table-wrap">
       {rows.length === 0 ? (
-        <div style={{ color: "#6b7280", fontSize: 14 }}>
-          No reconciliation detail rows available
-        </div>
+        <div className="dashboard-empty">No reconciliation detail rows available</div>
       ) : (
-        <table style={tableStyle}>
+        <table className="dashboard-table" style={{ minWidth: 1200 }}>
           <thead>
             <tr>
-              <th style={thStyle}>Status</th>
-              <th style={thStyle}>Symbol</th>
-              <th style={thStyle}>Mode</th>
-              <th style={thStyle}>Parent Order ID</th>
-              <th style={thStyle}>Client Order ID</th>
-              <th style={thStyle}>Local Entry Time</th>
-              <th style={thStyle}>Local Exit Time</th>
-              <th style={thStyle}>Local Entry Price</th>
-              <th style={thStyle}>Alpaca Entry Price</th>
-              <th style={thStyle}>Entry Price Diff</th>
-              <th style={thStyle}>Local Exit Price</th>
-              <th style={thStyle}>Alpaca Exit Price</th>
-              <th style={thStyle}>Exit Price Diff</th>
-              <th style={thStyle}>Local Shares</th>
-              <th style={thStyle}>Alpaca Entry Qty</th>
-              <th style={thStyle}>Alpaca Exit Qty</th>
-              <th style={thStyle}>Local Exit Reason</th>
-              <th style={thStyle}>Alpaca Exit Reason</th>
-              <th style={thStyle}>Alpaca Exit Order ID</th>
+              <th>Status</th>
+              <th>Symbol</th>
+              <th>Mode</th>
+              <th>Parent Order ID</th>
+              <th>Client Order ID</th>
+              <th>Local Entry Time</th>
+              <th>Local Exit Time</th>
+              <th>Local Entry Price</th>
+              <th>Alpaca Entry Price</th>
+              <th>Entry Price Diff</th>
+              <th>Local Exit Price</th>
+              <th>Alpaca Exit Price</th>
+              <th>Exit Price Diff</th>
+              <th>Local Shares</th>
+              <th>Alpaca Entry Qty</th>
+              <th>Alpaca Exit Qty</th>
+              <th>Local Exit Reason</th>
+              <th>Alpaca Exit Reason</th>
+              <th>Alpaca Exit Order ID</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row, index) => (
-              <tr key={`${row.broker_parent_order_id || "row"}-${index}`}>
-                <td style={tdStyle}>
-                  <StatusBadge status={row.match_status} />
+              <tr key={`${row.broker_parent_order_id || "row"}-${index}`} className={toneForMismatch(row)}>
+                <td>
+                  <span className={getStatusClass(row.match_status)}>{formatValue(row.match_status)}</span>
                 </td>
-                <td style={tdStyle}>{formatValue(row.symbol)}</td>
-                <td style={tdStyle}>{formatValue(row.mode)}</td>
-                <td style={tdStyle}>{formatValue(row.broker_parent_order_id)}</td>
-                <td style={tdStyle}>{formatValue(row.client_order_id)}</td>
-                <td style={tdStyle}>{formatValue(row.local_entry_timestamp_utc)}</td>
-                <td style={tdStyle}>{formatValue(row.local_exit_timestamp_utc)}</td>
-                <td style={tdStyle}>{formatValue(row.local_entry_price)}</td>
-                <td style={tdStyle}>{formatValue(row.alpaca_entry_price)}</td>
-                <td style={tdStyle}>{formatValue(row.entry_price_diff)}</td>
-                <td style={tdStyle}>{formatValue(row.local_exit_price)}</td>
-                <td style={tdStyle}>{formatValue(row.alpaca_exit_price)}</td>
-                <td style={tdStyle}>{formatValue(row.exit_price_diff)}</td>
-                <td style={tdStyle}>{formatValue(row.local_shares)}</td>
-                <td style={tdStyle}>{formatValue(row.alpaca_entry_qty)}</td>
-                <td style={tdStyle}>{formatValue(row.alpaca_exit_qty)}</td>
-                <td style={tdStyle}>{formatValue(row.local_exit_reason)}</td>
-                <td style={tdStyle}>{formatValue(row.alpaca_exit_reason)}</td>
-                <td style={tdStyle}>{formatValue(row.alpaca_exit_order_id)}</td>
+                <td className="dashboard-cell-strong">{formatValue(row.symbol)}</td>
+                <td>{formatValue(row.mode)}</td>
+                <td className="dashboard-cell-muted">{formatValue(row.broker_parent_order_id)}</td>
+                <td className="dashboard-cell-muted">{formatValue(row.client_order_id)}</td>
+                <td className="dashboard-cell-muted">{formatTimestamp(row.local_entry_timestamp_utc)}</td>
+                <td className="dashboard-cell-muted">{formatTimestamp(row.local_exit_timestamp_utc)}</td>
+                <td>{formatCurrency(row.local_entry_price)}</td>
+                <td>{formatCurrency(row.alpaca_entry_price)}</td>
+                <td>{formatCurrency(row.entry_price_diff)}</td>
+                <td>{formatCurrency(row.local_exit_price)}</td>
+                <td>{formatCurrency(row.alpaca_exit_price)}</td>
+                <td>{formatCurrency(row.exit_price_diff)}</td>
+                <td>{formatNumber(row.local_shares, 0)}</td>
+                <td>{formatNumber(row.alpaca_entry_qty, 0)}</td>
+                <td>{formatNumber(row.alpaca_exit_qty, 0)}</td>
+                <td>{formatValue(row.local_exit_reason)}</td>
+                <td>{formatValue(row.alpaca_exit_reason)}</td>
+                <td className="dashboard-cell-muted">{formatValue(row.alpaca_exit_order_id)}</td>
               </tr>
             ))}
           </tbody>
