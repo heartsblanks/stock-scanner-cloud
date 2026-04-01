@@ -1,0 +1,54 @@
+name: Backend Tests
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile Python files
+        run: |
+          python -m py_compile \
+            app.py \
+            app_orchestration.py \
+            paper_trade_context.py \
+            scan_context.py \
+            storage.py \
+            db.py \
+            logging_utils.py \
+            export_daily_snapshot.py \
+            export_reports.py \
+            trade_analysis.py \
+            signal_analysis.py \
+            alpaca_reconcile.py \
+            alpaca_sync.py \
+            paper_alpaca.py \
+            trade_scan.py \
+            routes/*.py \
+            services/*.py \
+            repositories/*.py \
+            tests/*.py
+
+      - name: Run backend tests
+        run: python -m unittest discover -s tests -v
