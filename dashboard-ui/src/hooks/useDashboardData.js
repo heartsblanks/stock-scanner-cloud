@@ -14,6 +14,8 @@ import {
   fetchOpsSummary,
   fetchPaperTradeAttemptDailySummary,
   fetchPaperTradeAttemptRejections,
+  runReconciliationNow,
+  runSyncPaperTrades,
 } from "../api/dashboard";
 
 const AUTO_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
@@ -61,7 +63,7 @@ const INITIAL_SECTION_ERRORS = {
   attempts: null,
 };
 
-export function useDashboardData() {
+export function useDashboardData(activeView = "overview") {
   const [summary, setSummary] = useState(null);
   const [openTrades, setOpenTrades] = useState([]);
   const [lifecycle, setLifecycle] = useState([]);
@@ -92,6 +94,162 @@ export function useDashboardData() {
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const filtersRef = useRef(filters);
 
+  const loadOverviewSection = useCallback(async (activeFilters = filtersRef.current) => {
+    try {
+      setSectionLoading((prev) => ({ ...prev, overview: true, sizing: true }));
+      const [summaryRes, openRes, lifecycleRes, latestScanRes] = await Promise.all([
+        fetchDashboardSummary(activeFilters?.date || undefined),
+        fetchOpenTrades(100),
+        fetchTradeLifecycle(200),
+        fetchLatestScanSummary(),
+      ]);
+
+      const openRows = openRes?.rows || [];
+      const lifecycleRows = lifecycleRes?.rows || [];
+
+      if (activeFilters?.symbol) {
+        const normalized = String(activeFilters.symbol).trim().toUpperCase();
+        setOpenTrades(openRows.filter((row) => String(row?.symbol || "").trim().toUpperCase() === normalized));
+        setLifecycle(
+          lifecycleRows.filter((row) => String(row?.symbol || "").trim().toUpperCase() === normalized)
+        );
+      } else {
+        setOpenTrades(openRows);
+        setLifecycle(lifecycleRows);
+      }
+
+      setSummary(summaryRes || null);
+      setLatestScanSummary(latestScanRes || null);
+      setSectionErrors((prev) => ({ ...prev, overview: null, sizing: null }));
+    } catch (sectionErr) {
+      const message = sectionErr?.message || "Failed to load dashboard overview";
+      setSectionErrors((prev) => ({
+        ...prev,
+        overview: message,
+        sizing: sectionErr?.message || "Failed to load sizing summary",
+      }));
+      throw sectionErr;
+    } finally {
+      setSectionLoading((prev) => ({ ...prev, overview: false, sizing: false }));
+    }
+  }, []);
+
+  const loadAttemptsSection = useCallback(async () => {
+    try {
+      setSectionLoading((prev) => ({ ...prev, attempts: true }));
+      const [opsRes, rejectionRes, dailyRes] = await Promise.all([
+        fetchOpsSummary(),
+        fetchPaperTradeAttemptRejections(12),
+        fetchPaperTradeAttemptDailySummary(7),
+      ]);
+
+      setOpsSummary(opsRes || null);
+      setPaperTradeAttemptRejections(Array.isArray(rejectionRes?.rows) ? rejectionRes.rows : []);
+      setPaperTradeAttemptDailySummary(Array.isArray(dailyRes?.rows) ? dailyRes.rows : []);
+      setSectionErrors((prev) => ({ ...prev, attempts: null }));
+    } catch (sectionErr) {
+      setSectionErrors((prev) => ({
+        ...prev,
+        attempts: sectionErr?.message || "Failed to load execution attempt analytics",
+      }));
+      throw sectionErr;
+    } finally {
+      setSectionLoading((prev) => ({ ...prev, attempts: false }));
+    }
+  }, []);
+
+  const loadReconciliationSection = useCallback(async () => {
+    try {
+      setSectionLoading((prev) => ({ ...prev, reconciliation: true }));
+      const [reconRes, reconDetailsRes, reconHistoryRes, alpacaRes] = await Promise.all([
+        fetchReconciliationSummary(),
+        fetchReconciliationDetails(100),
+        fetchReconciliationHistory(20),
+        fetchAlpacaOpenPositions(),
+      ]);
+
+      setReconciliationSummary(reconRes || null);
+      setReconciliationDetails(Array.isArray(reconDetailsRes?.rows) ? reconDetailsRes.rows : []);
+      setReconciliationHistory(Array.isArray(reconHistoryRes?.rows) ? reconHistoryRes.rows : []);
+      setLastReconciliationStatus(reconRes?.severity || null);
+      setLastReconciliationAt(new Date().toISOString());
+      setAlpacaOpenCount(alpacaRes?.count ?? null);
+      setSectionErrors((prev) => ({ ...prev, reconciliation: null }));
+    } catch (sectionErr) {
+      setSectionErrors((prev) => ({
+        ...prev,
+        reconciliation: sectionErr?.message || "Failed to load reconciliation data",
+      }));
+      throw sectionErr;
+    } finally {
+      setSectionLoading((prev) => ({ ...prev, reconciliation: false }));
+    }
+  }, []);
+
+  const loadRiskSection = useCallback(async () => {
+    try {
+      setSectionLoading((prev) => ({ ...prev, risk: true }));
+      const riskRes = await fetchRiskExposureSummary();
+      setRiskExposureSummary(riskRes || null);
+      setSectionErrors((prev) => ({ ...prev, risk: null }));
+    } catch (sectionErr) {
+      setSectionErrors((prev) => ({
+        ...prev,
+        risk: sectionErr?.message || "Failed to load risk exposure data",
+      }));
+      throw sectionErr;
+    } finally {
+      setSectionLoading((prev) => ({ ...prev, risk: false }));
+    }
+  }, []);
+
+  const loadAlpacaLogsSection = useCallback(async () => {
+    try {
+      setSectionLoading((prev) => ({ ...prev, alpacaLogs: true }));
+      const [alpacaLogsRes, alpacaErrorsRes] = await Promise.all([
+        fetchAlpacaApiLogs(20),
+        fetchAlpacaApiErrors(20),
+      ]);
+      setAlpacaApiLogs(Array.isArray(alpacaLogsRes?.rows) ? alpacaLogsRes.rows : []);
+      setAlpacaApiErrors(Array.isArray(alpacaErrorsRes?.rows) ? alpacaErrorsRes.rows : []);
+      setSectionErrors((prev) => ({ ...prev, alpacaLogs: null }));
+    } catch (sectionErr) {
+      setSectionErrors((prev) => ({
+        ...prev,
+        alpacaLogs: sectionErr?.message || "Failed to load Alpaca API logs",
+      }));
+      throw sectionErr;
+    } finally {
+      setSectionLoading((prev) => ({ ...prev, alpacaLogs: false }));
+    }
+  }, []);
+
+  const refreshByView = useCallback(async (view = activeView, activeFilters = filtersRef.current) => {
+    const tasks = [];
+
+    if (view === "overview") {
+      tasks.push(loadOverviewSection(activeFilters), loadAttemptsSection(), loadReconciliationSection(), loadRiskSection());
+    } else if (view === "trades") {
+      tasks.push(loadOverviewSection(activeFilters), loadRiskSection());
+    } else if (view === "reconciliation") {
+      tasks.push(loadReconciliationSection());
+    } else if (view === "broker") {
+      tasks.push(loadAlpacaLogsSection());
+    } else if (view === "analytics") {
+      tasks.push(loadOverviewSection(activeFilters), loadAttemptsSection());
+    } else {
+      tasks.push(
+        loadOverviewSection(activeFilters),
+        loadAttemptsSection(),
+        loadReconciliationSection(),
+        loadRiskSection(),
+        loadAlpacaLogsSection()
+      );
+    }
+
+    await Promise.all(tasks);
+  }, [activeView, loadAlpacaLogsSection, loadAttemptsSection, loadOverviewSection, loadReconciliationSection, loadRiskSection]);
+
   const loadData = useCallback(async (activeFilters = filtersRef.current) => {
     try {
       setLoading(true);
@@ -99,117 +257,13 @@ export function useDashboardData() {
       setSectionLoading(INITIAL_SECTION_LOADING);
       setSectionErrors(INITIAL_SECTION_ERRORS);
 
-      try {
-        const [summaryRes, openRes, lifecycleRes, latestScanRes] = await Promise.all([
-          fetchDashboardSummary(activeFilters?.date || undefined),
-          fetchOpenTrades(100),
-          fetchTradeLifecycle(200),
-          fetchLatestScanSummary(),
-        ]);
-
-        const openRows = openRes?.rows || [];
-        const lifecycleRows = lifecycleRes?.rows || [];
-
-        if (activeFilters?.symbol) {
-          const normalized = String(activeFilters.symbol).trim().toUpperCase();
-          setOpenTrades(
-            openRows.filter((row) => String(row?.symbol || "").trim().toUpperCase() === normalized)
-          );
-          setLifecycle(
-            lifecycleRows.filter((row) => String(row?.symbol || "").trim().toUpperCase() === normalized)
-          );
-        } else {
-          setOpenTrades(openRows);
-          setLifecycle(lifecycleRows);
-        }
-
-        setSummary(summaryRes || null);
-        setLatestScanSummary(latestScanRes || null);
-        setSectionErrors((prev) => ({ ...prev, overview: null, sizing: null }));
-      } catch (sectionErr) {
-        const message = sectionErr?.message || "Failed to load dashboard overview";
-        setSectionErrors((prev) => ({
-          ...prev,
-          overview: message,
-          sizing: sectionErr?.message || "Failed to load sizing summary",
-        }));
-      } finally {
-        setSectionLoading((prev) => ({ ...prev, overview: false, sizing: false }));
-      }
-
-      try {
-        const [opsRes, rejectionRes, dailyRes] = await Promise.all([
-          fetchOpsSummary(),
-          fetchPaperTradeAttemptRejections(12),
-          fetchPaperTradeAttemptDailySummary(7),
-        ]);
-
-        setOpsSummary(opsRes || null);
-        setPaperTradeAttemptRejections(Array.isArray(rejectionRes?.rows) ? rejectionRes.rows : []);
-        setPaperTradeAttemptDailySummary(Array.isArray(dailyRes?.rows) ? dailyRes.rows : []);
-        setSectionErrors((prev) => ({ ...prev, attempts: null }));
-      } catch (sectionErr) {
-        setSectionErrors((prev) => ({
-          ...prev,
-          attempts: sectionErr?.message || "Failed to load execution attempt analytics",
-        }));
-      } finally {
-        setSectionLoading((prev) => ({ ...prev, attempts: false }));
-      }
-
-      try {
-        const [reconRes, reconDetailsRes, reconHistoryRes, alpacaRes] = await Promise.all([
-          fetchReconciliationSummary(),
-          fetchReconciliationDetails(100),
-          fetchReconciliationHistory(20),
-          fetchAlpacaOpenPositions(),
-        ]);
-
-        setReconciliationSummary(reconRes || null);
-        setReconciliationDetails(Array.isArray(reconDetailsRes?.rows) ? reconDetailsRes.rows : []);
-        setReconciliationHistory(Array.isArray(reconHistoryRes?.rows) ? reconHistoryRes.rows : []);
-        setLastReconciliationStatus(reconRes?.severity || null);
-        setLastReconciliationAt(new Date().toISOString());
-        setAlpacaOpenCount(alpacaRes?.count ?? null);
-        setSectionErrors((prev) => ({ ...prev, reconciliation: null }));
-      } catch (sectionErr) {
-        setSectionErrors((prev) => ({
-          ...prev,
-          reconciliation: sectionErr?.message || "Failed to load reconciliation data",
-        }));
-      } finally {
-        setSectionLoading((prev) => ({ ...prev, reconciliation: false }));
-      }
-
-      try {
-        const riskRes = await fetchRiskExposureSummary();
-        setRiskExposureSummary(riskRes || null);
-        setSectionErrors((prev) => ({ ...prev, risk: null }));
-      } catch (sectionErr) {
-        setSectionErrors((prev) => ({
-          ...prev,
-          risk: sectionErr?.message || "Failed to load risk exposure data",
-        }));
-      } finally {
-        setSectionLoading((prev) => ({ ...prev, risk: false }));
-      }
-
-      try {
-        const [alpacaLogsRes, alpacaErrorsRes] = await Promise.all([
-          fetchAlpacaApiLogs(20),
-          fetchAlpacaApiErrors(20),
-        ]);
-        setAlpacaApiLogs(Array.isArray(alpacaLogsRes?.rows) ? alpacaLogsRes.rows : []);
-        setAlpacaApiErrors(Array.isArray(alpacaErrorsRes?.rows) ? alpacaErrorsRes.rows : []);
-        setSectionErrors((prev) => ({ ...prev, alpacaLogs: null }));
-      } catch (sectionErr) {
-        setSectionErrors((prev) => ({
-          ...prev,
-          alpacaLogs: sectionErr?.message || "Failed to load Alpaca API logs",
-        }));
-      } finally {
-        setSectionLoading((prev) => ({ ...prev, alpacaLogs: false }));
-      }
+      await Promise.all([
+        loadOverviewSection(activeFilters),
+        loadAttemptsSection(),
+        loadReconciliationSection(),
+        loadRiskSection(),
+        loadAlpacaLogsSection(),
+      ]);
 
       setLastUpdated(new Date().toISOString());
       setNextRefreshAt(new Date(Date.now() + AUTO_REFRESH_INTERVAL_MS).toISOString());
@@ -218,7 +272,7 @@ export function useDashboardData() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadAlpacaLogsSection, loadAttemptsSection, loadOverviewSection, loadReconciliationSection, loadRiskSection]);
 
   useEffect(() => {
     filtersRef.current = filters;
@@ -226,7 +280,7 @@ export function useDashboardData() {
 
   useEffect(() => {
     loadData(filtersRef.current);
-  }, [loadData, currentTime]);
+  }, [loadData]);
 
   useEffect(() => {
     const clockId = setInterval(() => {
@@ -235,6 +289,15 @@ export function useDashboardData() {
 
     return () => clearInterval(clockId);
   }, []);
+
+  useEffect(() => {
+    if (loading) {
+      return undefined;
+    }
+
+    refreshByView(activeView, filtersRef.current).catch(() => {});
+    return undefined;
+  }, [activeView, loading, refreshByView]);
 
   useEffect(() => {
     const marketSnapshot = getEasternMarketSnapshot(currentTime);
@@ -247,12 +310,12 @@ export function useDashboardData() {
       setNextRefreshAt(new Date(new Date(lastUpdated).getTime() + AUTO_REFRESH_INTERVAL_MS).toISOString());
     }
     const intervalId = setInterval(() => {
-      loadData(filtersRef.current);
+      refreshByView(activeView, filtersRef.current).catch(() => {});
       setNextRefreshAt(new Date(Date.now() + AUTO_REFRESH_INTERVAL_MS).toISOString());
     }, AUTO_REFRESH_INTERVAL_MS);
 
     return () => clearInterval(intervalId);
-  }, [currentTime, lastUpdated, loadData, nextRefreshAt]);
+  }, [activeView, currentTime, lastUpdated, nextRefreshAt, refreshByView]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -274,7 +337,9 @@ export function useDashboardData() {
   async function refreshData() {
     try {
       setIsRefreshing(true);
-      await loadData(filters);
+      await refreshByView(activeView, filtersRef.current);
+      setLastUpdated(new Date().toISOString());
+      setNextRefreshAt(new Date(Date.now() + AUTO_REFRESH_INTERVAL_MS).toISOString());
     } finally {
       setIsRefreshing(false);
     }
@@ -283,8 +348,7 @@ export function useDashboardData() {
   async function rerunReconciliation() {
     try {
       setIsRefreshing(true);
-      const res = await fetch("/reconcile-now", { method: "POST" });
-      const data = await res.json();
+      const data = await runReconciliationNow();
 
       if (data?.ok) {
         const nextSeverity = data?.result?.severity || data?.severity || "OK";
@@ -300,7 +364,8 @@ export function useDashboardData() {
         setLastReconciliationAt(new Date().toISOString());
       }
 
-      await loadData(filters);
+      await Promise.all([loadReconciliationSection(), loadOverviewSection(filtersRef.current)]);
+      setLastUpdated(new Date().toISOString());
     } finally {
       setIsRefreshing(false);
     }
@@ -309,8 +374,7 @@ export function useDashboardData() {
   async function syncPaperTrades() {
     try {
       setIsRunningSync(true);
-      const res = await fetch("/sync-paper-trades", { method: "POST" });
-      const data = await res.json();
+      const data = await runSyncPaperTrades();
 
       if (data?.ok) {
         setToast({ type: "success", message: "Paper trade sync completed successfully" });
@@ -321,7 +385,12 @@ export function useDashboardData() {
         });
       }
 
-      await loadData(filters);
+      await Promise.all([
+        loadOverviewSection(filtersRef.current),
+        loadRiskSection(),
+        loadAlpacaLogsSection(),
+      ]);
+      setLastUpdated(new Date().toISOString());
     } finally {
       setIsRunningSync(false);
     }

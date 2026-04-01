@@ -119,7 +119,7 @@ export default function DashboardPage() {
     rerunReconciliation,
     syncPaperTrades,
     alpacaOpenCount,
-  } = useDashboardData();
+  } = useDashboardData(activeView);
 
   const mismatchTone =
     mismatchLabel === "OK"
@@ -223,21 +223,7 @@ export default function DashboardPage() {
                   disabled={isRefreshing}
                   className="dashboard-button dashboard-button-primary"
                 >
-                  {isRefreshing ? "Refreshing..." : "Refresh Data"}
-                </button>
-                <button
-                  onClick={rerunReconciliation}
-                  disabled={isRefreshing}
-                  className="dashboard-button dashboard-button-secondary"
-                >
-                  Re-run Reconciliation
-                </button>
-                <button
-                  onClick={syncPaperTrades}
-                  disabled={isRefreshing || isRunningSync}
-                  className="dashboard-button dashboard-button-neutral"
-                >
-                  {isRunningSync ? "Syncing Trades..." : "Sync Paper Trades"}
+                  {isRefreshing ? "Refreshing..." : "Refresh View"}
                 </button>
                 <button
                   onClick={() => setTheme((currentTheme) => (currentTheme === "dark" ? "light" : "dark"))}
@@ -270,11 +256,10 @@ export default function DashboardPage() {
           <DashboardFilters onApply={handleApplyFilters} />
 
           <div className="dashboard-banner">
-            <div className="dashboard-banner-title">Operational Fix Actions</div>
+            <div className="dashboard-banner-title">Focused Operations</div>
             <div className="dashboard-banner-copy">
-              Use these actions when dashboard state looks stale or inconsistent. Refresh reloads dashboard data,
-              re-run reconciliation rebuilds mismatch visibility, and sync paper trades refreshes trade state from
-              Alpaca.
+              Refresh now follows the active view instead of reloading the whole dashboard. Manual sync and
+              reconciliation actions live inside their own workspaces so the landing page stays operational, not noisy.
             </div>
           </div>
 
@@ -391,6 +376,30 @@ export default function DashboardPage() {
           {activeView === "trades" && (
             <>
               <section className="dashboard-section">
+                <div className="dashboard-panel dashboard-panel-strong">
+                  <div className="dashboard-panel-body dashboard-panel-body-tight">
+                    <div className="dashboard-panel-heading">
+                      <div>
+                        <h2 className="dashboard-panel-title">Trade Actions</h2>
+                        <p className="dashboard-panel-subtitle">
+                          Sync refreshes local paper trade state from Alpaca when fills or exits look stale.
+                        </p>
+                      </div>
+                      <div className="dashboard-toolbar">
+                        <button
+                          onClick={syncPaperTrades}
+                          disabled={isRefreshing || isRunningSync}
+                          className="dashboard-button dashboard-button-secondary"
+                        >
+                          {isRunningSync ? "Syncing Trades..." : "Sync Paper Trades"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="dashboard-section">
                 <div className="dashboard-panel">
                   <div className="dashboard-panel-body">
                     <div className="dashboard-panel-heading">
@@ -429,21 +438,47 @@ export default function DashboardPage() {
           )}
 
           {activeView === "reconciliation" && (
-            <LazySection>
-              <ReconciliationSection
-                sectionLoading={sectionLoading}
-                sectionErrors={sectionErrors}
-                lastUpdated={lastUpdated}
-                lastReconciliationStatus={lastReconciliationStatus}
-                lastReconciliationAt={lastReconciliationAt}
-                reconciliationSummary={reconciliationSummary}
-                reconciliationSymbolFilter={reconciliationSymbolFilter}
-                setReconciliationSymbolFilter={setReconciliationSymbolFilter}
-                reconciliationSymbols={reconciliationSymbols}
-                filteredReconciliationDetails={filteredReconciliationDetails}
-                reconciliationHistory={reconciliationHistory}
-              />
-            </LazySection>
+            <>
+              <section className="dashboard-section">
+                <div className="dashboard-panel dashboard-panel-strong">
+                  <div className="dashboard-panel-body dashboard-panel-body-tight">
+                    <div className="dashboard-panel-heading">
+                      <div>
+                        <h2 className="dashboard-panel-title">Reconciliation Actions</h2>
+                        <p className="dashboard-panel-subtitle">
+                          Run reconciliation when you want a fresh mismatch audit against Alpaca and a new stored run.
+                        </p>
+                      </div>
+                      <div className="dashboard-toolbar">
+                        <button
+                          onClick={rerunReconciliation}
+                          disabled={isRefreshing}
+                          className="dashboard-button dashboard-button-secondary"
+                        >
+                          Re-run Reconciliation
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <LazySection>
+                <ReconciliationSection
+                  sectionLoading={sectionLoading}
+                  sectionErrors={sectionErrors}
+                  lastUpdated={lastUpdated}
+                  lastReconciliationStatus={lastReconciliationStatus}
+                  lastReconciliationAt={lastReconciliationAt}
+                  reconciliationSummary={reconciliationSummary}
+                  reconciliationSymbolFilter={reconciliationSymbolFilter}
+                  setReconciliationSymbolFilter={setReconciliationSymbolFilter}
+                  reconciliationSymbols={reconciliationSymbols}
+                  filteredReconciliationDetails={filteredReconciliationDetails}
+                  reconciliationHistory={reconciliationHistory}
+                />
+              </LazySection>
+            </>
           )}
 
           {activeView === "broker" && (

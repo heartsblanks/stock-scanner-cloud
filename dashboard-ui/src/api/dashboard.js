@@ -232,3 +232,13 @@ export async function fetchAlpacaOpenPositions() {
     positions: data.positions || [],
   };
 }
+
+export async function runReconciliationNow() {
+  const response = await apiClient.post("/reconcile-now");
+  return response.data || {};
+}
+
+export async function runSyncPaperTrades() {
+  const response = await apiClient.post("/sync-paper-trades");
+  return response.data || {};
+}
