@@ -869,7 +869,9 @@ The dashboard UI currently includes:
 - last updated timestamp
 - last reconciliation status badge
 - last reconciliation timestamp
-- view-specific auto-refresh gated to U.S. market hours
+- view-specific dashboard polling gated to the operational window
+- dashboard polling cadence reduced to 30 minutes to avoid unnecessary Neon activity while a browser tab is open
+- dashboard polling window aligned to current operations flow: weekdays 9:35 AM to 4:30 PM ET
 - focused navigation views for:
   - overview
   - trades

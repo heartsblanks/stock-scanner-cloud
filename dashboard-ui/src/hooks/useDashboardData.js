@@ -19,7 +19,9 @@ import {
   runSyncPaperTrades,
 } from "../api/dashboard";
 
-const AUTO_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+const AUTO_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
+const DASHBOARD_POLLING_WINDOW_START_MINUTES = 9 * 60 + 35;
+const DASHBOARD_POLLING_WINDOW_END_MINUTES = 16 * 60 + 30;
 
 function getEasternMarketSnapshot(now = new Date()) {
   const formatter = new Intl.DateTimeFormat("en-US", {
@@ -36,7 +38,10 @@ function getEasternMarketSnapshot(now = new Date()) {
   const minute = Number(lookup.minute || 0);
   const totalMinutes = hour * 60 + minute;
   const isWeekday = !["Sat", "Sun"].includes(weekday);
-  const active = isWeekday && totalMinutes >= 570 && totalMinutes <= 1020;
+  const active =
+    isWeekday &&
+    totalMinutes >= DASHBOARD_POLLING_WINDOW_START_MINUTES &&
+    totalMinutes <= DASHBOARD_POLLING_WINDOW_END_MINUTES;
 
   return {
     active,
@@ -459,7 +464,7 @@ export function useDashboardData(activeView = "overview") {
       : "NOT_EXPOSED";
   const autoRefreshSnapshot = getEasternMarketSnapshot(currentTime);
   const autoRefreshActive = autoRefreshSnapshot.active;
-  const refreshWindowLabel = "Weekdays 9:30 AM to 5:00 PM ET";
+  const refreshWindowLabel = "Weekdays 9:35 AM to 4:30 PM ET";
   const attentionItems = [];
 
   if ((reconciliationSummary?.mismatch_count ?? 0) > 0) {
