@@ -117,6 +117,21 @@ Cloud Scheduler triggers:
 - analytics generation
 - daily GitHub snapshot export
 
+Recommended consolidated scheduler setup:
+
+- `market-ops`
+  - `*/5 9-16 * * 1-5 (America/New_York)`
+  - Calls `POST /scheduler/market-ops`
+  - Internally runs sync every 5 minutes, the scheduled scans at `9:50` and every 10 minutes from `10:00` to `15:50`, and EOD close at `15:55`
+- `daily-post-close`
+  - `30 16 * * 1-5 (America/New_York)`
+  - Calls `POST /scheduler/daily-post-close`
+  - Internally runs reconciliation, trade analysis, signal analysis, and daily snapshot export
+- `maintenance`
+  - `0 18 * * * (America/New_York)`
+  - Calls `POST /scheduler/maintenance`
+  - Intended for periodic log pruning and future housekeeping tasks
+
 ---
 
 ## 📊 Dashboard

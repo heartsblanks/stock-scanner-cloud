@@ -43,6 +43,7 @@ from routes.export import register_export_routes
 from routes.analysis import register_analysis_routes
 from routes.reconcile import register_reconcile_routes
 from routes.reconcile_legacy import register_legacy_reconcile_routes
+from routes.scheduler import register_scheduler_routes
 from routes.trades import register_trade_routes
 from routes.scans import register_scan_routes
 from routes.dashboard import register_dashboard_routes
@@ -78,6 +79,11 @@ from app_orchestration import (
     handle_scan_request as run_handle_scan_request,
     handle_sync_paper_trades as run_handle_sync_paper_trades,
     run_scheduled_paper_scan_wrapper as run_scheduled_scan_wrapper,
+)
+from scheduler_ops import (
+    execute_maintenance_ops as build_execute_maintenance_ops,
+    execute_market_ops as build_execute_market_ops,
+    execute_post_close_ops as build_execute_post_close_ops,
 )
 
 from routes.sync import register_sync_routes
@@ -386,6 +392,39 @@ def close_all_paper_positions():
 
 
 
+def run_market_ops_scheduler(*, now_ny: datetime):
+    return build_execute_market_ops(
+        now_ny=now_ny,
+        run_sync=handle_sync_paper_trades,
+        run_scan=run_scheduled_paper_scan_wrapper,
+        run_close=close_all_paper_positions,
+    )
+
+
+def run_daily_post_close_scheduler(*, now_ny: datetime):
+    return build_execute_post_close_ops(
+        now_ny=now_ny,
+        run_reconcile=lambda: build_reconcile_now_response(
+            run_reconciliation=run_reconciliation,
+            upload_file_to_gcs=upload_file_to_gcs,
+            reconciliation_bucket=RECONCILIATION_BUCKET,
+            reconciliation_object=RECONCILIATION_OBJECT,
+            safe_insert_reconciliation_run=safe_insert_reconciliation_run,
+        ),
+        run_trade_analysis=run_trade_analysis,
+        run_signal_analysis=run_signal_analysis,
+        run_snapshot_export=run_daily_snapshot,
+    )
+
+
+def run_maintenance_scheduler(*, now_ny: datetime, retention_days: int = 30):
+    return build_execute_maintenance_ops(
+        now_ny=now_ny,
+        prune_logs=prune_alpaca_api_logs,
+        retention_days=retention_days,
+    )
+
+
 register_health_routes(
     app,
     db_healthcheck=db_healthcheck,
@@ -463,6 +502,13 @@ register_dashboard_routes(
     get_dashboard_summary=get_dashboard_summary,
     get_alpaca_open_positions=get_open_positions,
     get_risk_exposure_summary=get_risk_exposure_summary,
+)
+register_scheduler_routes(
+    app,
+    ny_tz=NY_TZ,
+    execute_market_ops=run_market_ops_scheduler,
+    execute_post_close_ops=run_daily_post_close_scheduler,
+    execute_maintenance_ops=run_maintenance_scheduler,
 )
 register_legacy_reconcile_routes(
     app,

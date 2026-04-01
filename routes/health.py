@@ -43,6 +43,9 @@ def register_health_routes(
                 "/alpaca-api-logs/recent",
                 "/alpaca-api-logs/errors",
                 "/alpaca-api-logs/prune",
+                "/scheduler/market-ops",
+                "/scheduler/daily-post-close",
+                "/scheduler/maintenance",
             ],
         })
 
