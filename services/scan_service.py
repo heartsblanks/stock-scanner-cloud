@@ -294,8 +294,11 @@ def execute_full_scan(
     current_open_exposure = _to_float(payload.get("current_open_exposure", 0.0), 0.0)
     payload["account_size"] = account_size
 
-    if mode not in {"primary", "secondary", "third", "fourth", "core_one", "core_two"}:
-        return {"ok": False, "error": "mode must be primary, secondary, third, fourth, core_one, or core_two"}, 400
+    if mode not in {"primary", "secondary", "third", "fourth", "fifth", "sixth", "core_one", "core_two", "core_three"}:
+        return {
+            "ok": False,
+            "error": "mode must be primary, secondary, third, fourth, fifth, sixth, core_one, core_two, or core_three",
+        }, 400
 
     ok, timing_msg = market_time_check()
     scan_started_at = datetime.now(timezone.utc)

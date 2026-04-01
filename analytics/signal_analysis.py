@@ -21,7 +21,7 @@ ANALYSIS_SIGNAL_ROWS_OUTPUT = Path("signal_analysis_rows.csv")
 ANALYSIS_GCS_BUCKET = os.getenv("TRADE_ANALYSIS_BUCKET", "stock-scanner-490821-logs")
 ANALYSIS_SUMMARY_OBJECT = os.getenv("SIGNAL_ANALYSIS_SUMMARY_OBJECT", "reports/signal_analysis_summary.csv")
 ANALYSIS_ROWS_OBJECT = os.getenv("SIGNAL_ANALYSIS_ROWS_OBJECT", "reports/signal_analysis_rows.csv")
-CORE_MODES = {"core_one", "core_two"}
+CORE_MODES = {"core_one", "core_two", "core_three"}
 
 
 def stringify_db_row(row: dict[str, Any]) -> dict[str, str]:

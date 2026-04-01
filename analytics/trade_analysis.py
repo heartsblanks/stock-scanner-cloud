@@ -20,7 +20,7 @@ from core.db import fetch_all
 
 
 CLOSE_EVENT_TYPES = {"STOP_HIT", "TARGET_HIT", "MANUAL_CLOSE"}
-CORE_MODES = {"core_one", "core_two"}
+CORE_MODES = {"core_one", "core_two", "core_three"}
 
 ANALYSIS_SUMMARY_OUTPUT = Path("trade_analysis_summary.csv")
 ANALYSIS_PAIRED_OUTPUT = Path("trade_analysis_paired_trades.csv")

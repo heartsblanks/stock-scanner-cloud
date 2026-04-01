@@ -6,7 +6,17 @@ from zoneinfo import ZoneInfo
 
 
 NY_TZ = ZoneInfo("America/New_York")
-SCHEDULED_ROUND_ROBIN_MODES = ["primary", "secondary", "third", "fourth", "core_one", "core_two"]
+SCHEDULED_ROUND_ROBIN_MODES = [
+    "primary",
+    "secondary",
+    "third",
+    "fourth",
+    "fifth",
+    "sixth",
+    "core_one",
+    "core_two",
+    "core_three",
+]
 
 
 def scheduled_round_robin_mode(now_ny: datetime | None = None) -> str | None:

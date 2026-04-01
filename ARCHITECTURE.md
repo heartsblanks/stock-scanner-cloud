@@ -181,6 +181,7 @@ Current paper-trading config defaults:
 - `PAPER_TRADE_MAX_CAPITAL_ALLOCATION_PCT=1.0`
 - `PAPER_TRADE_ENFORCE_MAX_POSITIONS=false`
 - `PAPER_TRADE_MAX_POSITIONS=10` as the dormant future cap when the flag is re-enabled
+- instrument watchlists are intentionally split across multiple categories to stay below the per-category Twelve Data symbol ceiling
 
 ---
 
@@ -263,6 +264,7 @@ Current code reality:
 - the unused `export_to_github.py` stub has been removed from the root
 - shared foundations have now been consolidated under `core/`, so DB access, structured logging, and trade math are no longer scattered at the repository root
 - the tradable instrument universe now lives in `analytics/instruments.json` and is loaded through `analytics/instruments.py`, which keeps watchlist growth and duplicate validation out of the scan code
+- instrument groups are now split into `primary` through `sixth` plus `core_one` through `core_three`, keeping the original categories trimmed while allowing watchlist growth without breaching the per-category limit
 - paper-trading allocation and max-position behavior are now env-driven through `core/paper_trade_config.py`, so paper-mode risk posture can be changed without editing strategy code
 
 ### Dashboard defaults

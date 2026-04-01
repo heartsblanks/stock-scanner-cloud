@@ -3,7 +3,17 @@ from pathlib import Path
 
 
 INSTRUMENTS_PATH = Path(__file__).with_name("instruments.json")
-REQUIRED_MODES = ("primary", "secondary", "third", "fourth", "core_one", "core_two")
+REQUIRED_MODES = (
+    "primary",
+    "secondary",
+    "third",
+    "fourth",
+    "fifth",
+    "sixth",
+    "core_one",
+    "core_two",
+    "core_three",
+)
 
 
 def _load_instrument_groups() -> dict[str, dict[str, dict]]:
@@ -54,5 +64,8 @@ PRIMARY_INSTRUMENTS = INSTRUMENT_GROUPS["primary"]
 SECONDARY_INSTRUMENTS = INSTRUMENT_GROUPS["secondary"]
 THIRD_INSTRUMENTS = INSTRUMENT_GROUPS["third"]
 FOURTH_INSTRUMENTS = INSTRUMENT_GROUPS["fourth"]
+FIFTH_INSTRUMENTS = INSTRUMENT_GROUPS["fifth"]
+SIXTH_INSTRUMENTS = INSTRUMENT_GROUPS["sixth"]
 CORE_ONE_INSTRUMENTS = INSTRUMENT_GROUPS["core_one"]
 CORE_TWO_INSTRUMENTS = INSTRUMENT_GROUPS["core_two"]
+CORE_THREE_INSTRUMENTS = INSTRUMENT_GROUPS["core_three"]

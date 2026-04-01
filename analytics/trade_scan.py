@@ -16,10 +16,13 @@ if str(ROOT_DIR) not in sys.path:
 
 from analytics.instruments import (
     CORE_ONE_INSTRUMENTS,
+    CORE_THREE_INSTRUMENTS,
     CORE_TWO_INSTRUMENTS,
+    FIFTH_INSTRUMENTS,
     FOURTH_INSTRUMENTS,
     PRIMARY_INSTRUMENTS,
     SECONDARY_INSTRUMENTS,
+    SIXTH_INSTRUMENTS,
     THIRD_INSTRUMENTS,
 )
 from core.paper_trade_config import get_paper_trade_limits
@@ -841,12 +844,20 @@ def run_scan(account_size: float, mode: str, current_open_positions: int = 0, cu
         selected_instruments = THIRD_INSTRUMENTS
     elif mode == "fourth":
         selected_instruments = FOURTH_INSTRUMENTS
+    elif mode == "fifth":
+        selected_instruments = FIFTH_INSTRUMENTS
+    elif mode == "sixth":
+        selected_instruments = SIXTH_INSTRUMENTS
     elif mode == "core_one":
         selected_instruments = CORE_ONE_INSTRUMENTS
     elif mode == "core_two":
         selected_instruments = CORE_TWO_INSTRUMENTS
+    elif mode == "core_three":
+        selected_instruments = CORE_THREE_INSTRUMENTS
     else:
-        raise ValueError("Mode must be 'primary', 'secondary', 'third', 'fourth', 'core_one', or 'core_two'")
+        raise ValueError(
+            "Mode must be 'primary', 'secondary', 'third', 'fourth', 'fifth', 'sixth', 'core_one', 'core_two', or 'core_three'"
+        )
 
     benchmark_instruments = get_benchmark_instruments()
 
@@ -1019,13 +1030,13 @@ def main():
     args = parsed_args
 
     if len(args) < 2:
-        print("Usage: python3 trade_scan.py <AccountSize> <primary|secondary|third|fourth|core_one|core_two> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
-        print("   or: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|core_one|core_two> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
+        print("Usage: python3 trade_scan.py <AccountSize> <primary|secondary|third|fourth|fifth|sixth|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
+        print("   or: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|fifth|sixth|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
         return
 
     if args[0] == "--test":
         if len(args) < 3:
-            print("Usage: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|core_one|core_two> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
+            print("Usage: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|fifth|sixth|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
             return
         account_size = float(args[1])
         mode = args[2].lower()
