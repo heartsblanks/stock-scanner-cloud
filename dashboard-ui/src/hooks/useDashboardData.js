@@ -403,6 +403,7 @@ export function useDashboardData(activeView = "overview") {
   const symbolPerformance = summary?.symbol_performance || [];
   const modePerformance = summary?.mode_performance || [];
   const hourlyPerformance = summary?.hourly_performance || [];
+  const hourlyOutcomeQuality = summary?.hourly_outcome_quality || [];
   const equityCurve = summary?.equity_curve || [];
   const insights = summary?.insights || {};
 
@@ -568,6 +569,7 @@ export function useDashboardData(activeView = "overview") {
     symbolPerformance,
     modePerformance,
     hourlyPerformance,
+    hourlyOutcomeQuality,
     equityCurve,
     insights,
     reconciliationSymbols,

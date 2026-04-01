@@ -136,7 +136,7 @@ Architecture documentation is updated alongside implementation so the document r
 ### 5.4 Active implementation
 
 Current active work:
-- continue expanding `paper_trade_attempts` observability beyond the newly implemented hourly placement-rate, top non-placement reason reporting, and analytics view for hourly candidate/placed/non-placed outcomes
+- continue expanding intraday quality reporting beyond the newly implemented hourly placement-rate, top non-placement reason reporting, hourly candidate/placed/non-placed attempt analytics, and ET-based outcome quality by entry hour
 - keep backend and dashboard analytics aligned as new attempt reporting slices land
 - use the architecture document as the running record for completed and pending observability work
 
@@ -356,6 +356,7 @@ Current code reality:
 - `paper_trade_attempts` is now the primary diagnostic source for understanding why trades were not placed
 - dashboard and operational reporting now summarize attempt outcomes by session hour and dominant non-placement reason
 - the analytics view now includes an hourly execution-attempt outcome chart so candidate volume, placements, and non-placements can be reviewed side by side
+- the dashboard summary API now also exposes ET-based realized outcome quality by entry hour from `trade_lifecycles`
 - the health API exposes dedicated attempt analytics endpoints including:
   - `/paper-trade-attempts/recent`
   - `/paper-trade-attempts/rejections`

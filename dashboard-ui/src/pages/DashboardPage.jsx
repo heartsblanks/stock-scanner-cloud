@@ -13,6 +13,7 @@ const TradeLifecycleTable = lazy(() => import("../components/TradeLifecycleTable
 const EquityCurveChart = lazy(() => import("../components/EquityCurveChart"));
 const HourlyPerformanceChart = lazy(() => import("../components/HourlyPerformanceChart"));
 const HourlyAttemptOutcomeChart = lazy(() => import("../components/HourlyAttemptOutcomeChart"));
+const HourlyOutcomeQualityTable = lazy(() => import("../components/HourlyOutcomeQualityTable"));
 const SymbolPerformanceChart = lazy(() => import("../components/SymbolPerformanceChart"));
 const ModePerformanceChart = lazy(() => import("../components/ModePerformanceChart"));
 const AlpacaApiLogsSection = lazy(() => import("../components/dashboard/AlpacaApiLogsSection"));
@@ -102,6 +103,7 @@ export default function DashboardPage() {
     symbolPerformance,
     modePerformance,
     hourlyPerformance,
+    hourlyOutcomeQuality,
     equityCurve,
     insights,
     reconciliationSymbols,
@@ -655,6 +657,11 @@ export default function DashboardPage() {
                     <div style={{ marginTop: 20 }}>
                       <LazySection>
                         <HourlyAttemptOutcomeChart rows={paperTradeAttemptHourlySummary} />
+                      </LazySection>
+                    </div>
+                    <div style={{ marginTop: 20 }}>
+                      <LazySection>
+                        <HourlyOutcomeQualityTable rows={hourlyOutcomeQuality} />
                       </LazySection>
                     </div>
                   </div>

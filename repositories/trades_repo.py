@@ -448,6 +448,37 @@ def get_hourly_performance(limit: int = 100) -> list[dict]:
     )
 
 
+def get_hourly_outcome_quality(limit: int = 24) -> list[dict]:
+    return fetch_all(
+        """
+        SELECT EXTRACT(HOUR FROM (entry_time AT TIME ZONE 'America/New_York'))::INT AS entry_hour_ny,
+               COUNT(*)::INT AS trade_count,
+               COUNT(*) FILTER (WHERE UPPER(COALESCE(status, '')) = 'CLOSED')::INT AS closed_trade_count,
+               COUNT(*) FILTER (WHERE COALESCE(realized_pnl, 0) > 0)::INT AS winning_trade_count,
+               COUNT(*) FILTER (WHERE COALESCE(realized_pnl, 0) < 0)::INT AS losing_trade_count,
+               ROUND(COALESCE(SUM(realized_pnl), 0)::numeric, 6) AS realized_pnl_total,
+               ROUND(AVG(realized_pnl)::numeric, 6) AS average_realized_pnl,
+               CASE
+                   WHEN COUNT(*) FILTER (WHERE UPPER(COALESCE(status, '')) = 'CLOSED') > 0
+                   THEN ROUND(
+                       (
+                           COUNT(*) FILTER (WHERE COALESCE(realized_pnl, 0) > 0)::NUMERIC
+                           / COUNT(*) FILTER (WHERE UPPER(COALESCE(status, '')) = 'CLOSED')::NUMERIC
+                       ) * 100,
+                       1
+                   )
+                   ELSE NULL
+               END AS win_rate
+        FROM trade_lifecycles
+        WHERE entry_time IS NOT NULL
+        GROUP BY EXTRACT(HOUR FROM (entry_time AT TIME ZONE 'America/New_York'))
+        ORDER BY entry_hour_ny ASC
+        LIMIT %(limit)s
+        """,
+        {"limit": limit},
+    )
+
+
 def get_equity_curve(limit: int = 5000) -> list[dict]:
     rows = fetch_all(
         """
@@ -478,6 +509,7 @@ def get_dashboard_summary(target_date: Optional[str] = None) -> dict:
     mode_performance = get_mode_performance(limit=10)
     exit_reason_breakdown = get_exit_reason_breakdown(limit=20)
     hourly_performance = get_hourly_performance(limit=24)
+    hourly_outcome_quality = get_hourly_outcome_quality(limit=24)
     equity_curve = get_equity_curve(limit=5000)
     return {
         "summary": base_summary,
@@ -485,6 +517,7 @@ def get_dashboard_summary(target_date: Optional[str] = None) -> dict:
         "mode_performance": mode_performance,
         "exit_reason_breakdown": exit_reason_breakdown,
         "hourly_performance": hourly_performance,
+        "hourly_outcome_quality": hourly_outcome_quality,
         "equity_curve": equity_curve,
         "insights": {
             "best_symbol": (symbol_performance[0] if symbol_performance else None),
