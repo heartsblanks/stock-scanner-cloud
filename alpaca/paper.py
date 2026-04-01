@@ -1,6 +1,12 @@
 """Paper Alpaca helpers built on the centralized Alpaca client/order/position layers."""
 import os
+import sys
+from pathlib import Path
 from typing import Any
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from alpaca.alpaca_client import alpaca_client
 from alpaca.alpaca_orders import cancel_order_by_id, fetch_open_orders

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 from logging_utils import log_exception
-from paper_alpaca import get_open_orders, get_open_positions
+from alpaca.paper import get_open_orders, get_open_positions
 from scan_context import NY_TZ, parse_iso_utc, to_float_or_none
 from storage import (
     get_daily_realized_pnl,

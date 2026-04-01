@@ -109,6 +109,7 @@ Architecture documentation is updated alongside implementation so the document r
    - reduce root-directory clutter by moving maintenance, repair, and backfill utilities into `scripts/`
    - continue the same cleanup for export-related modules by consolidating them under `exports/`
    - continue the same cleanup for trading analysis and scan logic by consolidating them under `analytics/`
+   - fold the remaining top-level Alpaca wrappers into the existing `alpaca/` package so broker integration code lives in one place
 
 3. **Ops / cloud cleanup**
    - keep Neon as the active production database
@@ -180,13 +181,14 @@ Target direction:
 - `routes/dashboard.py`
 
 ### Broker integration
-- `alpaca/alpaca_http.py`
-- `alpaca/alpaca_client.py`
-- `alpaca/alpaca_orders.py`
-- `alpaca/alpaca_positions.py`
-- `paper_alpaca.py`
-- `alpaca_sync.py`
-- `alpaca_reconcile.py`
+- `alpaca/`
+  - `alpaca_http.py`
+  - `alpaca_client.py`
+  - `alpaca_orders.py`
+  - `alpaca_positions.py`
+  - `paper.py`
+  - `sync.py`
+  - `reconcile.py`
 
 ### Analytics and export
 - `analytics/`
@@ -208,6 +210,7 @@ Current code reality:
 - this cleanup is in progress; repair and backfill scripts are being moved out of the repository root first because they are low-risk and contribute heavily to perceived root-level sprawl
 - export-related runtime modules have now been consolidated under `exports/`, which reduces root-level noise without changing hot-path scan/sync behavior
 - analytics and scan modules have now been consolidated under `analytics/`, which makes the repository shape clearer without changing the service boundaries used by the runtime
+- Alpaca integration wrappers have now been folded into the existing `alpaca/` package, so broker code no longer spills across the repository root
 
 ### Repository modules
 - `repositories/scans_repo.py`

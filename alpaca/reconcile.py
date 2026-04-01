@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import csv
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from google.cloud import storage
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 from storage import insert_broker_order, get_recent_trade_event_rows
 
 OUTPUT_PATH = Path("alpaca_reconciliation.csv")

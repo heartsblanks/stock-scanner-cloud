@@ -1,6 +1,12 @@
 """Helpers for syncing Alpaca bracket order state through the centralized order client."""
 from datetime import datetime
+import sys
+from pathlib import Path
 from typing import Any
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from alpaca.alpaca_orders import fetch_order_by_id, fetch_orders
 
