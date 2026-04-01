@@ -36,15 +36,17 @@ def should_run_market_sync(now_ny: datetime) -> bool:
         return False
     if now_ny.hour == 9:
         return now_ny.minute in {35, 45, 55}
-    return 10 <= now_ny.hour <= 15 and now_ny.minute in {5, 15, 25, 35, 45}
+    return 10 <= now_ny.hour <= 15 and now_ny.minute in {5, 15, 25, 35, 45, 55}
 
 
 def should_run_market_scan(now_ny: datetime) -> bool:
     if not is_weekday(now_ny):
         return False
+    if now_ny.hour == 15 and now_ny.minute == 55:
+        return False
     if now_ny.hour == 9:
         return now_ny.minute in {35, 45, 55}
-    return 10 <= now_ny.hour <= 15 and now_ny.minute in {5, 15, 25, 35, 45}
+    return 10 <= now_ny.hour <= 15 and now_ny.minute in {5, 15, 25, 35, 45, 55}
 
 
 def should_run_eod_close(now_ny: datetime) -> bool:
