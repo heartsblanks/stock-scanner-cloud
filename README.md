@@ -120,9 +120,9 @@ Cloud Scheduler triggers:
 Recommended consolidated scheduler setup:
 
 - `market-ops`
-  - `35,45 9 * * 1-5` and `5,15,25,35,45,55 10-15 * * 1-5 (America/New_York)`
+  - `5,15,25,35,45,55 9-15 * * 1-5 (America/New_York)`
   - Calls `POST /scheduler/market-ops`
-  - Internally runs sync and scheduled scans on the 10-minute offset cadence from `9:35` through `15:45`, and uses the `15:55` tick for end-of-day close only
+  - Internally no-ops the early `9:05`, `9:15`, and `9:25` ticks, then runs sync and scheduled scans on the 10-minute offset cadence from `9:35` through `15:45`, and uses the `15:55` tick for end-of-day close only
 - `daily-post-close`
   - `30 16 * * 1-5 (America/New_York)`
   - Calls `POST /scheduler/daily-post-close`
