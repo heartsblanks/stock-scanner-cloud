@@ -112,6 +112,7 @@ Architecture documentation is updated alongside implementation so the document r
    - fold the remaining top-level Alpaca wrappers into the existing `alpaca/` package so broker integration code lives in one place
    - consolidate scan, paper-trade, scheduler, and app-level orchestration helpers under `orchestration/`
    - remove dead root-level files such as unused export utilities
+   - consolidate shared foundations such as DB access, structured logging, and trade math under `core/`
 
 3. **Ops / cloud cleanup**
    - keep Neon as the active production database
@@ -157,10 +158,15 @@ Target direction:
 
 ### Backend root
 - `app.py` — application wiring and top-level service/route integration
-- `db.py` — PostgreSQL connection helpers
 - `storage.py` — thin compatibility facade over repository modules
 - `schema.sql` — database schema definition
 - root-level files should stay limited to active runtime entrypoints and cross-cutting foundations
+
+### Shared foundations
+- `core/`
+  - `db.py`
+  - `logging_utils.py`
+  - `trade_math.py`
 
 ### Orchestration helpers
 - `orchestration/`
@@ -218,6 +224,7 @@ Current code reality:
 - Alpaca integration wrappers have now been folded into the existing `alpaca/` package, so broker code no longer spills across the repository root
 - orchestration and context helpers have now been consolidated under `orchestration/`, which leaves the repository root focused on app entrypoints and shared foundations
 - the unused `export_to_github.py` stub has been removed from the root
+- shared foundations have now been consolidated under `core/`, so DB access, structured logging, and trade math are no longer scattered at the repository root
 
 ### Repository modules
 - `repositories/scans_repo.py`

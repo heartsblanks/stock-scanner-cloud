@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timezone
 
-from trade_math import (
+from core.trade_math import (
     compute_duration_minutes,
     compute_realized_pnl,
     compute_realized_pnl_percent,

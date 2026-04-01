@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from flask import jsonify
-from logging_utils import log_exception, log_warning
+from core.logging_utils import log_exception, log_warning
 
 
 def register_analysis_routes(

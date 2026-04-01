@@ -13,7 +13,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from db import fetch_all
+from core.db import fetch_all
 
 
 ANALYSIS_SUMMARY_OUTPUT = Path("signal_analysis_summary.csv")

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from logging_utils import log_exception
+from core.logging_utils import log_exception
 
 
 def handle_sync_paper_trades(
@@ -176,7 +176,7 @@ def build_reconcile_now_response(
             destination_blob_name=reconciliation_object,
         )
     except Exception as upload_err:
-        from logging_utils import log_warning
+        from core.logging_utils import log_warning
 
         log_warning("GCS upload failed", component="app_orchestration", operation="reconcile_now", error=str(upload_err))
 

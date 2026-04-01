@@ -1,7 +1,7 @@
 
 
 from flask import jsonify
-from logging_utils import log_exception
+from core.logging_utils import log_exception
 
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from db import execute, fetch_all, fetch_one
+from core.db import execute, fetch_all, fetch_one
 from repositories.common import normalize_text
 
 

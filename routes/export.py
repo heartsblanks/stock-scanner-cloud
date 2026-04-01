@@ -1,5 +1,5 @@
 from flask import jsonify
-from logging_utils import log_exception
+from core.logging_utils import log_exception
 
 
 def register_export_routes(app, *, run_daily_snapshot) -> None:

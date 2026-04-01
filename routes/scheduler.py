@@ -4,7 +4,7 @@ from datetime import datetime
 
 from flask import jsonify, request
 
-from logging_utils import log_exception
+from core.logging_utils import log_exception
 
 
 def register_scheduler_routes(

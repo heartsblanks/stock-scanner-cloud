@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Callable
 import os
-from logging_utils import log_exception, log_info, log_warning
+from core.logging_utils import log_exception, log_info, log_warning
 
 # NOTE: requires implementation
 # def get_recent_closed_trades_for_symbol(symbol: str, limit: int = 5) -> list[dict]
@@ -17,7 +17,7 @@ def get_recent_closed_trades_for_symbol(symbol: str, limit: int = 5) -> list[dic
     """
     try:
         # Lazy import to avoid circular deps
-        from db import fetch_recent_closed_trades_for_symbol  # type: ignore
+        from core.db import fetch_recent_closed_trades_for_symbol  # type: ignore
         return fetch_recent_closed_trades_for_symbol(symbol=symbol, limit=limit) or []
     except Exception:
         return []
