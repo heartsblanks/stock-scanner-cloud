@@ -404,6 +404,7 @@ def run_market_ops_scheduler(*, now_ny: datetime):
 def run_daily_post_close_scheduler(*, now_ny: datetime):
     return build_execute_post_close_ops(
         now_ny=now_ny,
+        run_sync=handle_sync_paper_trades,
         run_reconcile=lambda: build_reconcile_now_response(
             run_reconciliation=run_reconciliation,
             upload_file_to_gcs=upload_file_to_gcs,

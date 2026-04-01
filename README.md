@@ -120,13 +120,13 @@ Cloud Scheduler triggers:
 Recommended consolidated scheduler setup:
 
 - `market-ops`
-  - `*/5 9-16 * * 1-5 (America/New_York)`
+  - `35,45 9 * * 1-5` and `5,15,25,35,45,55 10-15 * * 1-5 (America/New_York)`
   - Calls `POST /scheduler/market-ops`
-  - Internally runs sync every 5 minutes, the scheduled scans at `9:50` and every 10 minutes from `10:00` to `15:50`, and EOD close at `15:55`
+  - Internally runs sync and scheduled scans on the 10-minute offset cadence from `9:35` through `15:45`, and uses the `15:55` tick for end-of-day close only
 - `daily-post-close`
   - `30 16 * * 1-5 (America/New_York)`
   - Calls `POST /scheduler/daily-post-close`
-  - Internally runs reconciliation, trade analysis, signal analysis, and daily snapshot export
+  - Internally runs sync first, then reconciliation, trade analysis, signal analysis, and daily snapshot export
 - `maintenance`
   - `0 18 * * * (America/New_York)`
   - Calls `POST /scheduler/maintenance`

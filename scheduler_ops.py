@@ -30,15 +30,21 @@ def is_weekday(now_ny: datetime) -> bool:
 
 
 def should_run_market_sync(now_ny: datetime) -> bool:
-    return is_weekday(now_ny) and 9 <= now_ny.hour <= 16 and now_ny.minute % 5 == 0
+    if not is_weekday(now_ny):
+        return False
+    if now_ny.hour == 15 and now_ny.minute == 55:
+        return False
+    if now_ny.hour == 9:
+        return now_ny.minute in {35, 45}
+    return 10 <= now_ny.hour <= 15 and now_ny.minute in {5, 15, 25, 35, 45}
 
 
 def should_run_market_scan(now_ny: datetime) -> bool:
     if not is_weekday(now_ny):
         return False
-    if now_ny.hour == 9 and now_ny.minute == 50:
-        return True
-    return 10 <= now_ny.hour <= 15 and now_ny.minute in {0, 10, 20, 30, 40, 50}
+    if now_ny.hour == 9:
+        return now_ny.minute in {35, 45}
+    return 10 <= now_ny.hour <= 15 and now_ny.minute in {5, 15, 25, 35, 45}
 
 
 def should_run_eod_close(now_ny: datetime) -> bool:
@@ -46,13 +52,14 @@ def should_run_eod_close(now_ny: datetime) -> bool:
 
 
 def build_market_ops_plan(now_ny: datetime) -> list[str]:
+    if should_run_eod_close(now_ny):
+        return ["close"]
+
     actions: list[str] = []
     if should_run_market_sync(now_ny):
         actions.append("sync")
     if should_run_market_scan(now_ny):
         actions.append("scan")
-    if should_run_eod_close(now_ny):
-        actions.append("close")
     return actions
 
 
@@ -88,12 +95,14 @@ def execute_market_ops(
 def execute_post_close_ops(
     *,
     now_ny: datetime,
+    run_sync: Callable[[], Any],
     run_reconcile: Callable[[], Any],
     run_trade_analysis: Callable[[], Any],
     run_signal_analysis: Callable[[], Any],
     run_snapshot_export: Callable[[], Any],
 ) -> dict[str, Any]:
     results = {
+        "sync": _normalize_handler_result(run_sync()),
         "reconcile": _normalize_handler_result(run_reconcile()),
         "analyze_paper_trades": _normalize_handler_result(run_trade_analysis()),
         "analyze_signals": _normalize_handler_result(run_signal_analysis()),
