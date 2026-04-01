@@ -25,7 +25,7 @@ steps:
       - 'managed'
       - '--allow-unauthenticated'
       - '--concurrency'
-      - '1'
+      - '10'
       - '--max-instances'
       - '1'
       - '--set-env-vars'

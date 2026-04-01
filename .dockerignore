@@ -3,3 +3,11 @@ __pycache__
 *.pyc
 .git
 .gcloudignore
+dashboard-ui/node_modules
+dashboard-ui/dist
+dashboard-ui/.vercel
+dashboard-ui/.env
+dashboard-ui/.env.*
+tests
+*.log
+*.csv
