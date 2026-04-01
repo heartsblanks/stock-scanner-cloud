@@ -147,6 +147,34 @@ Current active work:
 - keep backend and dashboard analytics aligned as new attempt reporting slices land
 - use the architecture document as the running record for completed and pending observability work
 
+### 5.5 Operational checklist
+
+Daily:
+- review `Overview` for attention items, execution insights, conversion vs quality, reconciliation status, and recent broker/API failures
+- review `Analytics` for hourly attempt outcomes, hourly outcome quality, and whether high-conversion hours are also high-quality hours
+- review `Trades` and use manual sync only when local trade state appears stale
+
+Every few trading days:
+- review afternoon behavior after removal of the hard late-session block
+- review top skip reasons from `paper_trade_attempts`
+- review Neon usage against the current scheduler cadence
+
+Cloud cleanup once stable:
+- delete old Cloud SQL
+- remove migration leftovers
+- remove unused DB secrets
+
+Strategy tuning triggers:
+- repeated weak realized P&L in specific ET hours
+- persistent mismatch between conversion and realized quality
+- one skip reason dominating most non-placements
+
+Best next tuning knobs:
+- time penalty
+- confidence threshold
+- sizing aggressiveness
+- specific-hour caution
+
 ---
 
 ## 6. Repository Structure
