@@ -31,6 +31,7 @@ export default function ExecutionInsightsSection({
   paperTradeAttemptRejections,
   paperTradeAttemptDailySummary,
   paperTradeAttemptHourlySummary,
+  hourlyOutcomeQuality,
 }) {
   const stageCountMap = Object.fromEntries((stageCounts || []).map((row) => [row.decision_stage, Number(row.count || 0)]));
   const placedCount = stageCountMap.PLACED ?? 0;
@@ -45,6 +46,30 @@ export default function ExecutionInsightsSection({
   const busiestHour = [...(paperTradeAttemptHourlySummary || [])].sort(
     (left, right) => Number(right.total_attempts || 0) - Number(left.total_attempts || 0)
   )[0] || null;
+  const strongestConversionHour = [...(paperTradeAttemptHourlySummary || [])]
+    .filter((row) => Number(row.resolved_attempts || 0) > 0)
+    .sort((left, right) => Number(right.placement_rate || 0) - Number(left.placement_rate || 0))[0] || null;
+  const strongestOutcomeHour = [...(hourlyOutcomeQuality || [])]
+    .filter((row) => Number(row.trade_count || 0) > 0)
+    .sort((left, right) => Number(right.realized_pnl_total || 0) - Number(left.realized_pnl_total || 0))[0] || null;
+  const mergedHourSignals = (paperTradeAttemptHourlySummary || [])
+    .map((attemptRow) => {
+      const matchingOutcome = (hourlyOutcomeQuality || []).find(
+        (outcomeRow) => Number(outcomeRow.entry_hour_ny) === Number(attemptRow.hour_ny)
+      );
+      return {
+        hour_ny: attemptRow.hour_ny,
+        placement_rate: Number(attemptRow.placement_rate || 0),
+        realized_pnl_total: Number(matchingOutcome?.realized_pnl_total || 0),
+        top_non_placement_reason: attemptRow.top_non_placement_reason || "",
+      };
+    })
+    .filter((row) => row.hour_ny !== null && row.hour_ny !== undefined);
+  const widestMismatchHour = [...mergedHourSignals].sort((left, right) => {
+    const leftMismatch = Math.abs(left.placement_rate) + (left.realized_pnl_total < 0 ? 100 : 0);
+    const rightMismatch = Math.abs(right.placement_rate) + (right.realized_pnl_total < 0 ? 100 : 0);
+    return rightMismatch - leftMismatch;
+  })[0] || null;
 
   return (
     <section className="dashboard-section">
@@ -182,6 +207,57 @@ export default function ExecutionInsightsSection({
                 </div>
               ) : (
                 <div className="dashboard-empty">No hourly attempt rows are available yet.</div>
+              )}
+            </div>
+          </div>
+
+          <div className="dashboard-panel dashboard-panel-strong">
+            <div className="dashboard-panel-body dashboard-panel-body-tight">
+              <div className="dashboard-panel-heading">
+                <div>
+                  <h3>Conversion vs Quality</h3>
+                  <p className="dashboard-panel-subtitle">
+                    Compare where the system converts candidates well against where realized trade outcomes are actually strongest.
+                  </p>
+                </div>
+              </div>
+
+              <div className="dashboard-inline-kv">
+                <div>
+                  <strong>Best Conversion Hour:</strong>{" "}
+                  {strongestConversionHour ? formatHourLabel(strongestConversionHour.hour_ny) : "-"}
+                </div>
+                <div>
+                  <strong>Placement Rate:</strong>{" "}
+                  {strongestConversionHour ? formatPercent(strongestConversionHour.placement_rate) : "-"}
+                </div>
+                <div>
+                  <strong>Best Outcome Hour:</strong>{" "}
+                  {strongestOutcomeHour ? formatHourLabel(strongestOutcomeHour.entry_hour_ny) : "-"}
+                </div>
+                <div>
+                  <strong>Realized P&amp;L:</strong>{" "}
+                  {strongestOutcomeHour ? `$${Number(strongestOutcomeHour.realized_pnl_total || 0).toFixed(2)}` : "-"}
+                </div>
+              </div>
+
+              {widestMismatchHour ? (
+                <div className="dashboard-inline-meta">
+                  <span className="dashboard-pill">
+                    Watch Hour: {formatHourLabel(widestMismatchHour.hour_ny)}
+                  </span>
+                  <span className="dashboard-pill">
+                    Conversion: {formatPercent(widestMismatchHour.placement_rate)}
+                  </span>
+                  <span className="dashboard-pill">
+                    Realized P&amp;L: ${Number(widestMismatchHour.realized_pnl_total || 0).toFixed(2)}
+                  </span>
+                  <span className="dashboard-pill">
+                    Top Friction: {widestMismatchHour.top_non_placement_reason || "-"}
+                  </span>
+                </div>
+              ) : (
+                <div className="dashboard-empty">Combined conversion and quality comparison will appear once both datasets have rows.</div>
               )}
             </div>
           </div>

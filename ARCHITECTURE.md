@@ -136,7 +136,7 @@ Architecture documentation is updated alongside implementation so the document r
 ### 5.4 Active implementation
 
 Current active work:
-- continue expanding intraday quality reporting beyond the newly implemented hourly placement-rate, top non-placement reason reporting, hourly candidate/placed/non-placed attempt analytics, and ET-based outcome quality by entry hour
+- continue expanding intraday quality reporting beyond the newly implemented hourly placement-rate, top non-placement reason reporting, hourly candidate/placed/non-placed attempt analytics, ET-based outcome quality by entry hour, and the merged conversion-vs-quality comparison in the dashboard command view
 - keep backend and dashboard analytics aligned as new attempt reporting slices land
 - use the architecture document as the running record for completed and pending observability work
 
@@ -357,6 +357,7 @@ Current code reality:
 - dashboard and operational reporting now summarize attempt outcomes by session hour and dominant non-placement reason
 - the analytics view now includes an hourly execution-attempt outcome chart so candidate volume, placements, and non-placements can be reviewed side by side
 - the dashboard summary API now also exposes ET-based realized outcome quality by entry hour from `trade_lifecycles`
+- the overview execution section now compares conversion strength against realized quality so misleading “high activity but weak outcomes” hours are easier to spot quickly
 - the health API exposes dedicated attempt analytics endpoints including:
   - `/paper-trade-attempts/recent`
   - `/paper-trade-attempts/rejections`

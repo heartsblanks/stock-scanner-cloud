@@ -376,6 +376,7 @@ export default function DashboardPage() {
                   paperTradeAttemptRejections={paperTradeAttemptRejections}
                   paperTradeAttemptDailySummary={paperTradeAttemptDailySummary}
                   paperTradeAttemptHourlySummary={paperTradeAttemptHourlySummary}
+                  hourlyOutcomeQuality={hourlyOutcomeQuality}
                 />
               </div>
 
