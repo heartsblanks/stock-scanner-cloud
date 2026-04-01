@@ -5,6 +5,7 @@ import {
   formatTimestamp,
   formatValue,
   signedTone,
+  sortRowsByLatest,
 } from "./tableFormatters";
 
 function statusBadge(status) {
@@ -32,6 +33,8 @@ export default function TradeLifecycleTable({ rows }) {
     return <div className="dashboard-empty">No trade lifecycle data.</div>;
   }
 
+  const sortedRows = sortRowsByLatest(rows, ["entry_time", "exit_time", "created_at"]);
+
   return (
     <div className="dashboard-table-wrap">
       <table className="dashboard-table">
@@ -57,7 +60,7 @@ export default function TradeLifecycleTable({ rows }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, index) => {
+          {sortedRows.map((row, index) => {
             const pnlTone = signedTone(row.realized_pnl);
             const rowTone =
               pnlTone === "dashboard-cell-positive"

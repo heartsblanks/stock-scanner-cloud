@@ -1,4 +1,4 @@
-import { formatCurrency, formatNumber, formatTimestamp, formatValue } from "./tableFormatters";
+import { formatCurrency, formatNumber, formatTimestamp, formatValue, sortRowsByLatest } from "./tableFormatters";
 
 function getStatusBadge(status) {
   if (status === "OPEN") {
@@ -14,6 +14,8 @@ export default function OpenTradesTable({ trades }) {
   if (!trades || trades.length === 0) {
     return <div className="dashboard-empty">No open trades.</div>;
   }
+
+  const sortedTrades = sortRowsByLatest(trades, ["entry_time", "timestamp_utc", "created_at"]);
 
   return (
     <div className="dashboard-table-wrap">
@@ -34,7 +36,7 @@ export default function OpenTradesTable({ trades }) {
           </tr>
         </thead>
         <tbody>
-          {trades.map((trade, index) => (
+          {sortedTrades.map((trade, index) => (
             <tr key={`${trade.trade_key || trade.symbol || "trade"}-${index}`}>
               <td data-label="Symbol" className="dashboard-cell-strong">{formatValue(trade.symbol)}</td>
               <td data-label="Mode">{formatValue(trade.mode)}</td>

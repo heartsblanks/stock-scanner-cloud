@@ -113,6 +113,7 @@ Architecture documentation is updated alongside implementation so the document r
    - consolidate scan, paper-trade, scheduler, and app-level orchestration helpers under `orchestration/`
    - remove dead root-level files such as unused export utilities
    - consolidate shared foundations such as DB access, structured logging, and trade math under `core/`
+   - move the tradable instrument universe into a dedicated registry file instead of embedding it directly inside scan logic
 
 3. **Ops / cloud cleanup**
    - keep Neon as the active production database
@@ -146,6 +147,7 @@ Current active work:
 - continue expanding intraday quality reporting beyond the newly implemented hourly placement-rate, top non-placement reason reporting, hourly candidate/placed/non-placed attempt analytics, ET-based outcome quality by entry hour, and the merged conversion-vs-quality comparison in the dashboard command view
 - keep backend and dashboard analytics aligned as new attempt reporting slices land
 - use the architecture document as the running record for completed and pending observability work
+- keep paper-trading limits flag-driven so equity allocation and max-position behavior can change via environment/config instead of code edits
 
 ### 5.5 Operational checklist
 
@@ -174,6 +176,11 @@ Best next tuning knobs:
 - confidence threshold
 - sizing aggressiveness
 - specific-hour caution
+
+Current paper-trading config defaults:
+- `PAPER_TRADE_MAX_CAPITAL_ALLOCATION_PCT=1.0`
+- `PAPER_TRADE_ENFORCE_MAX_POSITIONS=false`
+- `PAPER_TRADE_MAX_POSITIONS=10` as the dormant future cap when the flag is re-enabled
 
 ---
 
@@ -231,6 +238,8 @@ Target direction:
 
 ### Analytics and export
 - `analytics/`
+  - `instruments.py`
+  - `instruments.json`
   - `trade_analysis.py`
   - `signal_analysis.py`
   - `trade_scan.py`
@@ -253,6 +262,12 @@ Current code reality:
 - orchestration and context helpers have now been consolidated under `orchestration/`, which leaves the repository root focused on app entrypoints and shared foundations
 - the unused `export_to_github.py` stub has been removed from the root
 - shared foundations have now been consolidated under `core/`, so DB access, structured logging, and trade math are no longer scattered at the repository root
+- the tradable instrument universe now lives in `analytics/instruments.json` and is loaded through `analytics/instruments.py`, which keeps watchlist growth and duplicate validation out of the scan code
+- paper-trading allocation and max-position behavior are now env-driven through `core/paper_trade_config.py`, so paper-mode risk posture can be changed without editing strategy code
+
+### Dashboard defaults
+- operational tables now sort newest-first in the UI by default so the latest entries are visible first even if backend ordering changes
+- risk exposure now displays unlimited open-position capacity when the max-position cap is disabled
 
 ### Repository modules
 - `repositories/scans_repo.py`

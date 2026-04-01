@@ -1,0 +1,62 @@
+{
+  "primary": {
+    "Rivian": { "symbol": "RIVN", "type": "stock", "priority": 10, "market": "NASDAQ" },
+    "SoFi": { "symbol": "SOFI", "type": "stock", "priority": 9, "market": "NASDAQ" },
+    "Snap": { "symbol": "SNAP", "type": "stock", "priority": 8, "market": "NASDAQ" },
+    "NIO": { "symbol": "NIO", "type": "stock", "priority": 8, "market": "NASDAQ" },
+    "Hims & Hers": { "symbol": "HIMS", "type": "stock", "priority": 8, "market": "NASDAQ" },
+    "Joby Aviation": { "symbol": "JOBY", "type": "stock", "priority": 8, "market": "NASDAQ" },
+    "Affirm": { "symbol": "AFRM", "type": "stock", "priority": 8, "market": "NASDAQ" },
+    "Robinhood": { "symbol": "HOOD", "type": "stock", "priority": 8, "market": "NASDAQ" }
+  },
+  "secondary": {
+    "Lucid": { "symbol": "LCID", "type": "stock", "priority": 7, "market": "NASDAQ" },
+    "Archer Aviation": { "symbol": "ACHR", "type": "stock", "priority": 7, "market": "NASDAQ" },
+    "Opendoor": { "symbol": "OPEN", "type": "stock", "priority": 6, "market": "NASDAQ" },
+    "QuantumScape": { "symbol": "QS", "type": "stock", "priority": 6, "market": "NASDAQ" },
+    "Plug Power": { "symbol": "PLUG", "type": "stock", "priority": 6, "market": "NASDAQ" },
+    "Grab": { "symbol": "GRAB", "type": "stock", "priority": 6, "market": "NASDAQ" },
+    "Peloton": { "symbol": "PTON", "type": "stock", "priority": 6, "market": "NASDAQ" },
+    "fuboTV": { "symbol": "FUBO", "type": "stock", "priority": 6, "market": "NASDAQ" }
+  },
+  "third": {
+    "Bitfarms": { "symbol": "BITF", "type": "stock", "priority": 7, "market": "NASDAQ" },
+    "Clover Health": { "symbol": "CLOV", "type": "stock", "priority": 6, "market": "NASDAQ" },
+    "TAL Education": { "symbol": "TAL", "type": "stock", "priority": 6, "market": "NASDAQ" },
+    "Telefonica Brasil": { "symbol": "VIV", "type": "stock", "priority": 5, "market": "NASDAQ" },
+    "Rocket Lab": { "symbol": "RKLB", "type": "stock", "priority": 7, "market": "NASDAQ" },
+    "BigBear.ai": { "symbol": "BBAI", "type": "stock", "priority": 6, "market": "NASDAQ" },
+    "MARA Holdings": { "symbol": "MARA", "type": "stock", "priority": 7, "market": "NASDAQ" },
+    "TeraWulf": { "symbol": "WULF", "type": "stock", "priority": 6, "market": "NASDAQ" }
+  },
+  "fourth": {
+    "SoundHound AI": { "symbol": "SOUN", "type": "stock", "priority": 7, "market": "NASDAQ" },
+    "C3.ai": { "symbol": "AI", "type": "stock", "priority": 7, "market": "NASDAQ" },
+    "D-Wave Quantum": { "symbol": "QBTS", "type": "stock", "priority": 7, "market": "NASDAQ" },
+    "IonQ": { "symbol": "IONQ", "type": "stock", "priority": 7, "market": "NASDAQ" },
+    "Nu Holdings": { "symbol": "NU", "type": "stock", "priority": 6, "market": "NASDAQ" },
+    "Tempus AI": { "symbol": "TEM", "type": "stock", "priority": 6, "market": "NASDAQ" },
+    "Recursion": { "symbol": "RXRX", "type": "stock", "priority": 6, "market": "NASDAQ" },
+    "Cerence": { "symbol": "CRNC", "type": "stock", "priority": 6, "market": "NASDAQ" }
+  },
+  "core_one": {
+    "NVIDIA": { "symbol": "NVDA", "type": "stock", "priority": 10, "market": "NASDAQ" },
+    "Tesla": { "symbol": "TSLA", "type": "stock", "priority": 10, "market": "NASDAQ" },
+    "Apple": { "symbol": "AAPL", "type": "stock", "priority": 10, "market": "NASDAQ" },
+    "AMD": { "symbol": "AMD", "type": "stock", "priority": 9, "market": "NASDAQ" },
+    "Palantir": { "symbol": "PLTR", "type": "stock", "priority": 9, "market": "NASDAQ" },
+    "Microsoft": { "symbol": "MSFT", "type": "stock", "priority": 9, "market": "NASDAQ" },
+    "Arm": { "symbol": "ARM", "type": "stock", "priority": 9, "market": "NASDAQ" },
+    "Super Micro Computer": { "symbol": "SMCI", "type": "stock", "priority": 9, "market": "NASDAQ" }
+  },
+  "core_two": {
+    "Meta": { "symbol": "META", "type": "stock", "priority": 9, "market": "NASDAQ" },
+    "Amazon": { "symbol": "AMZN", "type": "stock", "priority": 9, "market": "NASDAQ" },
+    "Alphabet": { "symbol": "GOOGL", "type": "stock", "priority": 9, "market": "NASDAQ" },
+    "Netflix": { "symbol": "NFLX", "type": "stock", "priority": 8, "market": "NASDAQ" },
+    "Broadcom": { "symbol": "AVGO", "type": "stock", "priority": 8, "market": "NASDAQ" },
+    "Micron": { "symbol": "MU", "type": "stock", "priority": 8, "market": "NASDAQ" },
+    "Adobe": { "symbol": "ADBE", "type": "stock", "priority": 8, "market": "NASDAQ" },
+    "Intel": { "symbol": "INTC", "type": "stock", "priority": 8, "market": "NASDAQ" }
+  }
+}

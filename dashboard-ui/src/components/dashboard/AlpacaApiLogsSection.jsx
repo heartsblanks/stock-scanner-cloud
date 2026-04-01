@@ -1,4 +1,5 @@
 import InsightCard from "../InsightCard";
+import { sortRowsByLatest } from "../tableFormatters";
 
 export default function AlpacaApiLogsSection({
   sectionLoading,
@@ -6,6 +7,9 @@ export default function AlpacaApiLogsSection({
   alpacaApiLogs,
   alpacaApiErrors,
 }) {
+  const sortedApiErrors = sortRowsByLatest(alpacaApiErrors, ["logged_at", "created_at"]);
+  const sortedApiLogs = sortRowsByLatest(alpacaApiLogs, ["logged_at", "created_at"]);
+
   return (
     <section className="dashboard-section">
       <div className="dashboard-panel">
@@ -28,25 +32,25 @@ export default function AlpacaApiLogsSection({
           <InsightCard title="Recent Calls" value={alpacaApiLogs.length} />
           <InsightCard
             title="Recent Errors"
-            value={alpacaApiErrors.length}
-            valueColor={alpacaApiErrors.length > 0 ? "#dc2626" : "#16a34a"}
+            value={sortedApiErrors.length}
+            valueColor={sortedApiErrors.length > 0 ? "#dc2626" : "#16a34a"}
           />
           <InsightCard
             title="Last Error At"
-            value={alpacaApiErrors[0]?.logged_at || "-"}
-            valueColor={alpacaApiErrors.length > 0 ? "#dc2626" : undefined}
+            value={sortedApiErrors[0]?.logged_at || "-"}
+            valueColor={sortedApiErrors.length > 0 ? "#dc2626" : undefined}
           />
           <InsightCard
             title="Success Rate"
             value={
-              alpacaApiLogs.length > 0
-                ? `${(((alpacaApiLogs.filter((row) => !!row.success).length / alpacaApiLogs.length) * 100).toFixed(1))}%`
+              sortedApiLogs.length > 0
+                ? `${(((sortedApiLogs.filter((row) => !!row.success).length / sortedApiLogs.length) * 100).toFixed(1))}%`
                 : "-"
             }
             valueColor={
-              alpacaApiLogs.length > 0 && alpacaApiLogs.filter((row) => !!row.success).length === alpacaApiLogs.length
+              sortedApiLogs.length > 0 && sortedApiLogs.filter((row) => !!row.success).length === sortedApiLogs.length
                 ? "#16a34a"
-                : alpacaApiLogs.length > 0
+                : sortedApiLogs.length > 0
                   ? "#f59e0b"
                   : undefined
             }
@@ -59,7 +63,7 @@ export default function AlpacaApiLogsSection({
                 <h3>Recent Errors</h3>
               </div>
             </div>
-            {alpacaApiErrors.length === 0 ? (
+            {sortedApiErrors.length === 0 ? (
               <div className="dashboard-empty">No recent Alpaca API errors</div>
             ) : (
               <div className="dashboard-table-wrap">
@@ -75,7 +79,7 @@ export default function AlpacaApiLogsSection({
                   </tr>
                 </thead>
                 <tbody>
-                  {alpacaApiErrors.map((row, index) => (
+                  {sortedApiErrors.map((row, index) => (
                     <tr key={`${row.id || "alpaca-error"}-${index}`}>
                       <td>{row.logged_at || "-"}</td>
                       <td>{row.method || "-"}</td>
@@ -97,7 +101,7 @@ export default function AlpacaApiLogsSection({
                 <h3>Recent Calls</h3>
               </div>
             </div>
-            {alpacaApiLogs.length === 0 ? (
+            {sortedApiLogs.length === 0 ? (
               <div className="dashboard-empty">No recent Alpaca API logs available</div>
             ) : (
               <div className="dashboard-table-wrap">
@@ -113,7 +117,7 @@ export default function AlpacaApiLogsSection({
                   </tr>
                 </thead>
                 <tbody>
-                  {alpacaApiLogs.map((row, index) => (
+                  {sortedApiLogs.map((row, index) => (
                     <tr key={`${row.id || "alpaca-log"}-${index}`}>
                       <td>{row.logged_at || "-"}</td>
                       <td>{row.method || "-"}</td>

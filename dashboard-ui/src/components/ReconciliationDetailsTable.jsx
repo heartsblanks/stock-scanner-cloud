@@ -1,4 +1,4 @@
-import { formatCurrency, formatNumber, formatTimestamp, formatValue } from "./tableFormatters";
+import { formatCurrency, formatNumber, formatTimestamp, formatValue, sortRowsByLatest } from "./tableFormatters";
 
 function getStatusClass(status) {
   const normalized = String(status || "").trim().toLowerCase();
@@ -30,9 +30,15 @@ function toneForMismatch(row) {
 }
 
 export default function ReconciliationDetailsTable({ rows = [] }) {
+  const sortedRows = sortRowsByLatest(rows, [
+    "local_entry_timestamp_utc",
+    "local_exit_timestamp_utc",
+    "created_at",
+  ]);
+
   return (
     <div className="dashboard-table-wrap">
-      {rows.length === 0 ? (
+      {sortedRows.length === 0 ? (
         <div className="dashboard-empty">No reconciliation detail rows available</div>
       ) : (
         <table className="dashboard-table" style={{ minWidth: 1200 }}>
@@ -60,7 +66,7 @@ export default function ReconciliationDetailsTable({ rows = [] }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, index) => (
+            {sortedRows.map((row, index) => (
               <tr key={`${row.broker_parent_order_id || "row"}-${index}`} className={toneForMismatch(row)}>
                 <td data-label="Status">
                   <span className={getStatusClass(row.match_status)}>{formatValue(row.match_status)}</span>

@@ -152,7 +152,11 @@ export default function HealthOverviewSection({
             title="Open Positions"
             value={
               riskExposureSummary
-                ? `${riskExposureSummary.open_position_count ?? 0} / ${riskExposureSummary.max_positions ?? 0}`
+                ? `${riskExposureSummary.open_position_count ?? 0} / ${
+                    riskExposureSummary.position_limit_enforced
+                      ? (riskExposureSummary.max_positions ?? 0)
+                      : "Unlimited"
+                  }`
                 : "-"
             }
           />

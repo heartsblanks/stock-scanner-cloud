@@ -6,7 +6,7 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 try:
-    from analytics.trade_scan import evaluate_symbol
+    from analytics.trade_scan import calculate_position_sizing, evaluate_symbol
 except ModuleNotFoundError as exc:
     if exc.name == "requests":
         raise SkipTest("requests dependency is not available in this local unittest environment")
@@ -56,7 +56,7 @@ class TradeScanLateSessionTests(unittest.TestCase):
         candles = build_valid_breakout_candles()
 
         with patch.dict(os.environ, {"ENABLE_LATE_SESSION_HARD_BLOCK": "false"}, clear=False):
-            with patch("trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 13, 0, tzinfo=NY_TZ)):
+            with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 13, 0, tzinfo=NY_TZ)):
                 result = evaluate_symbol(
                     name="Alphabet",
                     info=info,
@@ -76,7 +76,7 @@ class TradeScanLateSessionTests(unittest.TestCase):
         candles = build_valid_breakout_candles()
 
         with patch.dict(os.environ, {"ENABLE_LATE_SESSION_HARD_BLOCK": "true"}, clear=False):
-            with patch("trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 13, 0, tzinfo=NY_TZ)):
+            with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 13, 0, tzinfo=NY_TZ)):
                 result = evaluate_symbol(
                     name="Alphabet",
                     info=info,
@@ -90,6 +90,32 @@ class TradeScanLateSessionTests(unittest.TestCase):
         self.assertEqual(result["decision"], "REJECTED")
         self.assertEqual(result["final_reason"], "Later in session: only stronger names allowed.")
         self.assertFalse(result["checks"]["late_session_strict_rule"])
+
+
+class TradeScanSizingConfigTests(unittest.TestCase):
+    def test_position_sizing_defaults_to_full_equity_without_position_cap(self):
+        with patch.dict(
+            os.environ,
+            {
+                "PAPER_TRADE_MAX_CAPITAL_ALLOCATION_PCT": "1.0",
+                "PAPER_TRADE_ENFORCE_MAX_POSITIONS": "false",
+                "PAPER_TRADE_MAX_POSITIONS": "10",
+            },
+            clear=False,
+        ):
+            sizing = calculate_position_sizing(
+                account_size=100000.0,
+                entry=250.0,
+                stop=245.0,
+                current_open_positions=4,
+                current_open_exposure=25000.0,
+            )
+
+        self.assertFalse(sizing["position_limit_enforced"])
+        self.assertEqual(sizing["remaining_slots"], 1)
+        self.assertAlmostEqual(sizing["max_total_allocated_capital"], 100000.0, places=2)
+        self.assertAlmostEqual(sizing["remaining_allocatable_capital"], 75000.0, places=2)
+        self.assertEqual(sizing["shares"], 300)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 from core.logging_utils import log_exception
+from core.paper_trade_config import get_paper_trade_limits
 from alpaca.paper import get_open_orders, get_open_positions
 from orchestration.scan_context import NY_TZ, parse_iso_utc, to_float_or_none
 from storage import (
@@ -226,8 +227,10 @@ def get_risk_exposure_summary() -> dict:
         if unrealized_pl is not None:
             daily_unrealized_pnl += unrealized_pl
 
-    max_positions = 10
-    max_capital_allocation_pct = 0.50
+    limits = get_paper_trade_limits()
+    max_positions = int(limits["max_positions"])
+    max_capital_allocation_pct = float(limits["max_capital_allocation_pct"])
+    position_limit_enforced = bool(limits["position_limit_enforced"])
     account_size = 0.0
     try:
         from services.scan_service import _get_live_alpaca_account_equity
@@ -246,6 +249,7 @@ def get_risk_exposure_summary() -> dict:
         "daily_unrealized_pnl": round(daily_unrealized_pnl, 2),
         "allocation_used_pct": round(allocation_used_pct, 2),
         "max_positions": max_positions,
+        "position_limit_enforced": position_limit_enforced,
         "max_total_allocated_capital": round(max_total_allocated_capital, 2),
         "max_capital_allocation_pct": max_capital_allocation_pct,
         "account_size": round(account_size, 2),

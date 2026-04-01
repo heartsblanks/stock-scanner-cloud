@@ -1,4 +1,4 @@
-import { formatNumber, formatTimestamp, formatValue } from "./tableFormatters";
+import { formatNumber, formatTimestamp, formatValue, sortRowsByLatest } from "./tableFormatters";
 
 function getStatusClass(status) {
   const normalized = String(status || "").trim().toUpperCase();
@@ -30,9 +30,11 @@ function rowTone(status) {
 }
 
 export default function ReconciliationHistoryTable({ rows = [] }) {
+  const sortedRows = sortRowsByLatest(rows, ["run_time", "run_started_at", "created_at", "run_completed_at"]);
+
   return (
     <div className="dashboard-table-wrap">
-      {rows.length === 0 ? (
+      {sortedRows.length === 0 ? (
         <div className="dashboard-empty">No reconciliation history available</div>
       ) : (
         <table className="dashboard-table" style={{ minWidth: 900 }}>
@@ -49,7 +51,7 @@ export default function ReconciliationHistoryTable({ rows = [] }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, index) => {
+            {sortedRows.map((row, index) => {
               const mismatchCount = row.mismatch_count ?? row.unmatched_count ?? row.unmatched_rows ?? 0;
               const matchedCount = row.matched_count ?? row.matched_rows ?? 0;
               const status = row.severity || row.status || (mismatchCount > 0 ? "WARNING" : "OK");

@@ -143,15 +143,16 @@ export async function fetchRiskExposureSummary() {
 
   return {
     ...summary,
-    total_open_exposure: summary?.total_open_exposure || 0,
-    open_position_count: summary?.open_position_count || 0,
-    daily_realized_pnl: summary?.daily_realized_pnl || 0,
-    daily_unrealized_pnl: summary?.daily_unrealized_pnl || 0,
-    allocation_used_pct: summary?.allocation_used_pct || 0,
-    max_positions: summary?.max_positions || 0,
-    max_total_allocated_capital: summary?.max_total_allocated_capital || 0,
-    max_capital_allocation_pct: summary?.max_capital_allocation_pct || 0,
-    account_size: summary?.account_size || 0,
+    total_open_exposure: summary?.total_open_exposure ?? 0,
+    open_position_count: summary?.open_position_count ?? 0,
+    daily_realized_pnl: summary?.daily_realized_pnl ?? 0,
+    daily_unrealized_pnl: summary?.daily_unrealized_pnl ?? 0,
+    allocation_used_pct: summary?.allocation_used_pct ?? 0,
+    max_positions: summary?.max_positions ?? null,
+    position_limit_enforced: summary?.position_limit_enforced ?? false,
+    max_total_allocated_capital: summary?.max_total_allocated_capital ?? 0,
+    max_capital_allocation_pct: summary?.max_capital_allocation_pct ?? 0,
+    account_size: summary?.account_size ?? 0,
   };
 }
 

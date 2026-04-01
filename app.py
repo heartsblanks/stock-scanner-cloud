@@ -97,13 +97,8 @@ from analytics.trade_scan import (
     evaluate_symbol,
     market_time_check,
     MIN_CONFIDENCE,
-    PRIMARY_INSTRUMENTS,
-    SECONDARY_INSTRUMENTS,
-    THIRD_INSTRUMENTS,
-    FOURTH_INSTRUMENTS,
-    CORE_ONE_INSTRUMENTS,
-    CORE_TWO_INSTRUMENTS,
 )
+from analytics.instruments import INSTRUMENT_GROUPS
 PAPER_TRADE_MIN_CONFIDENCE = 70
 
 
@@ -116,16 +111,6 @@ def env_flag(name: str, default: str = "true") -> bool:
     return value in {"1", "true", "yes", "y", "on"}
 
 ENABLE_DB_LOGGING = env_flag("ENABLE_DB_LOGGING", "true")
-
-INSTRUMENT_GROUPS = {
-    "primary": PRIMARY_INSTRUMENTS,
-    "secondary": SECONDARY_INSTRUMENTS,
-    "third": THIRD_INSTRUMENTS,
-    "fourth": FOURTH_INSTRUMENTS,
-    "core_one": CORE_ONE_INSTRUMENTS,
-    "core_two": CORE_TWO_INSTRUMENTS,
-}
-
 
 def safe_insert_scan_run(**kwargs) -> None:
     if not ENABLE_DB_LOGGING:

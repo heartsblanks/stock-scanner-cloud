@@ -14,9 +14,17 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from analytics.instruments import (
+    CORE_ONE_INSTRUMENTS,
+    CORE_TWO_INSTRUMENTS,
+    FOURTH_INSTRUMENTS,
+    PRIMARY_INSTRUMENTS,
+    SECONDARY_INSTRUMENTS,
+    THIRD_INSTRUMENTS,
+)
+from core.paper_trade_config import get_paper_trade_limits
+
 MIN_CONFIDENCE = 75
-MAX_POSITIONS = 10
-MAX_CAPITAL_ALLOCATION_PCT = 0.50
 MIN_REMAINING_ALLOCATABLE_CAPITAL = 50.0
 API_KEY = os.getenv("TWELVEDATA_API_KEY")
 BASE_URL = "https://api.twelvedata.com/time_series"
@@ -25,61 +33,6 @@ BASE_URL = "https://api.twelvedata.com/time_series"
 def late_session_hard_block_enabled() -> bool:
     value = str(os.getenv("ENABLE_LATE_SESSION_HARD_BLOCK", "false")).strip().lower()
     return value in {"1", "true", "yes", "y", "on"}
-
-PRIMARY_INSTRUMENTS = {
-    "Rivian": {"symbol": "RIVN", "type": "stock", "priority": 10, "market": "NASDAQ"},
-    "SoFi": {"symbol": "SOFI", "type": "stock", "priority": 9, "market": "NASDAQ"},
-    "Snap": {"symbol": "SNAP", "type": "stock", "priority": 8, "market": "NASDAQ"},
-    "NIO": {"symbol": "NIO", "type": "stock", "priority": 8, "market": "NASDAQ"},
-    "Hims & Hers": {"symbol": "HIMS", "type": "stock", "priority": 8, "market": "NASDAQ"},
-    "Joby Aviation": {"symbol": "JOBY", "type": "stock", "priority": 8, "market": "NASDAQ"},
-}
-
-SECONDARY_INSTRUMENTS = {
-    "Lucid": {"symbol": "LCID", "type": "stock", "priority": 7, "market": "NASDAQ"},
-    "Archer Aviation": {"symbol": "ACHR", "type": "stock", "priority": 7, "market": "NASDAQ"},
-    "Opendoor": {"symbol": "OPEN", "type": "stock", "priority": 6, "market": "NASDAQ"},
-    "QuantumScape": {"symbol": "QS", "type": "stock", "priority": 6, "market": "NASDAQ"},
-    "Plug Power": {"symbol": "PLUG", "type": "stock", "priority": 6, "market": "NASDAQ"},
-    "Grab": {"symbol": "GRAB", "type": "stock", "priority": 6, "market": "NASDAQ"},
-}
-
-THIRD_INSTRUMENTS = {
-    "Bitfarms": {"symbol": "BITF", "type": "stock", "priority": 7, "market": "NASDAQ"},
-    "Clover Health": {"symbol": "CLOV", "type": "stock", "priority": 6, "market": "NASDAQ"},
-    "TAL Education": {"symbol": "TAL", "type": "stock", "priority": 6, "market": "NASDAQ"},
-    "Telefonica Brasil": {"symbol": "VIV", "type": "stock", "priority": 5, "market": "NASDAQ"},
-    "Rocket Lab": {"symbol": "RKLB", "type": "stock", "priority": 7, "market": "NASDAQ"},
-    "BigBear.ai": {"symbol": "BBAI", "type": "stock", "priority": 6, "market": "NASDAQ"},
-}
-
-FOURTH_INSTRUMENTS = {
-    "SoundHound AI": {"symbol": "SOUN", "type": "stock", "priority": 7, "market": "NASDAQ"},
-    "C3.ai": {"symbol": "AI", "type": "stock", "priority": 7, "market": "NASDAQ"},
-    "D-Wave Quantum": {"symbol": "QBTS", "type": "stock", "priority": 7, "market": "NASDAQ"},
-    "IonQ": {"symbol": "IONQ", "type": "stock", "priority": 7, "market": "NASDAQ"},
-    "Nu Holdings": {"symbol": "NU", "type": "stock", "priority": 6, "market": "NASDAQ"},
-    "Tempus AI": {"symbol": "TEM", "type": "stock", "priority": 6, "market": "NASDAQ"},
-}
-
-CORE_ONE_INSTRUMENTS = {
-    "NVIDIA": {"symbol": "NVDA", "type": "stock", "priority": 10, "market": "NASDAQ"},
-    "Tesla": {"symbol": "TSLA", "type": "stock", "priority": 10, "market": "NASDAQ"},
-    "Apple": {"symbol": "AAPL", "type": "stock", "priority": 10, "market": "NASDAQ"},
-    "AMD": {"symbol": "AMD", "type": "stock", "priority": 9, "market": "NASDAQ"},
-    "Palantir": {"symbol": "PLTR", "type": "stock", "priority": 9, "market": "NASDAQ"},
-    "Microsoft": {"symbol": "MSFT", "type": "stock", "priority": 9, "market": "NASDAQ"},
-}
-
-CORE_TWO_INSTRUMENTS = {
-    "Meta": {"symbol": "META", "type": "stock", "priority": 9, "market": "NASDAQ"},
-    "Amazon": {"symbol": "AMZN", "type": "stock", "priority": 9, "market": "NASDAQ"},
-    "Alphabet": {"symbol": "GOOGL", "type": "stock", "priority": 9, "market": "NASDAQ"},
-    "Netflix": {"symbol": "NFLX", "type": "stock", "priority": 8, "market": "NASDAQ"},
-    "Broadcom": {"symbol": "AVGO", "type": "stock", "priority": 8, "market": "NASDAQ"},
-    "Micron": {"symbol": "MU", "type": "stock", "priority": 8, "market": "NASDAQ"},
-}
-
 
 def fmt(x: float) -> str:
     return f"{x:.2f}"
@@ -330,12 +283,19 @@ def get_market_direction(candles: list[dict]):
 
 
 def calculate_position_sizing(account_size: float, entry: float, stop: float, current_open_positions: int = 0, current_open_exposure: float = 0.0):
-    remaining_slots = max(0, MAX_POSITIONS - max(0, int(current_open_positions)))
-    max_total_allocated_capital = account_size * MAX_CAPITAL_ALLOCATION_PCT
+    limits = get_paper_trade_limits()
+    position_limit_enforced = bool(limits["position_limit_enforced"])
+    max_positions = int(limits["max_positions"])
+    max_capital_allocation_pct = float(limits["max_capital_allocation_pct"])
+    remaining_slots = max(0, max_positions - max(0, int(current_open_positions))) if position_limit_enforced else 1
+    max_total_allocated_capital = account_size * max_capital_allocation_pct
     remaining_allocatable_capital = max(0.0, max_total_allocated_capital - max(0.0, float(current_open_exposure)))
 
-    if remaining_slots <= 0:
+    if position_limit_enforced and remaining_slots <= 0:
         return {
+            "position_limit_enforced": position_limit_enforced,
+            "max_positions": max_positions,
+            "max_capital_allocation_pct": max_capital_allocation_pct,
             "max_total_allocated_capital": max_total_allocated_capital,
             "remaining_allocatable_capital": remaining_allocatable_capital,
             "remaining_slots": remaining_slots,
@@ -357,6 +317,9 @@ def calculate_position_sizing(account_size: float, entry: float, stop: float, cu
     actual_risk = shares * risk_per_share
 
     return {
+        "position_limit_enforced": position_limit_enforced,
+        "max_positions": max_positions,
+        "max_capital_allocation_pct": max_capital_allocation_pct,
         "max_total_allocated_capital": max_total_allocated_capital,
         "remaining_allocatable_capital": remaining_allocatable_capital,
         "remaining_slots": remaining_slots,
@@ -598,8 +561,9 @@ def evaluate_symbol(
     take_profit_dollars = calculate_take_profit_dollars(entry, target, shares)
 
     metrics.update({
-        "max_positions": MAX_POSITIONS,
-        "max_capital_allocation_pct": MAX_CAPITAL_ALLOCATION_PCT,
+        "max_positions": sizing["max_positions"],
+        "position_limit_enforced": sizing["position_limit_enforced"],
+        "max_capital_allocation_pct": sizing["max_capital_allocation_pct"],
         "current_open_positions": current_open_positions,
         "current_open_exposure": current_open_exposure,
         "max_total_allocated_capital": sizing["max_total_allocated_capital"],
@@ -615,7 +579,7 @@ def evaluate_symbol(
         "take_profit_dollars": take_profit_dollars,
     })
 
-    checks["remaining_slots_available"] = sizing["remaining_slots"] >= 1
+    checks["remaining_slots_available"] = True if not sizing["position_limit_enforced"] else sizing["remaining_slots"] >= 1
     if not checks["remaining_slots_available"]:
         return {
             "name": name,
@@ -807,7 +771,9 @@ def format_debug_result(eval_result: dict) -> str:
     if "shares" in m:
         lines.append("")
         lines.append("Sizing:")
-        lines.append(f"- Max Positions: {m['max_positions']}")
+        lines.append(
+            f"- Max Positions: {m['max_positions'] if m.get('position_limit_enforced') else 'Unlimited (flag disabled)'}"
+        )
         lines.append(f"- Allocation %: {m['max_capital_allocation_pct']:.2f}")
         lines.append(f"- Current Open Positions: {m['current_open_positions']}")
         lines.append(f"- Current Open Exposure: ${fmt(m['current_open_exposure'])}")

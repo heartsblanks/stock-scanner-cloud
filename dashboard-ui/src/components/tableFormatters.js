@@ -69,3 +69,25 @@ export function signedTone(value) {
   }
   return numeric > 0 ? "dashboard-cell-positive" : "dashboard-cell-negative";
 }
+
+export function sortRowsByLatest(rows, selectors = []) {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+
+  const resolveTimestamp = (row) => {
+    for (const selector of selectors) {
+      const value = row?.[selector];
+      if (!value) {
+        continue;
+      }
+      const timestamp = new Date(value).getTime();
+      if (!Number.isNaN(timestamp)) {
+        return timestamp;
+      }
+    }
+    return 0;
+  };
+
+  return [...rows].sort((left, right) => resolveTimestamp(right) - resolveTimestamp(left));
+}
