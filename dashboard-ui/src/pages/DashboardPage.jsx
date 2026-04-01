@@ -12,6 +12,7 @@ const OpenTradesTable = lazy(() => import("../components/OpenTradesTable"));
 const TradeLifecycleTable = lazy(() => import("../components/TradeLifecycleTable"));
 const EquityCurveChart = lazy(() => import("../components/EquityCurveChart"));
 const HourlyPerformanceChart = lazy(() => import("../components/HourlyPerformanceChart"));
+const HourlyAttemptOutcomeChart = lazy(() => import("../components/HourlyAttemptOutcomeChart"));
 const SymbolPerformanceChart = lazy(() => import("../components/SymbolPerformanceChart"));
 const ModePerformanceChart = lazy(() => import("../components/ModePerformanceChart"));
 const AlpacaApiLogsSection = lazy(() => import("../components/dashboard/AlpacaApiLogsSection"));
@@ -570,6 +571,23 @@ export default function DashboardPage() {
                           })
                         }
                       />
+                      <InsightCard
+                        title="Busiest Attempt Hour (ET)"
+                        value={
+                          paperTradeAttemptHourlySummary?.length
+                            ? (() => {
+                                const row = [...paperTradeAttemptHourlySummary].sort(
+                                  (left, right) => Number(right.total_attempts || 0) - Number(left.total_attempts || 0)
+                                )[0];
+                                if (!row) return "-";
+                                const hour = Number(row.hour_ny);
+                                const suffix = hour >= 12 ? "PM" : "AM";
+                                const normalizedHour = hour % 12 || 12;
+                                return `${normalizedHour}:00 ${suffix}`;
+                              })()
+                            : "-"
+                        }
+                      />
                     </div>
                   </div>
                 </div>
@@ -632,6 +650,11 @@ export default function DashboardPage() {
                             })
                           }
                         />
+                      </LazySection>
+                    </div>
+                    <div style={{ marginTop: 20 }}>
+                      <LazySection>
+                        <HourlyAttemptOutcomeChart rows={paperTradeAttemptHourlySummary} />
                       </LazySection>
                     </div>
                   </div>
