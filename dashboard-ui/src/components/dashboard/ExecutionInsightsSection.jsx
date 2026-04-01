@@ -7,6 +7,21 @@ function formatPercent(value) {
   return `${Number(value).toFixed(1)}%`;
 }
 
+function formatHourLabel(hour) {
+  if (hour === null || hour === undefined || hour === "") {
+    return "-";
+  }
+
+  const numericHour = Number(hour);
+  if (Number.isNaN(numericHour)) {
+    return "-";
+  }
+
+  const suffix = numericHour >= 12 ? "PM" : "AM";
+  const normalizedHour = numericHour % 12 || 12;
+  return `${normalizedHour}:00 ${suffix} ET`;
+}
+
 export default function ExecutionInsightsSection({
   sectionLoading,
   sectionErrors,
@@ -15,6 +30,7 @@ export default function ExecutionInsightsSection({
   topAttemptReasons,
   paperTradeAttemptRejections,
   paperTradeAttemptDailySummary,
+  paperTradeAttemptHourlySummary,
 }) {
   const stageCountMap = Object.fromEntries((stageCounts || []).map((row) => [row.decision_stage, Number(row.count || 0)]));
   const placedCount = stageCountMap.PLACED ?? 0;
@@ -26,6 +42,9 @@ export default function ExecutionInsightsSection({
   const latestRejection = paperTradeAttemptRejections?.[0] || null;
   const mostRecentDay = paperTradeAttemptDailySummary?.[0]?.trade_date || null;
   const mostCommonReason = topAttemptReasons?.[0] || null;
+  const busiestHour = [...(paperTradeAttemptHourlySummary || [])].sort(
+    (left, right) => Number(right.total_attempts || 0) - Number(left.total_attempts || 0)
+  )[0] || null;
 
   return (
     <section className="dashboard-section">
@@ -104,6 +123,68 @@ export default function ExecutionInsightsSection({
               ))}
             </div>
           )}
+
+          <div className="dashboard-panel dashboard-panel-strong">
+            <div className="dashboard-panel-body dashboard-panel-body-tight">
+              <div className="dashboard-panel-heading">
+                <div>
+                  <h3>Hourly Outcome Pattern</h3>
+                  <p className="dashboard-panel-subtitle">
+                    Placement rate and dominant non-placement reason by New York session hour.
+                  </p>
+                </div>
+              </div>
+
+              {busiestHour && (
+                <div className="dashboard-inline-kv">
+                  <div><strong>Busiest Hour:</strong> {formatHourLabel(busiestHour.hour_ny)}</div>
+                  <div><strong>Total Attempts:</strong> {busiestHour.total_attempts ?? 0}</div>
+                  <div><strong>Placement Rate:</strong> {formatPercent(busiestHour.placement_rate)}</div>
+                  <div><strong>Top Reason:</strong> {busiestHour.top_non_placement_reason || "-"}</div>
+                </div>
+              )}
+
+              {paperTradeAttemptHourlySummary?.length ? (
+                <div className="dashboard-table-wrap">
+                  <table className="dashboard-table">
+                    <thead>
+                      <tr>
+                        <th>Hour</th>
+                        <th>Placed</th>
+                        <th>Non-Placed</th>
+                        <th>Placement Rate</th>
+                        <th>Top Reason</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paperTradeAttemptHourlySummary.map((row) => {
+                        const nonPlacedCount =
+                          Number(row.scan_rejected_count || 0) +
+                          Number(row.refresh_rejected_count || 0) +
+                          Number(row.placement_skipped_count || 0) +
+                          Number(row.placement_rejected_count || 0);
+                        return (
+                          <tr key={row.hour_ny}>
+                            <td data-label="Hour">{formatHourLabel(row.hour_ny)}</td>
+                            <td data-label="Placed">{row.placed_count ?? 0}</td>
+                            <td data-label="Non-Placed">{nonPlacedCount}</td>
+                            <td data-label="Placement Rate">{formatPercent(row.placement_rate)}</td>
+                            <td data-label="Top Reason">
+                              {row.top_non_placement_reason
+                                ? `${row.top_non_placement_reason} (${row.top_non_placement_reason_count || 0})`
+                                : "-"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="dashboard-empty">No hourly attempt rows are available yet.</div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </section>

@@ -124,6 +124,7 @@ export default function DashboardPage() {
     autoRefreshMarketTime,
     paperTradeAttemptRejections,
     paperTradeAttemptDailySummary,
+    paperTradeAttemptHourlySummary,
     handleApplyFilters,
     refreshData,
     rerunReconciliation,
@@ -371,6 +372,7 @@ export default function DashboardPage() {
                   topAttemptReasons={topAttemptReasons}
                   paperTradeAttemptRejections={paperTradeAttemptRejections}
                   paperTradeAttemptDailySummary={paperTradeAttemptDailySummary}
+                  paperTradeAttemptHourlySummary={paperTradeAttemptHourlySummary}
                 />
               </div>
 

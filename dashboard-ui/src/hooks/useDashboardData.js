@@ -13,6 +13,7 @@ import {
   fetchLatestScanSummary,
   fetchOpsSummary,
   fetchPaperTradeAttemptDailySummary,
+  fetchPaperTradeAttemptHourlySummary,
   fetchPaperTradeAttemptRejections,
   runReconciliationNow,
   runSyncPaperTrades,
@@ -83,6 +84,7 @@ export function useDashboardData(activeView = "overview") {
   const [opsSummary, setOpsSummary] = useState(null);
   const [paperTradeAttemptRejections, setPaperTradeAttemptRejections] = useState([]);
   const [paperTradeAttemptDailySummary, setPaperTradeAttemptDailySummary] = useState([]);
+  const [paperTradeAttemptHourlySummary, setPaperTradeAttemptHourlySummary] = useState([]);
   const [latestScanSummary, setLatestScanSummary] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [nextRefreshAt, setNextRefreshAt] = useState(null);
@@ -137,15 +139,17 @@ export function useDashboardData(activeView = "overview") {
   const loadAttemptsSection = useCallback(async () => {
     try {
       setSectionLoading((prev) => ({ ...prev, attempts: true }));
-      const [opsRes, rejectionRes, dailyRes] = await Promise.all([
+      const [opsRes, rejectionRes, dailyRes, hourlyRes] = await Promise.all([
         fetchOpsSummary(),
         fetchPaperTradeAttemptRejections(12),
         fetchPaperTradeAttemptDailySummary(7),
+        fetchPaperTradeAttemptHourlySummary(7),
       ]);
 
       setOpsSummary(opsRes || null);
       setPaperTradeAttemptRejections(Array.isArray(rejectionRes?.rows) ? rejectionRes.rows : []);
       setPaperTradeAttemptDailySummary(Array.isArray(dailyRes?.rows) ? dailyRes.rows : []);
+      setPaperTradeAttemptHourlySummary(Array.isArray(hourlyRes?.rows) ? hourlyRes.rows : []);
       setSectionErrors((prev) => ({ ...prev, attempts: null }));
     } catch (sectionErr) {
       setSectionErrors((prev) => ({
@@ -494,6 +498,11 @@ export function useDashboardData(activeView = "overview") {
   const stageCounts = Array.isArray(opsSummary?.paper_trade_attempt_stage_counts)
     ? opsSummary.paper_trade_attempt_stage_counts
     : [];
+  const attemptHourlySummary = Array.isArray(paperTradeAttemptHourlySummary) && paperTradeAttemptHourlySummary.length > 0
+    ? paperTradeAttemptHourlySummary
+    : Array.isArray(opsSummary?.paper_trade_attempt_hourly_summary)
+      ? opsSummary.paper_trade_attempt_hourly_summary
+      : [];
   const placedCount = stageCounts.find((row) => row.decision_stage === "PLACED")?.count ?? 0;
   const rejectedCount = stageCounts
     .filter((row) => row.decision_stage !== "PLACED" && row.decision_stage !== "PAPER_CANDIDATE")
@@ -540,6 +549,7 @@ export function useDashboardData(activeView = "overview") {
     opsSummary,
     paperTradeAttemptRejections,
     paperTradeAttemptDailySummary,
+    paperTradeAttemptHourlySummary: attemptHourlySummary,
     topAttemptReasons,
     stageCounts,
     paperTradePlacementRate,

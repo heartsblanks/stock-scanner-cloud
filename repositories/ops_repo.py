@@ -4,6 +4,7 @@ from db import fetch_one, fetch_all
 from repositories.broker_repo import get_broker_order_status_counts
 from repositories.reconcile_repo import get_latest_reconciliation_run
 from repositories.scans_repo import (
+    get_paper_trade_attempt_hourly_summary,
     get_latest_scan_run,
     get_paper_trade_attempt_reason_counts,
     get_paper_trade_attempt_stage_counts,
@@ -56,6 +57,7 @@ def get_ops_summary() -> dict:
         "trade_lifecycle_status_counts": lifecycle_status_counts,
         "paper_trade_attempt_stage_counts": get_paper_trade_attempt_stage_counts(limit_days=7),
         "paper_trade_attempt_top_reasons": get_paper_trade_attempt_reason_counts(limit_days=7, limit=10),
+        "paper_trade_attempt_hourly_summary": get_paper_trade_attempt_hourly_summary(limit_days=7),
         "latest_scan_run": get_latest_scan_run(),
         "latest_reconciliation_run_id": latest_run.get("id") if latest_run else None,
         "latest_reconciliation_run_time": latest_run.get("run_time") if latest_run else None,

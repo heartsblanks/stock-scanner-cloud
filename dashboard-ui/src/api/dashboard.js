@@ -79,6 +79,19 @@ export async function fetchPaperTradeAttemptDailySummary(limitDays = 7) {
   };
 }
 
+export async function fetchPaperTradeAttemptHourlySummary(limitDays = 7) {
+  const response = await apiClient.get("/paper-trade-attempts/hourly-summary", {
+    params: { limit_days: limitDays },
+  });
+  const data = response.data || {};
+  return {
+    ...data,
+    rows: Array.isArray(data?.rows) ? data.rows : [],
+    count: data?.count ?? (Array.isArray(data?.rows) ? data.rows.length : 0),
+    limit_days: data?.limit_days || limitDays,
+  };
+}
+
 export async function fetchReconcileSummary() {
   const response = await apiClient.get("/reconcile-summary");
   return response.data;

@@ -437,6 +437,80 @@ def get_paper_trade_attempt_daily_summary(limit_days: int = 7) -> list[dict]:
     )
 
 
+def get_paper_trade_attempt_hourly_summary(limit_days: int = 7) -> list[dict]:
+    return fetch_all(
+        """
+        WITH base AS (
+            SELECT
+                EXTRACT(HOUR FROM (timestamp_utc AT TIME ZONE 'America/New_York'))::INT AS hour_ny,
+                COALESCE(decision_stage, '') AS decision_stage,
+                COALESCE(final_reason, '') AS final_reason
+            FROM paper_trade_attempts
+            WHERE timestamp_utc >= NOW() - (%(limit_days)s::text || ' days')::interval
+        ),
+        reason_ranked AS (
+            SELECT
+                hour_ny,
+                final_reason,
+                COUNT(*)::INT AS reason_count,
+                ROW_NUMBER() OVER (
+                    PARTITION BY hour_ny
+                    ORDER BY COUNT(*) DESC, final_reason ASC
+                ) AS rn
+            FROM base
+            WHERE final_reason <> ''
+              AND decision_stage IN ('SCAN_REJECTED', 'REFRESH_REJECTED', 'PLACEMENT_SKIPPED', 'PLACEMENT_REJECTED')
+            GROUP BY hour_ny, final_reason
+        )
+        SELECT
+            base.hour_ny,
+            COUNT(*)::INT AS total_attempts,
+            COUNT(*) FILTER (WHERE base.decision_stage = 'PLACED')::INT AS placed_count,
+            COUNT(*) FILTER (WHERE base.decision_stage = 'SCAN_REJECTED')::INT AS scan_rejected_count,
+            COUNT(*) FILTER (WHERE base.decision_stage = 'REFRESH_REJECTED')::INT AS refresh_rejected_count,
+            COUNT(*) FILTER (WHERE base.decision_stage = 'PLACEMENT_SKIPPED')::INT AS placement_skipped_count,
+            COUNT(*) FILTER (WHERE base.decision_stage = 'PLACEMENT_REJECTED')::INT AS placement_rejected_count,
+            COUNT(*) FILTER (WHERE base.decision_stage = 'PAPER_CANDIDATE')::INT AS candidate_count,
+            (
+                COUNT(*) FILTER (WHERE base.decision_stage = 'PLACED')
+                + COUNT(*) FILTER (
+                    WHERE base.decision_stage IN ('SCAN_REJECTED', 'REFRESH_REJECTED', 'PLACEMENT_SKIPPED', 'PLACEMENT_REJECTED')
+                )
+            )::INT AS resolved_attempts,
+            CASE
+                WHEN (
+                    COUNT(*) FILTER (WHERE base.decision_stage = 'PLACED')
+                    + COUNT(*) FILTER (
+                        WHERE base.decision_stage IN ('SCAN_REJECTED', 'REFRESH_REJECTED', 'PLACEMENT_SKIPPED', 'PLACEMENT_REJECTED')
+                    )
+                ) > 0
+                THEN ROUND(
+                    (
+                        COUNT(*) FILTER (WHERE base.decision_stage = 'PLACED')::NUMERIC
+                        / (
+                            COUNT(*) FILTER (WHERE base.decision_stage = 'PLACED')
+                            + COUNT(*) FILTER (
+                                WHERE base.decision_stage IN ('SCAN_REJECTED', 'REFRESH_REJECTED', 'PLACEMENT_SKIPPED', 'PLACEMENT_REJECTED')
+                            )
+                        )::NUMERIC
+                    ) * 100,
+                    1
+                )
+                ELSE NULL
+            END AS placement_rate,
+            reason_ranked.final_reason AS top_non_placement_reason,
+            reason_ranked.reason_count AS top_non_placement_reason_count
+        FROM base
+        LEFT JOIN reason_ranked
+          ON reason_ranked.hour_ny = base.hour_ny
+         AND reason_ranked.rn = 1
+        GROUP BY base.hour_ny, reason_ranked.final_reason, reason_ranked.reason_count
+        ORDER BY base.hour_ny ASC
+        """,
+        {"limit_days": max(1, limit_days)},
+    )
+
+
 def get_latest_scan_run() -> Optional[dict]:
     return fetch_one("SELECT * FROM scan_runs ORDER BY scan_time DESC, id DESC LIMIT 1", {})
 

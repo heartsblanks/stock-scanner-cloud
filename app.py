@@ -31,6 +31,7 @@ from storage import (
     get_recent_paper_trade_attempts,
     get_recent_paper_trade_rejections,
     get_paper_trade_attempt_daily_summary,
+    get_paper_trade_attempt_hourly_summary,
     get_trade_lifecycles,
     get_trade_lifecycle_summary_from_table,
     upsert_trade_lifecycle,
@@ -436,6 +437,7 @@ register_health_routes(
     get_recent_paper_trade_attempts=get_recent_paper_trade_attempts,
     get_recent_paper_trade_rejections=get_recent_paper_trade_rejections,
     get_paper_trade_attempt_daily_summary=get_paper_trade_attempt_daily_summary,
+    get_paper_trade_attempt_hourly_summary=get_paper_trade_attempt_hourly_summary,
     prune_alpaca_api_logs=prune_alpaca_api_logs,
 )
 register_export_routes(app, run_daily_snapshot=run_daily_snapshot)

@@ -13,6 +13,7 @@ def register_health_routes(
     get_recent_paper_trade_attempts,
     get_recent_paper_trade_rejections,
     get_paper_trade_attempt_daily_summary,
+    get_paper_trade_attempt_hourly_summary,
     prune_alpaca_api_logs,
 ) -> None:
     @app.get("/")
@@ -40,6 +41,7 @@ def register_health_routes(
                 "/paper-trade-attempts/recent",
                 "/paper-trade-attempts/rejections",
                 "/paper-trade-attempts/daily-summary",
+                "/paper-trade-attempts/hourly-summary",
                 "/alpaca-api-logs/recent",
                 "/alpaca-api-logs/errors",
                 "/alpaca-api-logs/prune",
@@ -179,6 +181,26 @@ def register_health_routes(
             })
         except Exception as e:
             log_exception("paper-trade-attempts/daily-summary failed", e, route="/paper-trade-attempts/daily-summary")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.get("/paper-trade-attempts/hourly-summary")
+    def paper_trade_attempts_hourly_summary():
+        try:
+            limit_days_raw = request.args.get("limit_days", "7")
+            try:
+                limit_days = max(1, min(90, int(limit_days_raw)))
+            except Exception:
+                return jsonify({"ok": False, "error": "limit_days must be an integer"}), 400
+
+            rows = get_paper_trade_attempt_hourly_summary(limit_days=limit_days)
+            return jsonify({
+                "ok": True,
+                "limit_days": limit_days,
+                "count": len(rows),
+                "rows": rows,
+            })
+        except Exception as e:
+            log_exception("paper-trade-attempts/hourly-summary failed", e, route="/paper-trade-attempts/hourly-summary")
             return jsonify({"ok": False, "error": str(e)}), 500
 
     @app.post("/alpaca-api-logs/prune")

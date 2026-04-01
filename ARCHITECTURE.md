@@ -88,7 +88,61 @@ Market Scan Schedulers
 
 ---
 
-## 5. Repository Structure
+## 5. Current Roadmap
+
+Architecture documentation is updated alongside implementation so the document remains a live system reference, not a stale design note.
+
+### 5.1 Do Now
+
+1. **Trading logic observability**
+   - expand `paper_trade_attempts` reporting so the system explains by hour:
+     - candidates
+     - placements
+     - non-placement reasons
+     - placement-rate trends
+   - surface these insights through backend endpoints and the dashboard
+
+2. **Backend structure cleanup**
+   - continue reducing orchestration gravity around `app.py`
+   - avoid growing `storage.py`; prefer repository imports for new work
+   - either implement or remove the placeholder `services/paper_trade_service.py`
+
+3. **Ops / cloud cleanup**
+   - keep Neon as the active production database
+   - remove old Cloud SQL and migration leftovers after a short stability window
+   - keep deployment and scheduler runbooks aligned with production reality
+
+### 5.2 Next
+
+1. **Performance improvements**
+   - cache expensive dashboard read models lightly
+   - keep heavy sections lazy-loaded and view-scoped
+   - monitor Neon usage against the consolidated scheduler cadence
+
+2. **UI / product improvements**
+   - expand overview and analytics visibility for scheduler health, placement rate by hour, and operational alerts
+   - keep dense views filterable and easier to scan
+
+3. **Data / repository improvements**
+   - add retention/pruning for high-volume operational data
+   - introduce read-model helpers or database views where dashboard aggregates justify them
+
+### 5.3 Later
+
+1. **More backend architecture cleanup**
+2. **Strategy refinement based on live data**
+3. **Advanced analytics and calibration tooling**
+
+### 5.4 Active implementation
+
+Current active work:
+- continue expanding `paper_trade_attempts` observability beyond the newly implemented hourly placement-rate and top non-placement reason reporting
+- keep backend and dashboard analytics aligned as new attempt reporting slices land
+- use the architecture document as the running record for completed and pending observability work
+
+---
+
+## 6. Repository Structure
 
 ### Backend root
 - `app.py` — application wiring and top-level service/route integration
@@ -152,9 +206,9 @@ Current code reality:
 
 ---
 
-## 6. Core Runtime Components
+## 7. Core Runtime Components
 
-### 6.1 Flask API Layer
+### 7.1 Flask API Layer
 
 The Flask app is the runtime entry point deployed on Cloud Run.
 
@@ -180,7 +234,7 @@ Examples of endpoint groups:
 - dashboard endpoints
 - health endpoints
 
-### 6.2 Service Layer
+### 7.2 Service Layer
 
 The service layer implements business workflows.
 
@@ -216,9 +270,9 @@ Responsible for:
 
 ---
 
-## 7. External Integrations
+## 8. External Integrations
 
-### 7.1 Alpaca
+### 8.1 Alpaca
 
 Used for:
 - paper order placement
@@ -229,7 +283,7 @@ Used for:
 
 All Alpaca requests should be logged into `alpaca_api_logs` where practical.
 
-### 7.2 GitHub
+### 8.2 GitHub
 
 Used for:
 - daily export snapshot backup
@@ -243,7 +297,7 @@ The GitHub export implementation should:
 
 ---
 
-## 8. Database Architecture
+## 9. Database Architecture
 
 Primary database: PostgreSQL.
 
@@ -251,7 +305,7 @@ Current code reality:
 - repository modules are now the primary home for most persistence logic
 - `storage.py` remains as a thin facade for backwards compatibility and import stability
 
-### 8.1 Primary tables
+### 9.1 Primary tables
 
 #### `scan_runs`
 Stores scan execution output and metadata.
@@ -298,6 +352,15 @@ Stores per-scan summary rows and signal-level logging used for analysis, diagnos
 #### `paper_trade_attempts`
 Stores one row per candidate/attempt outcome so placement, skip, rejection, and execution decisions can be analyzed directly from the database.
 
+Current code reality:
+- `paper_trade_attempts` is now the primary diagnostic source for understanding why trades were not placed
+- dashboard and operational reporting now summarize attempt outcomes by session hour and dominant non-placement reason
+- the health API exposes dedicated attempt analytics endpoints including:
+  - `/paper-trade-attempts/recent`
+  - `/paper-trade-attempts/rejections`
+  - `/paper-trade-attempts/daily-summary`
+  - `/paper-trade-attempts/hourly-summary`
+
 #### `reconciliation_runs`
 Stores summary-level reconciliation run results.
 
@@ -319,7 +382,7 @@ Stores Alpaca request/response logging with fields including:
 
 ---
 
-## 9. Trade Lifecycle Design
+## 10. Trade Lifecycle Design
 
 Trade lifecycle is the core analytical abstraction.
 
@@ -376,7 +439,7 @@ Primary implementation areas:
 
 ---
 
-## 10. Risk Management and Position Sizing
+## 11. Risk Management and Position Sizing
 
 ### 10.1 Position sizing objective
 The system should no longer rely on a fixed `$500` notional per trade as the long-term sizing model.

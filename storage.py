@@ -29,6 +29,7 @@ from repositories.scans_repo import (
     get_latest_scan_run,
     get_latest_scan_summary,
     get_paper_trade_attempt_daily_summary,
+    get_paper_trade_attempt_hourly_summary,
     get_paper_trade_attempt_reason_counts,
     get_paper_trade_attempt_stage_counts,
     get_recent_paper_trade_attempts,
@@ -68,4 +69,3 @@ from repositories.trades_repo import (
 # Backward-compatible aliases while callers migrate to the new canonical names.
 get_trade_lifecycle_rows = get_trade_lifecycles
 get_trade_lifecycle_summary = get_trade_lifecycle_summary_from_table
-
