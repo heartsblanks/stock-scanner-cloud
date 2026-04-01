@@ -1,6 +1,12 @@
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from services.scan_service import _apply_confidence_loss_sizing, _apply_minimum_viable_position_sizing
+from services.scan_service import (
+    _apply_confidence_loss_sizing,
+    _apply_minimum_viable_position_sizing,
+    _get_live_alpaca_account_equity,
+)
 
 
 class ScanServiceSizingTests(unittest.TestCase):
@@ -45,7 +51,19 @@ class ScanServiceSizingTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["actual_position_cost"], 2500.0, places=4)
         self.assertAlmostEqual(metrics["actual_risk"], 50.0, places=4)
 
+    def test_live_account_equity_reads_from_alpaca_package_after_repo_move(self):
+        original_import = __import__
+
+        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "alpaca.paper":
+                return SimpleNamespace(get_account=lambda: {"equity": "12345.67"})
+            return original_import(name, globals, locals, fromlist, level)
+
+        with patch("builtins.__import__", side_effect=fake_import):
+            equity = _get_live_alpaca_account_equity({})
+
+        self.assertAlmostEqual(equity, 12345.67, places=2)
+
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -87,7 +87,7 @@ def _get_live_alpaca_account_equity(payload: dict[str, Any]) -> float:
     try:
         account_getters: list[Callable[[], Any]] = []
 
-        for module_name in ("paper_alpaca", "services.paper_alpaca"):
+        for module_name in ("alpaca.paper", "paper_alpaca", "services.paper_alpaca"):
             try:
                 module = __import__(module_name, fromlist=["get_account", "get_paper_account"])
             except Exception:
