@@ -15,6 +15,11 @@ MIN_REMAINING_ALLOCATABLE_CAPITAL = 50.0
 API_KEY = os.getenv("TWELVEDATA_API_KEY")
 BASE_URL = "https://api.twelvedata.com/time_series"
 
+
+def late_session_hard_block_enabled() -> bool:
+    value = str(os.getenv("ENABLE_LATE_SESSION_HARD_BLOCK", "false")).strip().lower()
+    return value in {"1", "true", "yes", "y", "on"}
+
 PRIMARY_INSTRUMENTS = {
     "Rivian": {"symbol": "RIVN", "type": "stock", "priority": 10, "market": "NASDAQ"},
     "SoFi": {"symbol": "SOFI", "type": "stock", "priority": 9, "market": "NASDAQ"},
@@ -559,17 +564,18 @@ def evaluate_symbol(
     hard_entry_cutoff = False
     checks["hard_entry_cutoff_rule"] = True
 
-    late_session_strict = now_ny.hour > 11 or (now_ny.hour == 11 and now_ny.minute >= 30)
     checks["late_session_strict_rule"] = True
-    if late_session_strict and info["priority"] < 10 and info["type"] == "stock":
-        checks["late_session_strict_rule"] = False
-        return {
-            "name": name,
-            "decision": "REJECTED",
-            "final_reason": "Later in session: only stronger names allowed.",
-            "checks": checks,
-            "metrics": metrics,
-        }
+    if late_session_hard_block_enabled():
+        late_session_strict = now_ny.hour > 11 or (now_ny.hour == 11 and now_ny.minute >= 30)
+        if late_session_strict and info["priority"] < 10 and info["type"] == "stock":
+            checks["late_session_strict_rule"] = False
+            return {
+                "name": name,
+                "decision": "REJECTED",
+                "final_reason": "Later in session: only stronger names allowed.",
+                "checks": checks,
+                "metrics": metrics,
+            }
 
     sizing = calculate_position_sizing(
         account_size=account_size,
