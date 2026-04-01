@@ -73,7 +73,7 @@ def get_connection() -> psycopg.Connection:
     )
     if DB_SCHEMA:
         with conn.cursor() as cur:
-            cur.execute("SET search_path TO %s", (DB_SCHEMA,))
+            cur.execute("SELECT set_config('search_path', %s, false)", (DB_SCHEMA,))
     return conn
 
 
