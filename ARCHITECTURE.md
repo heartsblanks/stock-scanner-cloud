@@ -106,6 +106,7 @@ Architecture documentation is updated alongside implementation so the document r
    - continue reducing orchestration gravity around `app.py`
    - avoid growing `storage.py`; prefer repository imports for new work
    - either implement or remove the placeholder `services/paper_trade_service.py`
+   - reduce root-directory clutter by moving maintenance, repair, and backfill utilities into `scripts/`
 
 3. **Ops / cloud cleanup**
    - keep Neon as the active production database
@@ -144,6 +145,11 @@ Current active work:
 
 ## 6. Repository Structure
 
+Target direction:
+- keep the repository root focused on application entrypoints, infra files, and top-level documentation
+- move operational one-off utilities into `scripts/`
+- continue moving export, analytics, and integration modules into more explicit domain folders over time
+
 ### Backend root
 - `app.py` — application wiring and top-level service/route integration
 - `db.py` — PostgreSQL connection helpers
@@ -153,6 +159,7 @@ Current active work:
 - `paper_trade_context.py` — paper-trade state, cooldown, and risk helpers
 - `app_orchestration.py` — orchestration helpers shared by route handlers
 - `scheduler_ops.py` — consolidated scheduler decision and execution helpers
+- root-level files should stay limited to active runtime entrypoints and cross-cutting foundations
 
 ### Domain/service modules
 - `services/scan_service.py`
@@ -185,6 +192,15 @@ Current active work:
 - `export_reports.py`
 - `export_daily_snapshot.py`
 - `github_export.py`
+
+### Maintenance and repair utilities
+- `scripts/`
+  - backfills
+  - reconciliation/lifecycle repair utilities
+  - operational cleanup helpers
+
+Current code reality:
+- this cleanup is in progress; repair and backfill scripts are being moved out of the repository root first because they are low-risk and contribute heavily to perceived root-level sprawl
 
 ### Repository modules
 - `repositories/scans_repo.py`

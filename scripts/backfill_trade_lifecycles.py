@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Optional
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from db import execute, fetch_all
 from storage import upsert_trade_lifecycle
