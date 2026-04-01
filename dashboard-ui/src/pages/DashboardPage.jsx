@@ -188,17 +188,23 @@ export default function DashboardPage() {
     }
   }, [activeView]);
 
-  if (loading) {
-    return <div className="dashboard-loading">Loading dashboard...</div>;
+  if (error) {
+    if (!lastUpdated && !summary && !reconciliationSummary) {
+      return <div className="dashboard-error">Error: {error}</div>;
+    }
   }
 
-  if (error) {
-    return <div className="dashboard-error">Error: {error}</div>;
-  }
+  const showInitialLoading = loading && !lastUpdated;
 
   return (
     <div className="dashboard-shell">
       <div className="dashboard-frame">
+        {showInitialLoading && (
+          <div className="dashboard-loading">Loading dashboard workspace...</div>
+        )}
+        {error && !showInitialLoading && (
+          <div className="dashboard-error">Error: {error}</div>
+        )}
         <section className="dashboard-hero">
           <div className="dashboard-hero-grid">
             <div>
@@ -238,7 +244,7 @@ export default function DashboardPage() {
                 <div className="dashboard-callout-label">Operational Pulse</div>
                 <div className="dashboard-callout-value">{backendHealthStatus || "UNKNOWN"}</div>
                 <div className="dashboard-callout-note">
-                  Last refresh: {lastUpdated ? new Date(lastUpdated).toLocaleString() : "Not available yet"}
+                  Last refresh: {lastUpdated ? new Date(lastUpdated).toLocaleString() : "Loading initial view..."}
                 </div>
               </div>
 

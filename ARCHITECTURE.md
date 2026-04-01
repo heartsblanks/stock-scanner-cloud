@@ -872,6 +872,9 @@ The dashboard UI currently includes:
 - view-specific dashboard polling gated to the operational window
 - dashboard polling cadence reduced to 30 minutes to avoid unnecessary Neon activity while a browser tab is open
 - dashboard polling window aligned to current operations flow: weekdays 9:35 AM to 4:30 PM ET
+- initial dashboard load now prioritizes the active view only instead of fetching every heavy section up front
+- reconciliation overview data loads on the overview, while reconciliation detail/history stay deferred to the reconciliation workspace
+- dashboard summary, risk exposure, and ops summary endpoints now use short in-process TTL caching to reduce repeated Neon reads
 - focused navigation views for:
   - overview
   - trades

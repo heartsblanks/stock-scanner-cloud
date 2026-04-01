@@ -51,15 +51,6 @@ function getEasternMarketSnapshot(now = new Date()) {
   };
 }
 
-const INITIAL_SECTION_LOADING = {
-  overview: true,
-  reconciliation: true,
-  risk: true,
-  alpacaLogs: true,
-  sizing: true,
-  attempts: true,
-};
-
 const INITIAL_SECTION_ERRORS = {
   overview: null,
   reconciliation: null,
@@ -69,13 +60,24 @@ const INITIAL_SECTION_ERRORS = {
   attempts: null,
 };
 
+function getInitialSectionLoading(activeView) {
+  return {
+    overview: activeView === "overview" || activeView === "trades" || activeView === "analytics",
+    reconciliation: activeView === "overview" || activeView === "reconciliation",
+    risk: activeView === "overview" || activeView === "trades",
+    alpacaLogs: activeView === "broker",
+    sizing: activeView === "overview" || activeView === "trades" || activeView === "analytics",
+    attempts: activeView === "overview" || activeView === "analytics",
+  };
+}
+
 export function useDashboardData(activeView = "overview") {
   const [summary, setSummary] = useState(null);
   const [openTrades, setOpenTrades] = useState([]);
   const [lifecycle, setLifecycle] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [sectionLoading, setSectionLoading] = useState(INITIAL_SECTION_LOADING);
+  const [sectionLoading, setSectionLoading] = useState(() => getInitialSectionLoading(activeView));
   const [sectionErrors, setSectionErrors] = useState(INITIAL_SECTION_ERRORS);
   const [filters, setFilters] = useState({ date: "", symbol: "" });
   const [alpacaOpenCount, setAlpacaOpenCount] = useState(null);
@@ -100,6 +102,7 @@ export function useDashboardData(activeView = "overview") {
   const [lastReconciliationAt, setLastReconciliationAt] = useState(null);
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const filtersRef = useRef(filters);
+  const loadDataRef = useRef(null);
 
   const loadOverviewSection = useCallback(async (activeFilters = filtersRef.current) => {
     try {
@@ -195,6 +198,30 @@ export function useDashboardData(activeView = "overview") {
     }
   }, []);
 
+  const loadReconciliationOverviewSection = useCallback(async () => {
+    try {
+      setSectionLoading((prev) => ({ ...prev, reconciliation: true }));
+      const [reconRes, alpacaRes] = await Promise.all([
+        fetchReconciliationSummary(),
+        fetchAlpacaOpenPositions(),
+      ]);
+
+      setReconciliationSummary(reconRes || null);
+      setLastReconciliationStatus(reconRes?.severity || null);
+      setLastReconciliationAt(new Date().toISOString());
+      setAlpacaOpenCount(alpacaRes?.count ?? null);
+      setSectionErrors((prev) => ({ ...prev, reconciliation: null }));
+    } catch (sectionErr) {
+      setSectionErrors((prev) => ({
+        ...prev,
+        reconciliation: sectionErr?.message || "Failed to load reconciliation overview",
+      }));
+      throw sectionErr;
+    } finally {
+      setSectionLoading((prev) => ({ ...prev, reconciliation: false }));
+    }
+  }, []);
+
   const loadRiskSection = useCallback(async () => {
     try {
       setSectionLoading((prev) => ({ ...prev, risk: true }));
@@ -237,7 +264,12 @@ export function useDashboardData(activeView = "overview") {
     const tasks = [];
 
     if (view === "overview") {
-      tasks.push(loadOverviewSection(activeFilters), loadAttemptsSection(), loadReconciliationSection(), loadRiskSection());
+      tasks.push(
+        loadOverviewSection(activeFilters),
+        loadAttemptsSection(),
+        loadReconciliationOverviewSection(),
+        loadRiskSection()
+      );
     } else if (view === "trades") {
       tasks.push(loadOverviewSection(activeFilters), loadRiskSection());
     } else if (view === "reconciliation") {
@@ -250,29 +282,74 @@ export function useDashboardData(activeView = "overview") {
       tasks.push(
         loadOverviewSection(activeFilters),
         loadAttemptsSection(),
-        loadReconciliationSection(),
+        loadReconciliationOverviewSection(),
         loadRiskSection(),
         loadAlpacaLogsSection()
       );
     }
 
     await Promise.all(tasks);
-  }, [activeView, loadAlpacaLogsSection, loadAttemptsSection, loadOverviewSection, loadReconciliationSection, loadRiskSection]);
+  }, [
+    activeView,
+    loadAlpacaLogsSection,
+    loadAttemptsSection,
+    loadOverviewSection,
+    loadReconciliationOverviewSection,
+    loadReconciliationSection,
+    loadRiskSection,
+  ]);
+
+  const loadInitialViewData = useCallback(async (view = activeView, activeFilters = filtersRef.current) => {
+    if (view === "overview") {
+      await Promise.all([
+        loadOverviewSection(activeFilters),
+        loadAttemptsSection(),
+        loadReconciliationOverviewSection(),
+        loadRiskSection(),
+      ]);
+      return;
+    }
+
+    if (view === "trades") {
+      await Promise.all([loadOverviewSection(activeFilters), loadRiskSection()]);
+      return;
+    }
+
+    if (view === "reconciliation") {
+      await loadReconciliationSection();
+      return;
+    }
+
+    if (view === "broker") {
+      await loadAlpacaLogsSection();
+      return;
+    }
+
+    if (view === "analytics") {
+      await Promise.all([loadOverviewSection(activeFilters), loadAttemptsSection()]);
+      return;
+    }
+
+    await refreshByView(view, activeFilters);
+  }, [
+    activeView,
+    loadAlpacaLogsSection,
+    loadAttemptsSection,
+    loadOverviewSection,
+    loadReconciliationOverviewSection,
+    loadReconciliationSection,
+    loadRiskSection,
+    refreshByView,
+  ]);
 
   const loadData = useCallback(async (activeFilters = filtersRef.current) => {
     try {
       setLoading(true);
       setError(null);
-      setSectionLoading(INITIAL_SECTION_LOADING);
+      setSectionLoading(getInitialSectionLoading(activeView));
       setSectionErrors(INITIAL_SECTION_ERRORS);
 
-      await Promise.all([
-        loadOverviewSection(activeFilters),
-        loadAttemptsSection(),
-        loadReconciliationSection(),
-        loadRiskSection(),
-        loadAlpacaLogsSection(),
-      ]);
+      await loadInitialViewData(activeView, activeFilters);
 
       setLastUpdated(new Date().toISOString());
       setNextRefreshAt(new Date(Date.now() + AUTO_REFRESH_INTERVAL_MS).toISOString());
@@ -281,15 +358,19 @@ export function useDashboardData(activeView = "overview") {
     } finally {
       setLoading(false);
     }
-  }, [loadAlpacaLogsSection, loadAttemptsSection, loadOverviewSection, loadReconciliationSection, loadRiskSection]);
+  }, [activeView, loadInitialViewData]);
+
+  useEffect(() => {
+    loadDataRef.current = loadData;
+  }, [loadData]);
 
   useEffect(() => {
     filtersRef.current = filters;
   }, [filters]);
 
   useEffect(() => {
-    loadData(filtersRef.current);
-  }, [loadData]);
+    loadDataRef.current?.(filtersRef.current);
+  }, []);
 
   useEffect(() => {
     const clockId = setInterval(() => {
@@ -373,7 +454,7 @@ export function useDashboardData(activeView = "overview") {
         setLastReconciliationAt(new Date().toISOString());
       }
 
-      await Promise.all([loadReconciliationSection(), loadOverviewSection(filtersRef.current)]);
+      await Promise.all([loadReconciliationSection(), loadOverviewSection(filtersRef.current), loadReconciliationOverviewSection()]);
       setLastUpdated(new Date().toISOString());
     } finally {
       setIsRefreshing(false);

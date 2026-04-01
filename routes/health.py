@@ -1,3 +1,5 @@
+import time
+
 from flask import jsonify, request
 from core.logging_utils import log_exception
 
@@ -16,6 +18,18 @@ def register_health_routes(
     get_paper_trade_attempt_hourly_summary,
     prune_alpaca_api_logs,
 ) -> None:
+    cache: dict[tuple[str, str], tuple[float, dict]] = {}
+
+    def get_cached_json(cache_key: tuple[str, str], ttl_seconds: int, builder):
+        now = time.time()
+        cached = cache.get(cache_key)
+        if cached and now - cached[0] < ttl_seconds:
+            return cached[1]
+
+        payload = builder()
+        cache[cache_key] = (now, payload)
+        return payload
+
     @app.get("/")
     def home():
         return jsonify({
@@ -70,11 +84,11 @@ def register_health_routes(
     @app.get("/ops-summary")
     def ops_summary():
         try:
-            summary = get_ops_summary()
-            return jsonify({
+            payload = get_cached_json(("ops-summary", ""), 45, lambda: {
                 "ok": True,
-                **summary,
+                **get_ops_summary(),
             })
+            return jsonify(payload)
         except Exception as e:
             log_exception("Ops summary failed", e, route="/ops-summary")
             return jsonify({"ok": False, "error": str(e)}), 500
