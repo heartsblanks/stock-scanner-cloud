@@ -13,6 +13,14 @@ import ReconciliationSection from "../components/dashboard/ReconciliationSection
 import { useDashboardData } from "../hooks/useDashboardData";
 import { useEffect, useState } from "react";
 
+const DASHBOARD_VIEWS = [
+  { id: "overview", label: "Overview", description: "Best for the first look each session." },
+  { id: "trades", label: "Trades", description: "Open positions and lifecycle details." },
+  { id: "reconciliation", label: "Reconciliation", description: "Mismatch and repair workflow." },
+  { id: "broker", label: "Broker Logs", description: "Alpaca call health and failures." },
+  { id: "analytics", label: "Analytics", description: "Charts and performance patterns." },
+];
+
 function formatCurrency(value) {
   if (value === null || value === undefined || value === "") {
     return "-";
@@ -22,6 +30,7 @@ function formatCurrency(value) {
 }
 
 export default function DashboardPage() {
+  const [activeView, setActiveView] = useState("overview");
   const [theme, setTheme] = useState(() => {
     if (typeof window === "undefined") {
       return "light";
@@ -208,147 +217,246 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <SummaryCards data={summary} />
-          {sectionLoading.overview && <div className="dashboard-empty">Loading overview...</div>}
-          {sectionErrors.overview && <div className="dashboard-error">{sectionErrors.overview}</div>}
-
-          <HealthOverviewSection
-            lastUpdated={lastUpdated}
-            sectionLoading={sectionLoading}
-            sectionErrors={sectionErrors}
-            openTrades={openTrades}
-            alpacaOpenCount={alpacaOpenCount}
-            mismatch={mismatch}
-            mismatchLabel={mismatchLabel}
-            backendHealthStatus={backendHealthStatus}
-            syncHealthStatus={syncHealthStatus}
-            reconciliationHealthStatus={reconciliationHealthStatus}
-            lastReconciliationAt={lastReconciliationAt}
-            alpacaApiErrors={alpacaApiErrors}
-            isRunningSync={isRunningSync}
-            riskExposureSummary={riskExposureSummary}
-            confidenceMultiplier={confidenceMultiplier}
-            lossMultiplier={lossMultiplier}
-            finalSizingMultiplier={finalSizingMultiplier}
-            multiplierStatus={multiplierStatus}
-          />
-
-          <section className="dashboard-section">
-            <div className="dashboard-panel dashboard-panel-strong">
-              <div className="dashboard-panel-body">
-                <div className="dashboard-panel-heading">
-                  <div>
-                    <h2 className="dashboard-panel-title">Performance Readouts</h2>
-                    <p className="dashboard-panel-subtitle">
-                      A quick read on where the system has been strongest by symbol, mode, exit pattern, and time of
-                      day.
-                    </p>
-                  </div>
-                </div>
-                <div className="dashboard-metrics-grid">
-                  <InsightCard title="Best Symbol" value={insights?.best_symbol?.symbol || "-"} />
-                  <InsightCard title="Best Mode" value={insights?.best_mode?.mode || "-"} />
-                  <InsightCard title="Most Common Exit" value={insights?.most_common_exit?.exit_reason || "-"} />
-                  <InsightCard title="Best Hour (UTC)" value={insights?.best_hour?.entry_hour_utc ?? "-"} />
-                </div>
+          <section className="dashboard-view-nav-panel">
+            <div className="dashboard-view-nav-copy">
+              <div className="dashboard-banner-title">Focused Views</div>
+              <div className="dashboard-banner-copy">
+                Keep the landing screen light, then jump into the exact slice you need instead of scrolling through the
+                whole operating system at once.
               </div>
+            </div>
+            <div className="dashboard-view-nav">
+              {DASHBOARD_VIEWS.map((view) => (
+                <button
+                  key={view.id}
+                  type="button"
+                  onClick={() => setActiveView(view.id)}
+                  className={`dashboard-view-tab ${activeView === view.id ? "dashboard-view-tab-active" : ""}`}
+                >
+                  <span className="dashboard-view-tab-label">{view.label}</span>
+                  <span className="dashboard-view-tab-copy">{view.description}</span>
+                </button>
+              ))}
             </div>
           </section>
 
-          <section className="dashboard-section">
-            <div className="dashboard-panel">
-              <div className="dashboard-panel-body">
-                <div className="dashboard-panel-heading">
-                  <div>
-                    <h2 className="dashboard-panel-title">Equity Curve</h2>
-                    <p className="dashboard-panel-subtitle">
-                      See the account arc over time instead of reading isolated trade outcomes.
-                    </p>
-                  </div>
-                </div>
-                <EquityCurveChart rows={equityCurve} />
-              </div>
-            </div>
-          </section>
+          {activeView === "overview" && (
+            <>
+              <SummaryCards data={summary} />
+              {sectionLoading.overview && <div className="dashboard-empty">Loading overview...</div>}
+              {sectionErrors.overview && <div className="dashboard-error">{sectionErrors.overview}</div>}
 
-          <section className="dashboard-section">
-            <div className="dashboard-panel">
-              <div className="dashboard-panel-body">
-                <div className="dashboard-panel-heading">
-                  <div>
-                    <h2 className="dashboard-panel-title">Performance Charts</h2>
-                    <p className="dashboard-panel-subtitle">
-                      Compare symbol mix, mode behavior, and intraday timing without losing the bigger picture.
-                    </p>
-                  </div>
-                </div>
-                <div className="dashboard-chart-grid">
-                  <div>
-                    <SymbolPerformanceChart rows={symbolPerformance} />
-                  </div>
-                  <div>
-                    <ModePerformanceChart rows={modePerformance} />
-                  </div>
-                </div>
-                <div style={{ marginTop: 20 }}>
-                  <HourlyPerformanceChart rows={hourlyPerformance} />
-                </div>
-              </div>
-            </div>
-          </section>
+              <HealthOverviewSection
+                lastUpdated={lastUpdated}
+                sectionLoading={sectionLoading}
+                sectionErrors={sectionErrors}
+                openTrades={openTrades}
+                alpacaOpenCount={alpacaOpenCount}
+                mismatch={mismatch}
+                mismatchLabel={mismatchLabel}
+                backendHealthStatus={backendHealthStatus}
+                syncHealthStatus={syncHealthStatus}
+                reconciliationHealthStatus={reconciliationHealthStatus}
+                lastReconciliationAt={lastReconciliationAt}
+                alpacaApiErrors={alpacaApiErrors}
+                isRunningSync={isRunningSync}
+                riskExposureSummary={riskExposureSummary}
+                confidenceMultiplier={confidenceMultiplier}
+                lossMultiplier={lossMultiplier}
+                finalSizingMultiplier={finalSizingMultiplier}
+                multiplierStatus={multiplierStatus}
+              />
 
-          <AlpacaApiLogsSection
-            sectionLoading={sectionLoading}
-            sectionErrors={sectionErrors}
-            alpacaApiLogs={alpacaApiLogs}
-            alpacaApiErrors={alpacaApiErrors}
-          />
-
-          <ReconciliationSection
-            sectionLoading={sectionLoading}
-            sectionErrors={sectionErrors}
-            lastUpdated={lastUpdated}
-            lastReconciliationStatus={lastReconciliationStatus}
-            lastReconciliationAt={lastReconciliationAt}
-            reconciliationSummary={reconciliationSummary}
-            reconciliationSymbolFilter={reconciliationSymbolFilter}
-            setReconciliationSymbolFilter={setReconciliationSymbolFilter}
-            reconciliationSymbols={reconciliationSymbols}
-            filteredReconciliationDetails={filteredReconciliationDetails}
-            reconciliationHistory={reconciliationHistory}
-          />
-
-          <section className="dashboard-section">
-            <div className="dashboard-panel">
-              <div className="dashboard-panel-body">
-                <div className="dashboard-panel-heading">
-                  <div>
-                    <h2 className="dashboard-panel-title">Open Trades</h2>
-                    <p className="dashboard-panel-subtitle">
-                      Live database positions with sizing and protective levels in one place.
-                    </p>
+              <section className="dashboard-section">
+                <div className="dashboard-panel dashboard-panel-strong">
+                  <div className="dashboard-panel-body">
+                    <div className="dashboard-panel-heading">
+                      <div>
+                        <h2 className="dashboard-panel-title">Performance Readouts</h2>
+                        <p className="dashboard-panel-subtitle">
+                          A quick read on where the system has been strongest by symbol, mode, exit pattern, and time of
+                          day.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="dashboard-metrics-grid">
+                      <InsightCard title="Best Symbol" value={insights?.best_symbol?.symbol || "-"} />
+                      <InsightCard title="Best Mode" value={insights?.best_mode?.mode || "-"} />
+                      <InsightCard title="Most Common Exit" value={insights?.most_common_exit?.exit_reason || "-"} />
+                      <InsightCard title="Best Hour (UTC)" value={insights?.best_hour?.entry_hour_utc ?? "-"} />
+                    </div>
                   </div>
                 </div>
-                <OpenTradesTable trades={openTrades} />
-              </div>
-            </div>
-          </section>
+              </section>
 
-          <section className="dashboard-section">
-            <div className="dashboard-panel">
-              <div className="dashboard-panel-body">
-                <div className="dashboard-panel-heading">
-                  <div>
-                    <h2 className="dashboard-panel-title">Trade Lifecycle</h2>
-                    <p className="dashboard-panel-subtitle">
-                      The canonical trade record for entries, exits, duration, and realized outcome.
-                    </p>
+              <section className="dashboard-section">
+                <div className="dashboard-panel">
+                  <div className="dashboard-panel-body">
+                    <div className="dashboard-panel-heading">
+                      <div>
+                        <h2 className="dashboard-panel-title">Equity Curve</h2>
+                        <p className="dashboard-panel-subtitle">
+                          See the account arc over time instead of reading isolated trade outcomes.
+                        </p>
+                      </div>
+                    </div>
+                    <EquityCurveChart rows={equityCurve} />
                   </div>
                 </div>
-                <TradeLifecycleTable rows={lifecycle} />
-              </div>
-            </div>
-          </section>
+              </section>
+
+              <section className="dashboard-section">
+                <div className="dashboard-panel">
+                  <div className="dashboard-panel-body">
+                    <div className="dashboard-panel-heading">
+                      <div>
+                        <h2 className="dashboard-panel-title">Overview Trends</h2>
+                        <p className="dashboard-panel-subtitle">
+                          A compact view of mode performance and the hours that are paying or fading.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="dashboard-chart-grid">
+                      <div>
+                        <ModePerformanceChart rows={modePerformance} />
+                      </div>
+                      <div>
+                        <HourlyPerformanceChart rows={hourlyPerformance} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </>
+          )}
+
+          {activeView === "trades" && (
+            <>
+              <section className="dashboard-section">
+                <div className="dashboard-panel">
+                  <div className="dashboard-panel-body">
+                    <div className="dashboard-panel-heading">
+                      <div>
+                        <h2 className="dashboard-panel-title">Open Trades</h2>
+                        <p className="dashboard-panel-subtitle">
+                          Live database positions with sizing and protective levels in one place.
+                        </p>
+                      </div>
+                    </div>
+                    <OpenTradesTable trades={openTrades} />
+                  </div>
+                </div>
+              </section>
+
+              <section className="dashboard-section">
+                <div className="dashboard-panel">
+                  <div className="dashboard-panel-body">
+                    <div className="dashboard-panel-heading">
+                      <div>
+                        <h2 className="dashboard-panel-title">Trade Lifecycle</h2>
+                        <p className="dashboard-panel-subtitle">
+                          The canonical trade record for entries, exits, duration, and realized outcome.
+                        </p>
+                      </div>
+                    </div>
+                    <TradeLifecycleTable rows={lifecycle} />
+                  </div>
+                </div>
+              </section>
+            </>
+          )}
+
+          {activeView === "reconciliation" && (
+            <ReconciliationSection
+              sectionLoading={sectionLoading}
+              sectionErrors={sectionErrors}
+              lastUpdated={lastUpdated}
+              lastReconciliationStatus={lastReconciliationStatus}
+              lastReconciliationAt={lastReconciliationAt}
+              reconciliationSummary={reconciliationSummary}
+              reconciliationSymbolFilter={reconciliationSymbolFilter}
+              setReconciliationSymbolFilter={setReconciliationSymbolFilter}
+              reconciliationSymbols={reconciliationSymbols}
+              filteredReconciliationDetails={filteredReconciliationDetails}
+              reconciliationHistory={reconciliationHistory}
+            />
+          )}
+
+          {activeView === "broker" && (
+            <AlpacaApiLogsSection
+              sectionLoading={sectionLoading}
+              sectionErrors={sectionErrors}
+              alpacaApiLogs={alpacaApiLogs}
+              alpacaApiErrors={alpacaApiErrors}
+            />
+          )}
+
+          {activeView === "analytics" && (
+            <>
+              <section className="dashboard-section">
+                <div className="dashboard-panel dashboard-panel-strong">
+                  <div className="dashboard-panel-body">
+                    <div className="dashboard-panel-heading">
+                      <div>
+                        <h2 className="dashboard-panel-title">Performance Readouts</h2>
+                        <p className="dashboard-panel-subtitle">
+                          Symbol, mode, exit pattern, and timing edges gathered in one analytical view.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="dashboard-metrics-grid">
+                      <InsightCard title="Best Symbol" value={insights?.best_symbol?.symbol || "-"} />
+                      <InsightCard title="Best Mode" value={insights?.best_mode?.mode || "-"} />
+                      <InsightCard title="Most Common Exit" value={insights?.most_common_exit?.exit_reason || "-"} />
+                      <InsightCard title="Best Hour (UTC)" value={insights?.best_hour?.entry_hour_utc ?? "-"} />
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="dashboard-section">
+                <div className="dashboard-panel">
+                  <div className="dashboard-panel-body">
+                    <div className="dashboard-panel-heading">
+                      <div>
+                        <h2 className="dashboard-panel-title">Performance Charts</h2>
+                        <p className="dashboard-panel-subtitle">
+                          Compare symbol mix, mode behavior, and intraday timing without losing the bigger picture.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="dashboard-chart-grid">
+                      <div>
+                        <SymbolPerformanceChart rows={symbolPerformance} />
+                      </div>
+                      <div>
+                        <ModePerformanceChart rows={modePerformance} />
+                      </div>
+                    </div>
+                    <div style={{ marginTop: 20 }}>
+                      <HourlyPerformanceChart rows={hourlyPerformance} />
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="dashboard-section">
+                <div className="dashboard-panel">
+                  <div className="dashboard-panel-body">
+                    <div className="dashboard-panel-heading">
+                      <div>
+                        <h2 className="dashboard-panel-title">Equity Curve</h2>
+                        <p className="dashboard-panel-subtitle">
+                          The bigger account arc, isolated from the heavier operational details.
+                        </p>
+                      </div>
+                    </div>
+                    <EquityCurveChart rows={equityCurve} />
+                  </div>
+                </div>
+              </section>
+            </>
+          )}
         </div>
       </div>
     </div>
