@@ -93,8 +93,12 @@ Market Scan Schedulers
 ### Backend root
 - `app.py` — application wiring and top-level service/route integration
 - `db.py` — PostgreSQL connection helpers
-- `storage.py` — database read/write helpers and analytics queries
+- `storage.py` — thin compatibility facade over repository modules
 - `schema.sql` — database schema definition
+- `scan_context.py` — scan payload and scheduled scan context helpers
+- `paper_trade_context.py` — paper-trade state, cooldown, and risk helpers
+- `app_orchestration.py` — orchestration helpers shared by route handlers
+- `scheduler_ops.py` — consolidated scheduler decision and execution helpers
 
 ### Domain/service modules
 - `services/scan_service.py`
@@ -128,11 +132,18 @@ Market Scan Schedulers
 - `export_daily_snapshot.py`
 - `github_export.py`
 
-### Repository and analysis placeholders
-The following packages/files exist in the repository but are not currently active architectural layers:
-- `repositories/*` *(placeholder repository abstraction; current code uses `storage.py` directly)*
-- `analysis/*` *(placeholder package; current analysis logic is implemented in root-level modules such as `trade_analysis.py` and `signal_analysis.py`)*
-- `export_to_github.py` *(placeholder / not used by the active export flow)*
+### Repository modules
+- `repositories/scans_repo.py`
+- `repositories/trades_repo.py`
+- `repositories/broker_repo.py`
+- `repositories/reconcile_repo.py`
+- `repositories/ops_repo.py`
+
+Current code reality:
+- repository modules now hold most domain-specific persistence logic
+- `storage.py` remains as a compatibility surface so existing imports do not need to change all at once
+- `analysis/*` is still not the active runtime analysis package; analysis logic remains in root-level modules such as `trade_analysis.py` and `signal_analysis.py`
+- `export_to_github.py` remains unused by the active export flow
 ### Frontend
 - `dashboard-ui/`
   - `src/pages/DashboardPage.jsx`
@@ -155,8 +166,9 @@ Responsibilities:
 - delegate implementation to service and storage layers
 
 Current code reality:
-- `app.py` is still more than a thin composition root and contains significant orchestration, helper logic, and some directly-declared endpoints
-- route modules are in use, but responsibility is not yet fully separated from `app.py`
+- `app.py` is materially slimmer than the original monolith and now focuses on wiring, handler composition, and route registration
+- significant helper/orchestration logic has been extracted into `scan_context.py`, `paper_trade_context.py`, and `app_orchestration.py`
+- route modules are in active use, though some integration responsibility still lives in `app.py`
 
 Examples of endpoint groups:
 - scan endpoints
@@ -236,8 +248,8 @@ The GitHub export implementation should:
 Primary database: PostgreSQL.
 
 Current code reality:
-- `storage.py` is the effective persistence and query layer for the application
-- the `repositories/` package is not yet used as the primary data-access abstraction
+- repository modules are now the primary home for most persistence logic
+- `storage.py` remains as a thin facade for backwards compatibility and import stability
 
 ### 8.1 Primary tables
 
@@ -279,6 +291,12 @@ Expected fields include:
 
 #### `broker_orders`
 Stores broker-side order snapshots relevant for audit and reconciliation.
+
+#### `signal_logs`
+Stores per-scan summary rows and signal-level logging used for analysis, diagnostics, and signal matching support.
+
+#### `paper_trade_attempts`
+Stores one row per candidate/attempt outcome so placement, skip, rejection, and execution decisions can be analyzed directly from the database.
 
 #### `reconciliation_runs`
 Stores summary-level reconciliation run results.
@@ -676,6 +694,9 @@ The dashboard is a React/Vite frontend backed by Flask API endpoints.
 - equity curve chart
 - filters
 - insight cards
+- reconciliation detail/history tables
+- Alpaca API log views
+- execution insight panels for `paper_trade_attempts`
 
 ### Backend dashboard summary returns
 - summary
@@ -756,7 +777,7 @@ It should only create DB-derived snapshots and generated report copies.
 ### Current status
 **Implemented**
 - manual endpoint tested successfully
-- Cloud Scheduler job exists for daily execution
+- `daily-post-close` Cloud Scheduler job exists for daily execution
 - operational monitoring still recommended
 
 ---
@@ -844,6 +865,7 @@ Reconciliation compares local trade data and broker-side order/exit data.
 - Cloud Build configuration
 - consolidated Cloud Scheduler architecture with three production jobs
 - PostgreSQL schema for core operational tables
+- repository-based persistence split with `storage.py` compatibility layer
 - Alpaca API DB logging
 - daily snapshot export to GitHub
 - React dashboard multi-view UI
@@ -897,13 +919,13 @@ Reconciliation compares local trade data and broker-side order/exit data.
 ## 20. Immediate Next Steps
 
 1. investigate and fix the final reconciliation edge case where a local close exists but no unique broker-side exit order is recovered for the exact parent trade
-2. verify `trade_lifecycles` population during a full real market-driven open/close cycle after the latest sync and reconciliation fixes
-3. verify `close-paper-positions-eod` scheduler execution and runtime behavior against delayed fills at the next session open
-4. add dashboard sections for Alpaca logs/errors and remaining operational polish
-5. finalize static hosting deployment for the dashboard UI
-6. document runtime environment variables and deployment steps more clearly
-7. define retention policy for large operational tables and exported snapshots
-8. continue reducing orchestration and direct endpoint complexity inside `app.py`
+2. monitor `trade_lifecycles`, `paper_trade_attempts`, and scheduler behavior through several real market sessions after the latest scheduler and late-session trading changes
+3. verify the consolidated `market-ops` and `daily-post-close` scheduler flow against delayed fills, close timing, and post-close sync/reconciliation ordering
+4. define and implement retention policy for large operational tables and exported snapshots, especially `alpaca_api_logs`
+5. finalize teardown of legacy Cloud SQL / migration resources once Neon has been stable long enough
+6. improve dashboard operational visibility further, especially placement/skip reasons by hour and scheduler/job health indicators
+7. document runtime environment variables, scheduler jobs, and deployment steps more clearly
+8. continue reducing remaining integration/orchestration complexity inside `app.py`
 
 ---
 
