@@ -587,25 +587,50 @@ Status:
 Cloud Scheduler triggers operational HTTP endpoints on Cloud Run.
 
 ### Current scheduled jobs
-- `scheduled-paper-scan-openplus20`
-- `scheduled-paper-scan-10min`
-- `sync-paper-trades`
-- `close-paper-positions-eod` *(implemented, but scheduler/runtime verification is still important because delayed close fills can occur outside the original session window)*
-- `reconcile-paper-trades`
-- `analyze-paper-trades`
-- `analyze-signals`
-- `export-daily-snapshot`
+- `market-ops`
+- `daily-post-close`
+- `maintenance`
+
+### Current consolidated job design
+
+#### `market-ops`
+- single intraday scheduler endpoint: `POST /scheduler/market-ops`
+- current cron: `5,15,25,35,45,55 9-15 * * 1-5 (America/New_York)`
+- intentionally no-ops on the early `9:05`, `9:15`, and `9:25` ticks
+- from `9:35` through `15:45`, runs intraday sync and scheduled scans on a 10-minute offset cadence
+- at `15:55`, runs end-of-day close only
+
+#### `daily-post-close`
+- post-close scheduler endpoint: `POST /scheduler/daily-post-close`
+- current cron: `30 16 * * 1-5 (America/New_York)`
+- runs:
+  1. sync
+  2. reconciliation
+  3. trade analysis
+  4. signal analysis
+  5. daily snapshot export
+
+#### `maintenance`
+- housekeeping scheduler endpoint: `POST /scheduler/maintenance`
+- current cron: `0 18 * * * (America/New_York)`
+- currently used for log pruning and future low-priority maintenance tasks
 
 ### Scheduler responsibilities
-- scan market periodically during session windows
-- sync paper trade exits
-- close positions near end of day
-- reconcile broker vs local records
+- scan market during session windows
+- sync paper trade state
+- close positions near end of day before market close
+- reconcile broker vs local records after market close
 - produce analysis outputs
 - create daily snapshot backup
+- perform periodic housekeeping without adding more Scheduler jobs
 
 ### Current status
-**Implemented**
+**Implemented and consolidated**
+- the production design now uses three Scheduler jobs total in order to stay within the Cloud Scheduler free tier
+- orchestration logic lives in backend scheduler endpoints instead of many separate Scheduler jobs
+- end-of-day flow is explicitly split into:
+  - pre-close forced close in `market-ops`
+  - post-close sync, reconciliation, analysis, and export in `daily-post-close`
 
 ---
 
@@ -668,8 +693,9 @@ The dashboard is a React/Vite frontend backed by Flask API endpoints.
 - system health controls such as manual refresh and manual reconciliation trigger are implemented
 - risk / exposure / adaptive sizing visibility has been materially improved in backend and UI support
 - data quality is now materially improved after lifecycle, sync, and reconciliation fixes
-- Alpaca logs/errors section and some operational polish items are still missing
-- hosted static deployment is not yet finalized in architecture
+- Alpaca logs/errors section is now implemented
+- focused views, drilldowns, refresh-state visibility, execution insights, and reconciliation/admin views are implemented
+- hosted static deployment is active via Vercel, while the backend remains on Cloud Run
 ### 13.1 Implemented UI capabilities
 
 The dashboard UI currently includes:
@@ -684,24 +710,32 @@ The dashboard UI currently includes:
 - reconciliation breakdown section
 - manual refresh button
 - manual re-run reconciliation button
+- manual sync trigger in the trades view
 - last updated timestamp
 - last reconciliation status badge
 - last reconciliation timestamp
-- auto-refresh every 15 minutes
+- view-specific auto-refresh gated to U.S. market hours
+- focused navigation views for:
+  - overview
+  - trades
+  - reconciliation
+  - broker logs
+  - analytics
+- deep-linkable focused views using URL query state
+- `paper_trade_attempts` analytics for execution/skip diagnostics
 
 ### 13.2 Remaining UI work
 
 Pending dashboard UI enhancements:
-- improved non-blocking toast component instead of inline message banner
-- per-widget loading and error states
+- improved non-blocking toast component instead of inline message banner where still applicable
+- per-widget loading and error states in every remaining dense section
 - richer status indicators for backend jobs and sync health
-- Alpaca logs / API errors section
 - final verification that all reconciliation and risk widgets are fed by production-complete backend data during live sessions
 
 ### 13.3 UI next implementation order
 
 Recommended next UI implementation order:
-1. add Alpaca logs / API errors section
+1. improve execution and scheduler health visibility
 2. improve backend job / sync health indicators
 3. add per-widget loading and error states where still missing
 4. replace remaining inline status banners with non-blocking toast behavior
@@ -774,7 +808,7 @@ Reconciliation compares local trade data and broker-side order/exit data.
 - Cloud Run logs are useful for runtime debugging
 - reconciliation observability in the dashboard now exists
 - sync and auto-heal behavior can now be inspected through endpoint responses and runtime logs
-- dashboard views for Alpaca API logs/errors are still missing
+- dashboard views for Alpaca API logs/errors now exist, but deeper runtime alerting and correlation can still improve
 
 ---
 
@@ -785,7 +819,8 @@ Reconciliation compares local trade data and broker-side order/exit data.
 - `GITHUB_OWNER`
 - `GITHUB_REPO`
 - `GITHUB_BRANCH`
-- `DB_*` or database connection settings
+- `DATABASE_URL`
+- `DB_SCHEMA`
 - Alpaca API keys
 - export path variables
 
@@ -795,7 +830,10 @@ Reconciliation compares local trade data and broker-side order/exit data.
 - GitHub token must support repository write access
 
 ### Current status
-**Implemented operationally**, documentation can improve
+**Implemented operationally**
+- Cloud Run now uses Secret Manager-backed secrets for sensitive runtime configuration
+- Neon pooled PostgreSQL is the active production database
+- legacy Cloud SQL resources may still exist temporarily for rollback or teardown, but are no longer part of the active runtime path
 
 ---
 
@@ -804,30 +842,30 @@ Reconciliation compares local trade data and broker-side order/exit data.
 ### Fully implemented
 - Cloud Run backend deployment
 - Cloud Build configuration
-- Cloud Scheduler jobs for scan, sync, close, reconcile, analysis, and daily snapshot export
+- consolidated Cloud Scheduler architecture with three production jobs
 - PostgreSQL schema for core operational tables
 - Alpaca API DB logging
 - daily snapshot export to GitHub
-- React dashboard base UI
+- React dashboard multi-view UI
 - reconciliation summary/detail/history UI structure
 - reconciliation run and mismatch APIs
+- Neon production database migration
+- Secret Manager-backed production secrets
+- `paper_trade_attempts` persistence and dashboard analytics
 
 ### Partially implemented
 - trade lifecycle runtime validation across live market flows and remaining edge-case cleanup
 - dynamic account-aware position sizing and adaptive sizing controls
 - observability UI sections
 - scheduler/EOD-close runtime verification and alerting confidence
-- static dashboard hosting rollout
 - repository documentation and cleanup
 - separation of concerns between `app.py`, route modules, and service modules
 - lifecycle handling for delayed broker-side close fills outside the original bracket order tree
 
 ### Missing
-- dashboard section for Alpaca logs/errors
 - volatility-based sizing (ATR)
 - confidence calibration analytics
 - retention/cleanup policy for growing DB tables and exported artifacts
-- architecture-aware README refresh
 - deeper verification/repair path for the rare case where a local close exists but reconciliation cannot recover a unique broker exit order for the exact parent trade
 
 ---
