@@ -749,7 +749,7 @@ Cloud Scheduler triggers operational HTTP endpoints on Cloud Run.
 - single intraday scheduler endpoint: `POST /scheduler/market-ops`
 - current cron: `5,15,25,35,45,55 9-15 * * 1-5 (America/New_York)`
 - intentionally no-ops on the early `9:05`, `9:15`, and `9:25` ticks
-- from `9:35` through `15:45`, runs intraday sync and scheduled scans on a 10-minute offset cadence
+- from `9:35` through `15:45`, including `9:55`, runs intraday sync and scheduled scans on a 10-minute offset cadence
 - at `15:55`, runs end-of-day close only
 
 #### `daily-post-close`

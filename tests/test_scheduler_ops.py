@@ -33,6 +33,13 @@ class SchedulerOpsTests(unittest.TestCase):
         now_ny = datetime(2026, 4, 1, 10, 5, tzinfo=NY_TZ)
         self.assertEqual(build_market_ops_plan(now_ny), ["sync", "scan"])
 
+    def test_market_ops_plan_at_955_runs_sync_and_scan(self):
+        now_ny = datetime(2026, 4, 1, 9, 55, tzinfo=NY_TZ)
+        self.assertTrue(should_run_market_sync(now_ny))
+        self.assertTrue(should_run_market_scan(now_ny))
+        self.assertFalse(should_run_eod_close(now_ny))
+        self.assertEqual(build_market_ops_plan(now_ny), ["sync", "scan"])
+
     def test_post_close_ops_runs_all_tasks(self):
         now_ny = datetime(2026, 4, 1, 16, 30, tzinfo=NY_TZ)
         result = execute_post_close_ops(
