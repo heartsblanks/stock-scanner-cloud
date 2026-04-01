@@ -29,9 +29,9 @@ steps:
       - '--max-instances'
       - '1'
       - '--set-env-vars'
-      - 'APCA_BASE_URL=https://paper-api.alpaca.markets,ALPACA_MAX_NOTIONAL=10000,DB_HOST=$_DB_HOST,DB_PORT=5432,DB_NAME=$_DB_NAME,DB_USER=$_DB_USER,DB_SSLMODE=require,GITHUB_REPO=alpaca-trade-logs,GITHUB_OWNER=$_GITHUB_OWNER,GITHUB_BRANCH=main,ENABLE_DB_LOGGING=true,ENABLE_ALPACA_HTTP_AUDIT=true'
+      - 'APCA_BASE_URL=https://paper-api.alpaca.markets,ALPACA_MAX_NOTIONAL=10000,DB_SCHEMA=public,GITHUB_REPO=alpaca-trade-logs,GITHUB_OWNER=$_GITHUB_OWNER,GITHUB_BRANCH=main,ENABLE_DB_LOGGING=true,ENABLE_ALPACA_HTTP_AUDIT=true'
       - '--update-secrets'
-      - 'TWELVEDATA_API_KEY=twelvedata-api-key:latest,APCA_API_KEY_ID=alpaca-api-key-id:latest,APCA_API_SECRET_KEY=alpaca-api-secret-key:latest,DB_PASSWORD=db-password:latest,GITHUB_TOKEN=github-token:latest'
+      - 'TWELVEDATA_API_KEY=twelvedata-api-key:latest,APCA_API_KEY_ID=alpaca-api-key-id:latest,APCA_API_SECRET_KEY=alpaca-api-secret-key:latest,DATABASE_URL=database-url:latest,GITHUB_TOKEN=github-token:latest'
 images:
   - 'europe-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/stock-scanner:$COMMIT_SHA'
 

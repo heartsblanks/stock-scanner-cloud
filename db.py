@@ -15,6 +15,7 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_SSLMODE = os.getenv("DB_SSLMODE", "require")
 DB_CONNECT_TIMEOUT = int(os.getenv("DB_CONNECT_TIMEOUT", "10"))
 DB_APPLICATION_NAME = os.getenv("DB_APPLICATION_NAME", "stock-scanner")
+DB_SCHEMA = os.getenv("DB_SCHEMA", "public").strip()
 DB_URL = os.getenv("DATABASE_URL", "").strip()
 DB_SOCKET_DIR = os.getenv("DB_SOCKET_DIR", "").strip()
 DB_SOCKET_INSTANCE = os.getenv("DB_SOCKET_INSTANCE", "").strip()
@@ -65,11 +66,15 @@ def _build_connection_string() -> str:
 
 
 def get_connection() -> psycopg.Connection:
-    return psycopg.connect(
+    conn = psycopg.connect(
         _build_connection_string(),
         autocommit=False,
         row_factory=dict_row,
     )
+    if DB_SCHEMA:
+        with conn.cursor() as cur:
+            cur.execute("SET search_path TO %s", (DB_SCHEMA,))
+    return conn
 
 
 @contextmanager
