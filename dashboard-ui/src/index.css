@@ -588,14 +588,18 @@ code {
 
 .dashboard-view-nav {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 220px));
   gap: 12px;
+  justify-content: start;
+  align-items: stretch;
 }
 
 .dashboard-view-tab {
   display: grid;
   gap: 6px;
   align-items: start;
+  width: 100%;
+  min-width: 0;
   padding: 16px;
   border-radius: var(--radius-md);
   border: 1px solid rgba(80, 62, 37, 0.1);
@@ -1115,7 +1119,7 @@ code {
   }
 
   .dashboard-view-nav {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   }
 }
 
