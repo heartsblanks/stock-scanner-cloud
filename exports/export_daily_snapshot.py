@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from export_reports import export_all_reports
-from github_export import commit_and_push
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from exports.export_reports import export_all_reports
+from exports.github_export import commit_and_push
 
 
 EXPORT_BASE_DIR = os.getenv("EXPORT_BASE_DIR", "/tmp/alpaca-trade-logs-export")
