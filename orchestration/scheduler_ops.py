@@ -7,11 +7,12 @@ from typing import Any, Callable
 def _normalize_handler_result(result: Any) -> dict[str, Any]:
     if isinstance(result, tuple) and len(result) == 2:
         body, status_code = result
-        return {
-            "ok": status_code < 400,
-            "status_code": status_code,
-            "body": body,
-        }
+        if isinstance(status_code, int):
+            return {
+                "ok": status_code < 400,
+                "status_code": status_code,
+                "body": body,
+            }
     if isinstance(result, dict):
         return {
             "ok": bool(result.get("ok", True)),

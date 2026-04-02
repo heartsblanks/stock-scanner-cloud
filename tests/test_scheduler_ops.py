@@ -66,6 +66,21 @@ class SchedulerOpsTests(unittest.TestCase):
         self.assertIn("analyze_signals", result["results"])
         self.assertIn("export_daily_snapshot", result["results"])
 
+    def test_post_close_ops_accepts_non_http_tuple_results(self):
+        now_ny = datetime(2026, 4, 2, 16, 30, tzinfo=NY_TZ)
+        result = execute_post_close_ops(
+            now_ny=now_ny,
+            run_sync=lambda: {"ok": True, "task": "sync"},
+            run_reconcile=lambda: {"ok": True, "task": "reconcile"},
+            run_trade_analysis=lambda: ([{"group_name": "mode"}], [{"symbol": "SNAP"}], []),
+            run_signal_analysis=lambda: ([{"group_name": "skip_reason"}], [{"timestamp_utc": "2026-04-02T20:30:00Z"}]),
+            run_snapshot_export=lambda: {"ok": True, "task": "snapshot"},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["results"]["analyze_paper_trades"]["status_code"], 200)
+        self.assertEqual(result["results"]["analyze_signals"]["status_code"], 200)
+
 
 if __name__ == "__main__":
     unittest.main()
