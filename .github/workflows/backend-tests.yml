@@ -31,20 +31,12 @@ jobs:
         run: |
           python -m py_compile \
             app.py \
-            app_orchestration.py \
-            paper_trade_context.py \
-            scan_context.py \
             storage.py \
-            db.py \
-            logging_utils.py \
-            export_daily_snapshot.py \
-            export_reports.py \
-            trade_analysis.py \
-            signal_analysis.py \
-            alpaca_reconcile.py \
-            alpaca_sync.py \
-            paper_alpaca.py \
-            trade_scan.py \
+            core/*.py \
+            orchestration/*.py \
+            exports/*.py \
+            analytics/*.py \
+            alpaca/*.py \
             routes/*.py \
             services/*.py \
             repositories/*.py \
