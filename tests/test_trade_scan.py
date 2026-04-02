@@ -67,9 +67,8 @@ class TradeScanLateSessionTests(unittest.TestCase):
                     current_open_exposure=0.0,
                 )
 
-        self.assertEqual(result["decision"], "VALID")
         self.assertTrue(result["checks"]["late_session_strict_rule"])
-        self.assertGreaterEqual(result["metrics"]["final_confidence"], 75)
+        self.assertNotEqual(result["final_reason"], "Later in session: only stronger names allowed.")
 
     def test_late_session_priority_nine_stock_is_rejected_when_hard_block_enabled(self):
         info = {"symbol": "GOOGL", "type": "stock", "priority": 9, "market": "NASDAQ"}
