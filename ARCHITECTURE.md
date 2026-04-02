@@ -149,6 +149,14 @@ Current active work:
 - use the architecture document as the running record for completed and pending observability work
 - keep paper-trading limits flag-driven so equity allocation and max-position behavior can change via environment/config instead of code edits
 
+Current strategy status:
+- completed: `EXTERNAL_EXIT` is reported separately so forced EOD/manual exits no longer distort strategy-only quality views
+- completed: post-noon caution is stronger via an additional confidence time penalty from `12:00 PM ET` onward
+- completed: paper-trade sizing is clamped by the hard `$10,000` `ALPACA_MAX_NOTIONAL` cap
+- completed: `trade_lifecycles.mode` is preserved across later sync/close/reconcile updates so category analysis stays intact
+- pending observation: review whether the `Price is above OR high and above VWAP.` breakout rule is too blunt after a few more live sessions
+- pending observation: monitor whether `No meaningful allocatable capital remains.` mostly disappears now that the oversized-order sizing bug is fixed
+
 ### 5.5 Operational checklist
 
 Daily:
