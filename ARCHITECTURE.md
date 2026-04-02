@@ -925,9 +925,9 @@ Recommended next UI implementation order:
 
 ### Daily snapshot flow
 1. export current reports and DB snapshots into a staging directory
-2. clone GitHub backup repository into a separate temp repo directory
-3. copy staged export files into cloned repository
-4. commit and push if there are changes
+2. compare staged files against the current GitHub repository contents through the GitHub Contents API
+3. upload only changed files with the configured `GITHUB_TOKEN`
+4. create/update snapshot files directly on the configured branch without requiring a local `git` binary
 
 ### Design requirement
 The export flow must never mutate live operational data.
