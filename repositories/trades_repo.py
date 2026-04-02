@@ -198,7 +198,7 @@ def upsert_trade_lifecycle(
         execute(
             """
             UPDATE trade_lifecycles
-            SET symbol = %(symbol)s, mode = %(mode)s, side = %(side)s, direction = %(direction)s, status = %(status)s,
+            SET symbol = %(symbol)s, mode = COALESCE(NULLIF(%(mode)s, ''), mode), side = %(side)s, direction = %(direction)s, status = %(status)s,
                 entry_time = %(entry_time)s, entry_price = %(entry_price)s, exit_time = %(exit_time)s, exit_price = %(exit_price)s,
                 stop_price = %(stop_price)s, target_price = %(target_price)s, exit_reason = %(exit_reason)s, shares = %(shares)s,
                 realized_pnl = %(realized_pnl)s, realized_pnl_percent = %(realized_pnl_percent)s, duration_minutes = %(duration_minutes)s,

@@ -939,6 +939,10 @@ It should only create DB-derived snapshots and generated report copies.
 - `daily-post-close` Cloud Scheduler job exists for daily execution
 - operational monitoring still recommended
 
+### Trade lifecycle persistence note
+- `trade_lifecycles.mode` must be preserved across later sync, reconciliation, and close updates.
+- Repository updates now keep the existing mode when a downstream caller sends a blank mode, which prevents intraday category metadata from being wiped during close/sync flows.
+
 ---
 
 ## 15. Reconciliation Architecture
