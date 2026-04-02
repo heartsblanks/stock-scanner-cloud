@@ -96,6 +96,8 @@ docker run -p 8080:8080 stock-scanner-cloud
 
 Deployed via **Google Cloud Build → Cloud Run** with a hosted PostgreSQL database on Neon.
 
+The runtime container uses Gunicorn with an extended worker timeout so the post-close scheduler flow can complete longer reconciliation/export work without hitting the default 30-second worker abort.
+
 ```bash
 gcloud builds submit --tag gcr.io/<PROJECT_ID>/stock-scanner
 

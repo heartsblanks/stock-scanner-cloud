@@ -184,6 +184,7 @@ Current paper-trading config defaults:
 - instrument watchlists are intentionally split across multiple categories to stay below the per-category Twelve Data symbol ceiling
 - these values are now carried through deployment config in `cloudbuild.yaml`, so future changes can be made at deploy-time without editing strategy logic
 - placement sizing is additionally clamped by `ALPACA_MAX_NOTIONAL`, so confidence-based sizing cannot expand a paper trade above the broker-side per-trade hard cap
+- the Cloud Run container now starts Gunicorn with a 300-second worker timeout so the `daily-post-close` scheduler flow has enough time to finish reconciliation and exports without being killed at the default 30-second boundary
 
 ---
 
