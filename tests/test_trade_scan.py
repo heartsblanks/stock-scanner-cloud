@@ -121,6 +121,7 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
     def test_post_noon_time_penalty_is_stronger(self):
         info = {"symbol": "GOOGL", "type": "stock", "priority": 9, "market": "NASDAQ"}
         candles = build_valid_breakout_candles()
+        candles[-1]["low"] = 98.50
 
         with patch.dict(os.environ, {"ENABLE_LATE_SESSION_HARD_BLOCK": "false"}, clear=False):
             with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 12, 0, tzinfo=NY_TZ)):
