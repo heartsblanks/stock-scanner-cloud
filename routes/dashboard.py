@@ -70,8 +70,10 @@ def _build_dashboard_summary_payload(summary: dict) -> dict:
         "top_symbols": summary.get("top_symbols"),
         "mode_performance": summary.get("mode_performance"),
         "exit_reason_breakdown": summary.get("exit_reason_breakdown"),
+        "external_exit_summary": summary.get("external_exit_summary"),
         "hourly_performance": summary.get("hourly_performance"),
         "hourly_outcome_quality": summary.get("hourly_outcome_quality"),
+        "strategy_hourly_outcome_quality": summary.get("strategy_hourly_outcome_quality"),
         "equity_curve": summary.get("equity_curve"),
         "insights": summary.get("insights"),
     }

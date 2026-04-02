@@ -943,6 +943,11 @@ It should only create DB-derived snapshots and generated report copies.
 - `trade_lifecycles.mode` must be preserved across later sync, reconciliation, and close updates.
 - Repository updates now keep the existing mode when a downstream caller sends a blank mode, which prevents intraday category metadata from being wiped during close/sync flows.
 
+### Strategy reporting note
+- dashboard hourly outcome quality now has a strategy-only view that excludes `EXTERNAL_EXIT` rows
+- `EXTERNAL_EXIT` remains stored and reported separately so forced EOD/manual closes do not distort core strategy reads
+- late-session trade evaluation now applies an extra confidence penalty from `12:00 PM ET` onward instead of reintroducing a hard afternoon block
+
 ---
 
 ## 15. Reconciliation Architecture

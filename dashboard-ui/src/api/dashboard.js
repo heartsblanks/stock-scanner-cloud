@@ -13,7 +13,9 @@ export async function fetchDashboardSummary(date) {
     mode_performance: data.mode_performance || [],
     hourly_performance: data.hourly_performance || [],
     hourly_outcome_quality: data.hourly_outcome_quality || [],
+    strategy_hourly_outcome_quality: data.strategy_hourly_outcome_quality || data.hourly_outcome_quality || [],
     exit_reason_breakdown: data.exit_reason_breakdown || [],
+    external_exit_summary: data.external_exit_summary || null,
     equity_curve: data.equity_curve || [],
   };
 }

@@ -429,6 +429,23 @@ def get_exit_reason_breakdown(limit: int = 100) -> list[dict]:
     )
 
 
+def get_external_exit_summary() -> dict | None:
+    row = fetch_one(
+        """
+        SELECT COUNT(*)::INT AS trade_count,
+               ROUND(COALESCE(SUM(realized_pnl), 0)::numeric, 6) AS realized_pnl_total,
+               ROUND(AVG(realized_pnl)::numeric, 6) AS average_realized_pnl
+        FROM trade_lifecycles
+        WHERE UPPER(COALESCE(status, '')) = 'CLOSED'
+          AND UPPER(COALESCE(exit_reason, '')) = 'EXTERNAL_EXIT'
+        """,
+        {},
+    )
+    if not row or not row.get("trade_count"):
+        return None
+    return row
+
+
 def get_hourly_performance(limit: int = 100) -> list[dict]:
     return fetch_all(
         """
@@ -448,9 +465,12 @@ def get_hourly_performance(limit: int = 100) -> list[dict]:
     )
 
 
-def get_hourly_outcome_quality(limit: int = 24) -> list[dict]:
+def get_hourly_outcome_quality(limit: int = 24, *, exclude_external_exit: bool = False) -> list[dict]:
+    external_exit_filter = ""
+    if exclude_external_exit:
+        external_exit_filter = "AND UPPER(COALESCE(exit_reason, '')) <> 'EXTERNAL_EXIT'"
     return fetch_all(
-        """
+        f"""
         SELECT EXTRACT(HOUR FROM (entry_time AT TIME ZONE 'America/New_York'))::INT AS entry_hour_ny,
                COUNT(*)::INT AS trade_count,
                COUNT(*) FILTER (WHERE UPPER(COALESCE(status, '')) = 'CLOSED')::INT AS closed_trade_count,
@@ -471,6 +491,7 @@ def get_hourly_outcome_quality(limit: int = 24) -> list[dict]:
                END AS win_rate
         FROM trade_lifecycles
         WHERE entry_time IS NOT NULL
+          {external_exit_filter}
         GROUP BY EXTRACT(HOUR FROM (entry_time AT TIME ZONE 'America/New_York'))
         ORDER BY entry_hour_ny ASC
         LIMIT %(limit)s
@@ -508,21 +529,26 @@ def get_dashboard_summary(target_date: Optional[str] = None) -> dict:
     symbol_performance = get_symbol_performance(limit=10)
     mode_performance = get_mode_performance(limit=10)
     exit_reason_breakdown = get_exit_reason_breakdown(limit=20)
+    external_exit_summary = get_external_exit_summary()
     hourly_performance = get_hourly_performance(limit=24)
     hourly_outcome_quality = get_hourly_outcome_quality(limit=24)
+    strategy_hourly_outcome_quality = get_hourly_outcome_quality(limit=24, exclude_external_exit=True)
     equity_curve = get_equity_curve(limit=5000)
     return {
         "summary": base_summary,
         "top_symbols": symbol_performance,
         "mode_performance": mode_performance,
         "exit_reason_breakdown": exit_reason_breakdown,
+        "external_exit_summary": external_exit_summary,
         "hourly_performance": hourly_performance,
         "hourly_outcome_quality": hourly_outcome_quality,
+        "strategy_hourly_outcome_quality": strategy_hourly_outcome_quality,
         "equity_curve": equity_curve,
         "insights": {
             "best_symbol": (symbol_performance[0] if symbol_performance else None),
             "best_mode": (mode_performance[0] if mode_performance else None),
             "most_common_exit": (exit_reason_breakdown[0] if exit_reason_breakdown else None),
             "best_hour": max(hourly_performance, key=lambda x: x.get("realized_pnl_total", 0)) if hourly_performance else None,
+            "external_exit_summary": external_exit_summary,
         },
     }

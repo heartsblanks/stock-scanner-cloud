@@ -492,6 +492,8 @@ export function useDashboardData(activeView = "overview") {
   const hourlyOutcomeQuality = summary?.hourly_outcome_quality || [];
   const equityCurve = summary?.equity_curve || [];
   const insights = summary?.insights || {};
+  const strategyHourlyOutcomeQuality = summary?.strategy_hourly_outcome_quality || hourlyOutcomeQuality;
+  const externalExitSummary = summary?.external_exit_summary || insights?.external_exit_summary || null;
 
   const reconciliationSymbols = Array.from(
     new Set(
@@ -656,6 +658,8 @@ export function useDashboardData(activeView = "overview") {
     modePerformance,
     hourlyPerformance,
     hourlyOutcomeQuality,
+    strategyHourlyOutcomeQuality,
+    externalExitSummary,
     equityCurve,
     insights,
     reconciliationSymbols,

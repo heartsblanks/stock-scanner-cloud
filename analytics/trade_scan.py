@@ -661,6 +661,8 @@ def evaluate_symbol(
         time_penalty += 2
     if minutes_after_open > 120:
         time_penalty += 4
+    if minutes_after_open >= 150:
+        time_penalty += 4
     if minutes_after_open > 180:
         time_penalty += 6
 

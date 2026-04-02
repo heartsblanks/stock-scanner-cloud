@@ -117,5 +117,26 @@ class TradeScanSizingConfigTests(unittest.TestCase):
         self.assertEqual(sizing["shares"], 300)
 
 
+class TradeScanTimePenaltyTests(unittest.TestCase):
+    def test_post_noon_time_penalty_is_stronger(self):
+        info = {"symbol": "GOOGL", "type": "stock", "priority": 9, "market": "NASDAQ"}
+        candles = build_valid_breakout_candles()
+
+        with patch.dict(os.environ, {"ENABLE_LATE_SESSION_HARD_BLOCK": "false"}, clear=False):
+            with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 12, 0, tzinfo=NY_TZ)):
+                result = evaluate_symbol(
+                    name="Alphabet",
+                    info=info,
+                    candles=candles,
+                    account_size=100000.0,
+                    benchmark_directions={"NASDAQ": "BUY"},
+                    current_open_positions=0,
+                    current_open_exposure=0.0,
+                )
+
+        self.assertEqual(result["metrics"]["minutes_after_open"], 150)
+        self.assertEqual(result["metrics"]["time_penalty"], 10)
+
+
 if __name__ == "__main__":
     unittest.main()

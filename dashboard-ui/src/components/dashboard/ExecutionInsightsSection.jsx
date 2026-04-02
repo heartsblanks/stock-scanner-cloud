@@ -32,6 +32,7 @@ export default function ExecutionInsightsSection({
   paperTradeAttemptDailySummary,
   paperTradeAttemptHourlySummary,
   hourlyOutcomeQuality,
+  externalExitSummary,
 }) {
   const stageCountMap = Object.fromEntries((stageCounts || []).map((row) => [row.decision_stage, Number(row.count || 0)]));
   const placedCount = stageCountMap.PLACED ?? 0;
@@ -94,6 +95,16 @@ export default function ExecutionInsightsSection({
             <InsightCard
               title="Top Reason"
               value={mostCommonReason ? `${mostCommonReason.final_reason} (${mostCommonReason.count})` : "-"}
+            />
+            <InsightCard
+              title="External Exits"
+              value={
+                externalExitSummary
+                  ? `${externalExitSummary.trade_count || 0} (${Number(externalExitSummary.realized_pnl_total || 0) < 0 ? "-" : ""}$${Math.abs(
+                      Number(externalExitSummary.realized_pnl_total || 0)
+                    ).toFixed(2)})`
+                  : "0"
+              }
             />
           </div>
 
@@ -217,7 +228,7 @@ export default function ExecutionInsightsSection({
                 <div>
                   <h3>Conversion vs Quality</h3>
                   <p className="dashboard-panel-subtitle">
-                    Compare where the system converts candidates well against where realized trade outcomes are actually strongest.
+                    Compare where the system converts candidates well against where strategy-managed realized trade outcomes are actually strongest.
                   </p>
                 </div>
               </div>

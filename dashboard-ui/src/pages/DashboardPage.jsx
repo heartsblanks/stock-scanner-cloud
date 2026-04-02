@@ -104,6 +104,8 @@ export default function DashboardPage() {
     modePerformance,
     hourlyPerformance,
     hourlyOutcomeQuality,
+    strategyHourlyOutcomeQuality,
+    externalExitSummary,
     equityCurve,
     insights,
     reconciliationSymbols,
@@ -382,7 +384,8 @@ export default function DashboardPage() {
                   paperTradeAttemptRejections={paperTradeAttemptRejections}
                   paperTradeAttemptDailySummary={paperTradeAttemptDailySummary}
                   paperTradeAttemptHourlySummary={paperTradeAttemptHourlySummary}
-                  hourlyOutcomeQuality={hourlyOutcomeQuality}
+                  hourlyOutcomeQuality={strategyHourlyOutcomeQuality}
+                  externalExitSummary={externalExitSummary}
                 />
               </div>
 
@@ -668,7 +671,10 @@ export default function DashboardPage() {
                     </div>
                     <div style={{ marginTop: 20 }}>
                       <LazySection>
-                        <HourlyOutcomeQualityTable rows={hourlyOutcomeQuality} />
+                        <HourlyOutcomeQualityTable
+                          rows={strategyHourlyOutcomeQuality}
+                          strategyOnly
+                        />
                       </LazySection>
                     </div>
                   </div>

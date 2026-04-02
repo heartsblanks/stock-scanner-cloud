@@ -29,7 +29,7 @@ function formatHourLabel(hour) {
   return `${normalizedHour}:00 ${suffix} ET`;
 }
 
-export default function HourlyOutcomeQualityTable({ rows }) {
+export default function HourlyOutcomeQualityTable({ rows, strategyOnly = false }) {
   if (!Array.isArray(rows) || rows.length === 0) {
     return <div className="dashboard-empty">No hourly outcome quality data.</div>;
   }
@@ -41,7 +41,9 @@ export default function HourlyOutcomeQualityTable({ rows }) {
           <div>
             <h3>Outcome Quality By Entry Hour</h3>
             <p className="dashboard-panel-subtitle">
-              Realized quality by ET hour so execution pressure can be compared with actual trade outcomes.
+              {strategyOnly
+                ? "Realized quality by ET hour using strategy-managed exits only, so forced EOD/manual closes do not distort the view."
+                : "Realized quality by ET hour so execution pressure can be compared with actual trade outcomes."}
             </p>
           </div>
         </div>
