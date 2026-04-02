@@ -192,6 +192,7 @@ Current paper-trading config defaults:
 - instrument watchlists are intentionally split across multiple categories to stay below the per-category Twelve Data symbol ceiling
 - these values are now carried through deployment config in `cloudbuild.yaml`, so future changes can be made at deploy-time without editing strategy logic
 - placement sizing is additionally clamped by `ALPACA_MAX_NOTIONAL`, so confidence-based sizing cannot expand a paper trade above the broker-side per-trade hard cap
+- Alpaca HTTP audit logging is now opt-in for successful requests via `ENABLE_ALPACA_HTTP_AUDIT`; failures are always persisted
 - the Cloud Run container now starts Gunicorn with a 300-second worker timeout so the `daily-post-close` scheduler flow has enough time to finish reconciliation and exports without being killed at the default 30-second boundary
 
 ---
@@ -1002,6 +1003,7 @@ Reconciliation compares local trade data and broker-side order/exit data.
 ### Current status
 **Partially implemented, but improved operationally**
 - DB-level Alpaca logging exists
+- Alpaca HTTP failures are always stored, while successful request auditing is now controlled by `ENABLE_ALPACA_HTTP_AUDIT`
 - Cloud Run logs are useful for runtime debugging
 - reconciliation observability in the dashboard now exists
 - sync and auto-heal behavior can now be inspected through endpoint responses and runtime logs
@@ -1030,7 +1032,7 @@ Reconciliation compares local trade data and broker-side order/exit data.
 **Implemented operationally**
 - Cloud Run now uses Secret Manager-backed secrets for sensitive runtime configuration
 - Neon pooled PostgreSQL is the active production database
-- legacy Cloud SQL resources may still exist temporarily for rollback or teardown, but are no longer part of the active runtime path
+- legacy Cloud SQL resources have been removed; Neon is the only active production database
 
 ---
 

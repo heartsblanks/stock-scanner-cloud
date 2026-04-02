@@ -14,11 +14,11 @@ ALPACA_API_SECRET_KEY = os.getenv("APCA_API_SECRET_KEY", "")
 ALPACA_BASE_URL = os.getenv("APCA_BASE_URL", "https://paper-api.alpaca.markets")
 ALPACA_HTTP_TIMEOUT_SECONDS = int(os.getenv("ALPACA_HTTP_TIMEOUT_SECONDS", "30"))
 
-# Centralized logging flag
-ENABLE_ALPACA_HTTP_AUDIT = os.getenv(
-    "ENABLE_ALPACA_HTTP_AUDIT",
-    os.getenv("ALPACA_LOG_ENABLED", "false"),
-).lower() == "true"
+def alpaca_http_audit_enabled() -> bool:
+    return os.getenv(
+        "ENABLE_ALPACA_HTTP_AUDIT",
+        os.getenv("ALPACA_LOG_ENABLED", "false"),
+    ).lower() == "true"
 
 
 class AlpacaHttpError(RuntimeError):
@@ -38,7 +38,9 @@ def _log_alpaca_call(
     error_message: str | None = None,
     duration_ms: int | None = None,
 ) -> None:
-    if not ENABLE_ALPACA_HTTP_AUDIT:
+    # Failures always get persisted for troubleshooting. Successful calls are
+    # only stored when explicit request auditing is enabled.
+    if success and not alpaca_http_audit_enabled():
         return
     try:
         insert_alpaca_api_log(
