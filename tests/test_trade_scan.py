@@ -146,6 +146,113 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
         self.assertEqual(result["metrics"]["minutes_after_open"], 150)
         self.assertEqual(result["metrics"]["time_penalty"], 10)
 
+    def test_short_setups_get_extra_midday_time_penalty(self):
+        info = {"symbol": "PLUG", "type": "stock", "priority": 9, "market": "SP500"}
+        candles = [
+            {
+                "datetime": f"2026-04-01 09:{30 + minute_offset:02d}:00",
+                "open": price + 0.10,
+                "high": price + 0.20,
+                "low": price + 0.05,
+                "close": price,
+            }
+            for minute_offset, price in enumerate([
+                100.60,
+                100.50,
+                100.45,
+                100.40,
+                100.35,
+                100.30,
+                100.25,
+                100.20,
+                100.15,
+                100.10,
+                100.05,
+                100.00,
+                99.95,
+                99.90,
+                99.55,
+            ])
+        ]
+        candles.append(
+            {
+                "datetime": "2026-04-01 09:45:00",
+                "open": 99.60,
+                "high": 99.65,
+                "low": 98.50,
+                "close": 99.55,
+            }
+        )
+
+        with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 12, 0, tzinfo=NY_TZ)):
+            result = evaluate_symbol(
+                name="Plug Power",
+                info=info,
+                candles=candles,
+                account_size=100000.0,
+                benchmark_directions={"SP500": "SELL"},
+                current_open_positions=0,
+                current_open_exposure=0.0,
+            )
+
+        self.assertEqual(result["metrics"]["direction"], "SELL")
+        self.assertEqual(result["metrics"]["time_penalty"], 20)
+        self.assertEqual(result["metrics"]["required_confidence"], 82)
+
+    def test_short_setups_use_higher_confidence_threshold(self):
+        info = {"symbol": "PLUG", "type": "stock", "priority": 9, "market": "SP500"}
+        candles = [
+            {
+                "datetime": f"2026-04-01 09:{30 + minute_offset:02d}:00",
+                "open": price + 0.10,
+                "high": price + 0.20,
+                "low": price + 0.05,
+                "close": price,
+            }
+            for minute_offset, price in enumerate([
+                100.60,
+                100.50,
+                100.45,
+                100.40,
+                100.35,
+                100.30,
+                100.25,
+                100.20,
+                100.15,
+                100.10,
+                100.05,
+                100.00,
+                99.95,
+                99.90,
+                99.55,
+            ])
+        ]
+        candles.append(
+            {
+                "datetime": "2026-04-01 09:45:00",
+                "open": 99.60,
+                "high": 99.65,
+                "low": 99.20,
+                "close": 99.55,
+            }
+        )
+
+        with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 11, 0, tzinfo=NY_TZ)):
+            result = evaluate_symbol(
+                name="Plug Power",
+                info=info,
+                candles=candles,
+                account_size=100000.0,
+                benchmark_directions={"SP500": "SELL"},
+                current_open_positions=0,
+                current_open_exposure=0.0,
+            )
+
+        self.assertEqual(result["metrics"]["direction"], "SELL")
+        self.assertEqual(result["metrics"]["required_confidence"], 82)
+        self.assertFalse(result["checks"]["confidence_threshold"])
+        self.assertEqual(result["final_reason"], "Final confidence below threshold.")
+
 
 if __name__ == "__main__":
     unittest.main()

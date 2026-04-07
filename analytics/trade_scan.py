@@ -28,6 +28,7 @@ from analytics.instruments import (
 from core.paper_trade_config import get_paper_trade_limits
 
 MIN_CONFIDENCE = 75
+MIN_SHORT_CONFIDENCE = 82
 MIN_REMAINING_ALLOCATABLE_CAPITAL = 50.0
 API_KEY = os.getenv("TWELVEDATA_API_KEY")
 BASE_URL = "https://api.twelvedata.com/time_series"
@@ -665,17 +666,24 @@ def evaluate_symbol(
         time_penalty += 4
     if minutes_after_open > 180:
         time_penalty += 6
+    if direction == "SELL":
+        if minutes_after_open >= 90:
+            time_penalty += 4
+        if minutes_after_open >= 150:
+            time_penalty += 6
 
     final_confidence = base_confidence + priority - time_penalty
+    required_confidence = MIN_SHORT_CONFIDENCE if direction == "SELL" else MIN_CONFIDENCE
 
     metrics.update({
         "base_confidence": base_confidence,
         "priority_boost": priority,
         "time_penalty": time_penalty,
         "final_confidence": final_confidence,
+        "required_confidence": required_confidence,
     })
 
-    checks["confidence_threshold"] = final_confidence >= MIN_CONFIDENCE
+    checks["confidence_threshold"] = final_confidence >= required_confidence
     if not checks["confidence_threshold"]:
         return {
             "name": name,
