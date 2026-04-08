@@ -141,17 +141,19 @@ def register_health_routes(
         try:
             limit_raw = request.args.get("limit", "100")
             decision_stage = request.args.get("decision_stage")
+            broker = request.args.get("broker")
             try:
                 limit = max(1, min(1000, int(limit_raw)))
             except Exception:
                 return jsonify({"ok": False, "error": "limit must be an integer"}), 400
 
-            rows = get_recent_paper_trade_attempts(limit=limit, decision_stage=decision_stage)
+            rows = get_recent_paper_trade_attempts(limit=limit, decision_stage=decision_stage, broker=broker)
             return jsonify({
                 "ok": True,
                 "count": len(rows),
                 "limit": limit,
                 "decision_stage": decision_stage,
+                "broker": broker,
                 "rows": rows,
             })
         except Exception as e:
@@ -162,16 +164,18 @@ def register_health_routes(
     def paper_trade_attempts_rejections():
         try:
             limit_raw = request.args.get("limit", "100")
+            broker = request.args.get("broker")
             try:
                 limit = max(1, min(1000, int(limit_raw)))
             except Exception:
                 return jsonify({"ok": False, "error": "limit must be an integer"}), 400
 
-            rows = get_recent_paper_trade_rejections(limit=limit)
+            rows = get_recent_paper_trade_rejections(limit=limit, broker=broker)
             return jsonify({
                 "ok": True,
                 "count": len(rows),
                 "limit": limit,
+                "broker": broker,
                 "rows": rows,
             })
         except Exception as e:
@@ -182,15 +186,17 @@ def register_health_routes(
     def paper_trade_attempts_daily_summary():
         try:
             limit_days_raw = request.args.get("limit_days", "7")
+            broker = request.args.get("broker")
             try:
                 limit_days = max(1, min(90, int(limit_days_raw)))
             except Exception:
                 return jsonify({"ok": False, "error": "limit_days must be an integer"}), 400
 
-            rows = get_paper_trade_attempt_daily_summary(limit_days=limit_days)
+            rows = get_paper_trade_attempt_daily_summary(limit_days=limit_days, broker=broker)
             return jsonify({
                 "ok": True,
                 "limit_days": limit_days,
+                "broker": broker,
                 "count": len(rows),
                 "rows": rows,
             })
@@ -202,15 +208,17 @@ def register_health_routes(
     def paper_trade_attempts_hourly_summary():
         try:
             limit_days_raw = request.args.get("limit_days", "7")
+            broker = request.args.get("broker")
             try:
                 limit_days = max(1, min(90, int(limit_days_raw)))
             except Exception:
                 return jsonify({"ok": False, "error": "limit_days must be an integer"}), 400
 
-            rows = get_paper_trade_attempt_hourly_summary(limit_days=limit_days)
+            rows = get_paper_trade_attempt_hourly_summary(limit_days=limit_days, broker=broker)
             return jsonify({
                 "ok": True,
                 "limit_days": limit_days,
+                "broker": broker,
                 "count": len(rows),
                 "rows": rows,
             })
