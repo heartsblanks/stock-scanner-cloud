@@ -6,6 +6,7 @@ from services.scan_service import (
     _apply_hard_notional_cap,
     _apply_confidence_loss_sizing,
     _apply_minimum_viable_position_sizing,
+    execute_full_scan,
     _get_live_alpaca_account_equity,
 )
 
@@ -82,6 +83,60 @@ class ScanServiceSizingTests(unittest.TestCase):
             equity = _get_live_alpaca_account_equity({})
 
         self.assertAlmostEqual(equity, 12345.67, places=2)
+
+    def test_execute_full_scan_defaults_attempt_broker_to_active_broker(self):
+        inserted_attempts = []
+
+        def fake_run_scan(account_size, mode, current_open_positions=0, current_open_exposure=0.0):
+            return (
+                [],
+                [
+                    {
+                        "decision": "INVALID",
+                        "final_reason": "Opening range not available.",
+                        "metrics": {
+                            "symbol": "CLOV",
+                            "direction": "BUY",
+                        },
+                    }
+                ],
+                True,
+                0,
+                {"SP500": "NEUTRAL", "NASDAQ": "NEUTRAL"},
+                f"IBKR_{mode.upper()}",
+            )
+
+        result = execute_full_scan(
+            {"mode": "third", "paper_trade": True, "scan_source": "SCHEDULED"},
+            market_time_check=lambda: (True, "Market timing OK."),
+            build_scan_id=lambda timestamp_utc, mode: f"{mode}-scan",
+            market_phase_from_timestamp=lambda timestamp_utc: "MIDDAY",
+            append_signal_log=lambda row: None,
+            safe_insert_paper_trade_attempt=lambda **kwargs: inserted_attempts.append(kwargs),
+            safe_insert_scan_run=lambda **kwargs: None,
+            parse_iso_utc=lambda ts: ts,
+            run_scan=fake_run_scan,
+            trade_to_dict=lambda trade: trade,
+            debug_to_dict=lambda evaluation: evaluation,
+            paper_candidate_from_evaluation=lambda evaluation: None,
+            evaluate_symbol=lambda *args, **kwargs: None,
+            get_latest_open_paper_trade_for_symbol=lambda symbol: None,
+            is_symbol_in_paper_cooldown=lambda symbol, now_utc: (False, ""),
+            place_paper_orders_from_trade=lambda trade: [],
+            append_trade_log=lambda row: None,
+            safe_insert_trade_event=lambda **kwargs: None,
+            safe_insert_broker_order=lambda **kwargs: None,
+            upsert_trade_lifecycle=lambda **kwargs: None,
+            to_float_or_none=lambda value: float(value) if value not in (None, "") else None,
+            MIN_CONFIDENCE=75,
+            resolve_account_size=lambda payload: 1000000.0,
+            active_broker="IBKR",
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(inserted_attempts), 1)
+        self.assertEqual(inserted_attempts[0]["broker"], "IBKR")
+        self.assertEqual(inserted_attempts[0]["symbol"], "CLOV")
 
 
 if __name__ == "__main__":

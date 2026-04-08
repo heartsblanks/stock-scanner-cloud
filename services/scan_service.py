@@ -408,6 +408,7 @@ def execute_full_scan(
         broker_rejection_reason: str | None = None,
     ) -> None:
         attempt_metrics = metrics or {}
+        normalized_broker = str(broker or active_broker or "").strip().upper() or "ALPACA"
         safe_insert_paper_trade_attempt(
             timestamp_utc=parse_iso_utc(timestamp_utc),
             scan_id=scan_id,
@@ -437,7 +438,7 @@ def execute_full_scan(
             loss_multiplier=to_float_or_none(attempt_metrics.get("loss_multiplier", "")),
             final_multiplier=to_float_or_none(attempt_metrics.get("final_multiplier", "")),
             placed=placed,
-            broker=broker,
+            broker=normalized_broker,
             broker_order_id=broker_order_id,
             broker_parent_order_id=broker_parent_order_id,
             broker_rejection_reason=broker_rejection_reason,
