@@ -176,6 +176,8 @@ Parallel IBKR evaluation strategy:
 - branch strategy: do IBKR work on a dedicated branch so broker-abstraction and bridge changes do not destabilize the current production path
 - hosting approach: use a GCP VM for the IBKR sidecar stack because Cloud Run is not a good fit for a persistent IB Gateway session
 - current implementation status: the first broker-abstraction layer is now in place, with Alpaca wired behind a generic paper-broker adapter and the IBKR side now upgraded from a placeholder to a bridge-based contract that expects a VM-hosted HTTP service
+- current implementation status: a minimal `ibkr_bridge/` Flask service scaffold now exists in the repo so the GCP VM side has a concrete starting point and endpoint contract
+- current implementation status: VM deployment scaffolding now exists under `ibkr_bridge/systemd/` with a service unit, env template, and bridge runbook for the GCP VM path
 - target architecture:
 - `1.` Cloud Run remains the main app, dashboard, scheduler, and Neon-backed API
 - `2.` a GCP VM runs IB Gateway plus a small authenticated IBKR bridge service
