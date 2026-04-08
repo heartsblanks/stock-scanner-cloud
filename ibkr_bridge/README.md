@@ -59,7 +59,9 @@ Cost control recommendation:
   - Scheduler calls a tiny controller endpoint or script on weekdays
   - that controller checks the NYSE calendar
   - only then starts or stops the VM
-- for now, the scheduled jobs are weekday-based only
+- the current repo now includes that controller on the main Cloud Run app at:
+  - `POST /scheduler/ibkr-vm-control`
+- the scheduler setup script now points the weekday jobs at that controller instead of calling Compute Engine directly
 
 ## GCP VM Runbook
 

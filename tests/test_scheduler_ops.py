@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 
 from orchestration.scheduler_ops import (
     build_market_ops_plan,
+    execute_ibkr_vm_control,
     execute_post_close_ops,
     should_run_eod_close,
     should_run_market_scan,
@@ -80,6 +81,75 @@ class SchedulerOpsTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["results"]["analyze_paper_trades"]["status_code"], 200)
         self.assertEqual(result["results"]["analyze_signals"]["status_code"], 200)
+
+    def test_ibkr_vm_start_skips_on_holiday(self):
+        now_ny = datetime(2026, 7, 4, 9, 15, tzinfo=NY_TZ)
+        result = execute_ibkr_vm_control(
+            now_ny=now_ny,
+            action="start",
+            is_trading_day=False,
+            holiday_message="US market closed today (NYSE holiday or weekend).",
+            get_instance_status=lambda: "TERMINATED",
+            start_instance=lambda: {"unexpected": True},
+            stop_instance=lambda: {"unexpected": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["noop"])
+        self.assertTrue(result["skipped"])
+        self.assertEqual(result["instance_status_before"], "TERMINATED")
+        self.assertIn("market closed", result["reason"].lower())
+
+    def test_ibkr_vm_start_runs_on_trading_day(self):
+        now_ny = datetime(2026, 4, 8, 9, 15, tzinfo=NY_TZ)
+        result = execute_ibkr_vm_control(
+            now_ny=now_ny,
+            action="start",
+            is_trading_day=True,
+            holiday_message="US market is scheduled to trade today.",
+            get_instance_status=lambda: "TERMINATED",
+            start_instance=lambda: {"name": "operation-123", "status": "PENDING"},
+            stop_instance=lambda: {"unexpected": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["noop"])
+        self.assertFalse(result["skipped"])
+        self.assertEqual(result["results"]["start"]["status_code"], 200)
+        self.assertEqual(result["instance_status_before"], "TERMINATED")
+        self.assertEqual(result["instance_status_after"], "STARTING")
+
+    def test_ibkr_vm_start_noops_when_already_running(self):
+        now_ny = datetime(2026, 4, 8, 9, 15, tzinfo=NY_TZ)
+        result = execute_ibkr_vm_control(
+            now_ny=now_ny,
+            action="start",
+            is_trading_day=True,
+            holiday_message=None,
+            get_instance_status=lambda: "RUNNING",
+            start_instance=lambda: {"unexpected": True},
+            stop_instance=lambda: {"unexpected": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["noop"])
+        self.assertEqual(result["reason"], "IBKR VM is already running.")
+
+    def test_ibkr_vm_stop_noops_when_already_stopped(self):
+        now_ny = datetime(2026, 4, 8, 17, 0, tzinfo=NY_TZ)
+        result = execute_ibkr_vm_control(
+            now_ny=now_ny,
+            action="stop",
+            is_trading_day=True,
+            holiday_message=None,
+            get_instance_status=lambda: "TERMINATED",
+            start_instance=lambda: {"unexpected": True},
+            stop_instance=lambda: {"unexpected": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["noop"])
+        self.assertEqual(result["reason"], "IBKR VM is already stopped.")
 
 
 if __name__ == "__main__":

@@ -62,6 +62,7 @@ def register_health_routes(
                 "/scheduler/market-ops",
                 "/scheduler/daily-post-close",
                 "/scheduler/maintenance",
+                "/scheduler/ibkr-vm-control",
             ],
         })
 

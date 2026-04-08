@@ -3,7 +3,9 @@ from datetime import datetime
 
 from flask import Flask
 from flask_cors import CORS
+import requests
 from core.logging_utils import log_exception
+from core.logging_utils import log_info
 from alpaca.reconcile import run_reconciliation, upload_file_to_gcs
 from analytics.trade_analysis import run_trade_analysis, upload_file_to_gcs as upload_analysis_file_to_gcs
 from analytics.signal_analysis import run_signal_analysis, upload_file_to_gcs as upload_signal_analysis_file_to_gcs
@@ -82,6 +84,7 @@ from orchestration.app_orchestration import (
 )
 from orchestration.scheduler_ops import (
     execute_maintenance_ops as build_execute_maintenance_ops,
+    execute_ibkr_vm_control as build_execute_ibkr_vm_control,
     execute_market_ops as build_execute_market_ops,
     execute_post_close_ops as build_execute_post_close_ops,
 )
@@ -92,6 +95,7 @@ from services.scan_service import execute_full_scan
 from services.trade_service import execute_close_all_paper_positions
 
 from analytics.trade_scan import (
+    holiday_and_early_close_status,
     run_scan,
     evaluate_symbol,
     market_time_check,
@@ -420,6 +424,82 @@ def run_maintenance_scheduler(*, now_ny: datetime, retention_days: int = 30):
     )
 
 
+def _metadata_access_token() -> str:
+    response = requests.get(
+        "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+        headers={"Metadata-Flavor": "Google"},
+        timeout=10,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    token = str(payload.get("access_token", "")).strip()
+    if not token:
+        raise RuntimeError("Could not resolve GCP access token from metadata server.")
+    return token
+
+
+def _ibkr_vm_settings() -> tuple[str, str, str]:
+    project = (
+        str(os.getenv("IBKR_VM_PROJECT", "")).strip()
+        or str(os.getenv("GOOGLE_CLOUD_PROJECT", "")).strip()
+        or str(os.getenv("GCP_PROJECT", "")).strip()
+        or "stock-scanner-490821"
+    )
+    zone = str(os.getenv("IBKR_VM_ZONE", "europe-west1-b")).strip() or "europe-west1-b"
+    instance = str(os.getenv("IBKR_VM_INSTANCE_NAME", "ibkr-bridge-vm")).strip() or "ibkr-bridge-vm"
+    return project, zone, instance
+
+
+def _ibkr_vm_compute_api_request(method: str, suffix: str) -> dict:
+    access_token = _metadata_access_token()
+    project, zone, instance = _ibkr_vm_settings()
+    url = (
+        "https://compute.googleapis.com/compute/v1/projects/"
+        f"{project}/zones/{zone}/instances/{instance}{suffix}"
+    )
+    response = requests.request(
+        method,
+        url,
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=20,
+    )
+    response.raise_for_status()
+    if not response.content:
+        return {}
+    return response.json()
+
+
+def _get_ibkr_vm_status() -> str | None:
+    payload = _ibkr_vm_compute_api_request("GET", "")
+    return str(payload.get("status", "")).strip().upper() or None
+
+
+def _start_ibkr_vm() -> dict:
+    payload = _ibkr_vm_compute_api_request("POST", "/start")
+    log_info("requested ibkr vm start", component="scheduler", operation="ibkr-vm-control")
+    return payload
+
+
+def _stop_ibkr_vm() -> dict:
+    payload = _ibkr_vm_compute_api_request("POST", "/stop")
+    log_info("requested ibkr vm stop", component="scheduler", operation="ibkr-vm-control")
+    return payload
+
+
+def run_ibkr_vm_control_scheduler(*, now_ny: datetime, action: str, force: bool = False):
+    is_trading_day, _is_early_close, _market_open_ny, _market_close_ny, holiday_message = holiday_and_early_close_status(now_ny)
+    return build_execute_ibkr_vm_control(
+        now_ny=now_ny,
+        action=action,
+        force=force,
+        is_trading_day=is_trading_day,
+        holiday_message=holiday_message,
+        get_instance_status=_get_ibkr_vm_status,
+        start_instance=_start_ibkr_vm,
+        stop_instance=_stop_ibkr_vm,
+    )
+
+
 register_health_routes(
     app,
     db_healthcheck=db_healthcheck,
@@ -505,6 +585,7 @@ register_scheduler_routes(
     execute_market_ops=run_market_ops_scheduler,
     execute_post_close_ops=run_daily_post_close_scheduler,
     execute_maintenance_ops=run_maintenance_scheduler,
+    execute_ibkr_vm_control=run_ibkr_vm_control_scheduler,
 )
 register_legacy_reconcile_routes(
     app,
