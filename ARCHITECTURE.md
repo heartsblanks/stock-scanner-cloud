@@ -175,11 +175,20 @@ Parallel IBKR evaluation strategy:
 - implementation approach: keep the current Alpaca paper-trading path stable while building IBKR support in parallel for comparison only
 - branch strategy: do IBKR work on a dedicated branch so broker-abstraction and bridge changes do not destabilize the current production path
 - hosting approach: use a GCP VM for the IBKR sidecar stack because Cloud Run is not a good fit for a persistent IB Gateway session
-- current implementation status: the first broker-abstraction layer is now in place, with Alpaca wired behind a generic paper-broker adapter and an IBKR placeholder adapter reserved for the future bridge integration
+- current implementation status: the first broker-abstraction layer is now in place, with Alpaca wired behind a generic paper-broker adapter and the IBKR side now upgraded from a placeholder to a bridge-based contract that expects a VM-hosted HTTP service
 - target architecture:
 - `1.` Cloud Run remains the main app, dashboard, scheduler, and Neon-backed API
 - `2.` a GCP VM runs IB Gateway plus a small authenticated IBKR bridge service
 - `3.` the main app talks to the bridge service rather than directly to IB Gateway
+- expected bridge contract:
+- `GET /account`
+- `GET /positions`
+- `GET /orders/open`
+- `GET /orders/{order_id}`
+- `GET /orders/{order_id}/sync`
+- `POST /orders/paper-bracket`
+- `POST /orders/cancel-by-symbol`
+- `POST /positions/close`
 - implementation order:
 - `1.` add a broker interface/abstraction layer in the app
 - `2.` refactor the existing Alpaca path to implement that interface without changing behavior
