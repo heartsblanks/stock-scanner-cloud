@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -38,7 +39,14 @@ class IbkrGatewayClient:
         self.config = config or get_ibkr_connection_config()
         self._ib = None
 
+    def _ensure_event_loop(self) -> None:
+        try:
+            asyncio.get_event_loop()
+        except RuntimeError:
+            asyncio.set_event_loop(asyncio.new_event_loop())
+
     def _load_ib_class(self):
+        self._ensure_event_loop()
         try:
             from ib_insync import IB
         except ImportError as exc:
@@ -49,6 +57,7 @@ class IbkrGatewayClient:
         return IB
 
     def _connect(self):
+        self._ensure_event_loop()
         if self._ib is not None and self._ib.isConnected():
             return self._ib
 

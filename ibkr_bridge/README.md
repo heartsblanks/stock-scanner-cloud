@@ -83,7 +83,7 @@ pip install -r requirements.txt
 
 If you use the venv path in production, update the `ExecStart` path in the systemd unit to:
 ```bash
-/opt/stock-scanner-cloud/.venv/bin/python /opt/stock-scanner-cloud/ibkr_bridge/app.py
+/opt/stock-scanner-cloud/.venv/bin/python -m ibkr_bridge.app
 ```
 
 ### 6. Install the bridge env file
