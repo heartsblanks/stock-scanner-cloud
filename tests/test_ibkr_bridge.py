@@ -121,6 +121,26 @@ class IbkrBridgeApiTests(unittest.TestCase):
         self.assertEqual(payload["broker"], "IBKR")
         self.assertEqual(payload["broker_order_id"], "3001")
 
+    def test_positions_route_logs_success_summary(self):
+        with patch("ibkr_bridge.app.get_ibkr_client", return_value=FakeIbkrClient()):
+            with patch("ibkr_bridge.app.log_info") as mock_log_info:
+                response = self.client.get("/positions")
+
+        self.assertEqual(response.status_code, 200)
+        mock_log_info.assert_called_once()
+        self.assertEqual(mock_log_info.call_args.args[0], "IBKR bridge positions fetched")
+        self.assertEqual(mock_log_info.call_args.kwargs["operation"], "get_positions")
+        self.assertEqual(mock_log_info.call_args.kwargs["count"], 1)
+
+    def test_runtime_error_logs_exception(self):
+        with patch("ibkr_bridge.app.get_ibkr_client", side_effect=RuntimeError("gateway unavailable")):
+            with patch("ibkr_bridge.app.log_exception") as mock_log_exception:
+                response = self.client.get("/positions")
+
+        self.assertEqual(response.status_code, 503)
+        mock_log_exception.assert_called_once()
+        self.assertEqual(mock_log_exception.call_args.args[0], "IBKR bridge runtime error")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,10 +5,24 @@ from functools import wraps
 from typing import Any, Callable
 
 from flask import Flask, jsonify, request
+from core.logging_utils import log_exception, log_info
 from ibkr_bridge.connector import get_ibkr_client
 
 
 app = Flask(__name__)
+
+
+def _truthy_env(name: str, default: bool = False) -> bool:
+    raw = str(os.getenv(name, str(default))).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _success_audit_enabled() -> bool:
+    return _truthy_env("ENABLE_IBKR_BRIDGE_SUCCESS_AUDIT", True)
+
+
+def _full_payload_audit_enabled() -> bool:
+    return _truthy_env("ENABLE_IBKR_BRIDGE_FULL_PAYLOAD_AUDIT", False)
 
 
 def _bridge_token() -> str:
@@ -62,6 +76,21 @@ def service_unavailable(message: str, *, operation: str, status_code: int = 503)
     )
 
 
+def _audit_success(message: str, *, operation: str, payload: Any, summary: dict[str, Any] | None = None) -> None:
+    if not _success_audit_enabled():
+        return
+
+    fields: dict[str, Any] = {
+        "component": "ibkr_bridge",
+        "operation": operation,
+    }
+    if summary:
+        fields.update(summary)
+    if _full_payload_audit_enabled():
+        fields["payload"] = payload
+    log_info(message, **fields)
+
+
 @app.get("/health")
 def health():
     client = get_ibkr_client()
@@ -72,21 +101,64 @@ def _run_bridge_operation(operation: str, fn: Callable[[], Any]):
     try:
         return jsonify(fn())
     except RuntimeError as exc:
+        log_exception(
+            "IBKR bridge runtime error",
+            exc,
+            component="ibkr_bridge",
+            operation=operation,
+            method=request.method,
+            path=request.path,
+            remote_addr=request.remote_addr,
+        )
         return service_unavailable(str(exc), operation=operation)
     except Exception as exc:
+        log_exception(
+            "IBKR bridge unexpected error",
+            exc,
+            component="ibkr_bridge",
+            operation=operation,
+            method=request.method,
+            path=request.path,
+            remote_addr=request.remote_addr,
+        )
         return service_unavailable(str(exc), operation=operation)
 
 
 @app.get("/account")
 @require_auth
 def get_account():
-    return _run_bridge_operation("get_account", lambda: get_ibkr_client().get_account())
+    def fetch_account():
+        payload = get_ibkr_client().get_account()
+        _audit_success(
+            "IBKR bridge account fetched",
+            operation="get_account",
+            payload=payload,
+            summary={
+                "account_id": payload.get("account_id"),
+                "equity": payload.get("equity"),
+                "buying_power": payload.get("buying_power"),
+                "status": payload.get("status"),
+            },
+        )
+        return payload
+
+    return _run_bridge_operation("get_account", fetch_account)
 
 
 @app.get("/positions")
 @require_auth
 def get_positions():
-    return _run_bridge_operation("get_positions", lambda: get_ibkr_client().get_positions())
+    def fetch_positions():
+        payload = get_ibkr_client().get_positions()
+        _audit_success(
+            "IBKR bridge positions fetched",
+            operation="get_positions",
+            payload=payload,
+            summary={"count": len(payload or [])},
+        )
+        return payload
+
+    return _run_bridge_operation("get_positions", fetch_positions)
 
 
 @app.get("/market-data/intraday")
@@ -100,7 +172,19 @@ def get_intraday_market_data():
             outputsize = int(outputsize_raw) if str(outputsize_raw).strip() else None
         except Exception:
             outputsize = None
-        return get_ibkr_client().get_intraday_candles(symbol, interval=interval, outputsize=outputsize)
+        payload = get_ibkr_client().get_intraday_candles(symbol, interval=interval, outputsize=outputsize)
+        _audit_success(
+            "IBKR bridge intraday candles fetched",
+            operation="get_intraday_market_data",
+            payload=payload,
+            summary={
+                "symbol": symbol,
+                "interval": interval,
+                "outputsize": outputsize,
+                "count": len(payload or []),
+            },
+        )
+        return payload
 
     return _run_bridge_operation("get_intraday_market_data", fetch_intraday)
 
@@ -108,7 +192,17 @@ def get_intraday_market_data():
 @app.get("/orders/open")
 @require_auth
 def get_open_orders():
-    return _run_bridge_operation("get_open_orders", lambda: get_ibkr_client().get_open_orders())
+    def fetch_open_orders():
+        payload = get_ibkr_client().get_open_orders()
+        _audit_success(
+            "IBKR bridge open orders fetched",
+            operation="get_open_orders",
+            payload=payload,
+            summary={"count": len(payload or [])},
+        )
+        return payload
+
+    return _run_bridge_operation("get_open_orders", fetch_open_orders)
 
 
 @app.get("/orders/<order_id>")
@@ -118,6 +212,16 @@ def get_order(order_id: str):
         order = get_ibkr_client().get_order(order_id)
         if not order:
             raise RuntimeError(f"Order '{order_id}' was not found in open IBKR trades.")
+        _audit_success(
+            "IBKR bridge order fetched",
+            operation=f"get_order:{order_id}",
+            payload=order,
+            summary={
+                "order_id": order.get("id"),
+                "symbol": order.get("symbol"),
+                "status": order.get("status"),
+            },
+        )
         return order
 
     return _run_bridge_operation(f"get_order:{order_id}", build_order)
@@ -129,12 +233,29 @@ def sync_order(order_id: str):
     def sync_open_order():
         order = get_ibkr_client().get_order(order_id)
         if order:
+            _audit_success(
+                "IBKR bridge order synced",
+                operation=f"sync_order:{order_id}",
+                payload=order,
+                summary={
+                    "order_id": order.get("id"),
+                    "symbol": order.get("symbol"),
+                    "status": order.get("status"),
+                },
+            )
             return order
-        return {
+        payload = {
             "id": str(order_id).strip(),
             "status": "unknown",
             "message": "Order was not found in current open IBKR trades.",
         }
+        _audit_success(
+            "IBKR bridge order sync returned unknown",
+            operation=f"sync_order:{order_id}",
+            payload=payload,
+            summary={"order_id": payload["id"], "status": payload["status"]},
+        )
+        return payload
 
     return _run_bridge_operation(f"sync_order:{order_id}", sync_open_order)
 
@@ -147,7 +268,19 @@ def place_paper_bracket():
         trade = payload.get("trade") or {}
         max_notional_raw = payload.get("max_notional")
         max_notional = None if max_notional_raw in (None, "") else float(max_notional_raw)
-        return get_ibkr_client().place_paper_bracket_order(trade, max_notional=max_notional)
+        result = get_ibkr_client().place_paper_bracket_order(trade, max_notional=max_notional)
+        _audit_success(
+            "IBKR bridge paper bracket processed",
+            operation="place_paper_bracket",
+            payload=result,
+            summary={
+                "symbol": result.get("symbol"),
+                "placed": result.get("placed"),
+                "reason": result.get("reason"),
+                "broker_order_id": result.get("broker_order_id") or result.get("order_id"),
+            },
+        )
+        return result
 
     return _run_bridge_operation("place_paper_bracket", place_bracket)
 
@@ -159,11 +292,18 @@ def cancel_orders_by_symbol():
         payload = request.get_json(silent=True) or {}
         symbol = str(payload.get("symbol", "")).strip().upper()
         canceled_order_ids = get_ibkr_client().cancel_orders_by_symbol(symbol)
-        return {
+        result = {
             "ok": True,
             "symbol": symbol,
             "canceled_order_ids": canceled_order_ids,
         }
+        _audit_success(
+            "IBKR bridge cancel-by-symbol processed",
+            operation="cancel_orders_by_symbol",
+            payload=result,
+            summary={"symbol": symbol, "canceled_count": len(canceled_order_ids)},
+        )
+        return result
 
     return _run_bridge_operation("cancel_orders_by_symbol", cancel_for_symbol)
 
@@ -174,7 +314,19 @@ def close_position():
     def close_for_symbol():
         payload = request.get_json(silent=True) or {}
         symbol = str(payload.get("symbol", "")).strip().upper()
-        return get_ibkr_client().close_position(symbol)
+        result = get_ibkr_client().close_position(symbol)
+        _audit_success(
+            "IBKR bridge close-position processed",
+            operation="close_position",
+            payload=result,
+            summary={
+                "symbol": symbol,
+                "placed": result.get("placed"),
+                "reason": result.get("reason"),
+                "order_id": result.get("order_id"),
+            },
+        )
+        return result
 
     return _run_bridge_operation("close_position", close_for_symbol)
 
