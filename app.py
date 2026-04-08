@@ -292,11 +292,47 @@ def fetch_ibkr_intraday(symbol: str, interval: str = "1min", outputsize: int | N
     params: dict[str, Any] = {"symbol": symbol, "interval": interval}
     if outputsize is not None:
         params["outputsize"] = int(outputsize)
-    return ibkr_bridge_get(
-        "/market-data/intraday",
-        params=params,
-        timeout=int(os.getenv("IBKR_BRIDGE_MARKET_DATA_TIMEOUT_SECONDS", "12")),
-    ) or []
+    timeout_seconds = int(os.getenv("IBKR_BRIDGE_MARKET_DATA_TIMEOUT_SECONDS", "12"))
+    log_info(
+        "IBKR intraday fetch requested",
+        component="app",
+        operation="fetch_ibkr_intraday",
+        broker="IBKR",
+        symbol=symbol,
+        interval=interval,
+        outputsize=outputsize,
+        timeout=timeout_seconds,
+    )
+    try:
+        candles = ibkr_bridge_get(
+            "/market-data/intraday",
+            params=params,
+            timeout=timeout_seconds,
+        ) or []
+        log_info(
+            "IBKR intraday fetch completed",
+            component="app",
+            operation="fetch_ibkr_intraday",
+            broker="IBKR",
+            symbol=symbol,
+            interval=interval,
+            outputsize=outputsize,
+            candle_count=len(candles),
+        )
+        return candles
+    except Exception as exc:
+        log_exception(
+            "IBKR intraday fetch failed",
+            exc,
+            component="app",
+            operation="fetch_ibkr_intraday",
+            broker="IBKR",
+            symbol=symbol,
+            interval=interval,
+            outputsize=outputsize,
+            timeout=timeout_seconds,
+        )
+        raise
 
 
 def env_flag(name: str, default: str = "true") -> bool:
