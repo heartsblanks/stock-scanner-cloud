@@ -193,10 +193,26 @@ def resolve_alpaca_account_size(payload: dict[str, Any]) -> float:
 
 
 def resolve_ibkr_account_size(payload: dict[str, Any]) -> float:
-    account = IBKR_PAPER_BROKER.get_account()
-    equity = _account_equity_from_broker_account(account)
-    if equity > 0:
-        return equity
+    fallback = to_float_or_none(
+        payload.get("ibkr_account_size")
+        or payload.get("shadow_account_size")
+        or os.getenv("IBKR_SHADOW_ACCOUNT_SIZE_FALLBACK")
+        or "1000000"
+    )
+    try:
+        account = IBKR_PAPER_BROKER.get_account()
+        equity = _account_equity_from_broker_account(account)
+        if equity > 0:
+            return equity
+    except Exception as exc:
+        log_exception(
+            "Failed to resolve IBKR account equity; using fallback",
+            exc,
+            component="app",
+            operation="resolve_ibkr_account_size",
+        )
+    if fallback is not None and fallback > 0:
+        return float(fallback)
     raise ValueError("Unable to resolve IBKR account equity")
 
 
@@ -225,7 +241,16 @@ def get_current_open_position_state_for_broker(broker) -> tuple[int, float]:
 
 
 def get_risk_exposure_summary_for_broker(broker) -> dict[str, Any]:
-    account_size = _account_equity_from_broker_account(broker.get_account())
+    account_size = 0.0
+    try:
+        account_size = _account_equity_from_broker_account(broker.get_account())
+    except Exception as exc:
+        log_exception(
+            "Failed to resolve broker account for risk summary",
+            exc,
+            component="app",
+            operation="get_risk_exposure_summary_for_broker",
+        )
     open_count, open_exposure = get_current_open_position_state_for_broker(broker)
     return {
         "account_size": account_size,
@@ -244,7 +269,11 @@ def fetch_ibkr_intraday(symbol: str, interval: str = "1min", outputsize: int | N
     params: dict[str, Any] = {"symbol": symbol, "interval": interval}
     if outputsize is not None:
         params["outputsize"] = int(outputsize)
-    return ibkr_bridge_get("/market-data/intraday", params=params) or []
+    return ibkr_bridge_get(
+        "/market-data/intraday",
+        params=params,
+        timeout=int(os.getenv("IBKR_BRIDGE_MARKET_DATA_TIMEOUT_SECONDS", "12")),
+    ) or []
 
 
 def env_flag(name: str, default: str = "true") -> bool:

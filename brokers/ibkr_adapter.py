@@ -4,6 +4,15 @@ from typing import Any
 
 from brokers.ibkr_bridge_client import ibkr_bridge_get, ibkr_bridge_post, ibkr_bridge_enabled
 
+
+def _bridge_timeout(env_name: str, default: int) -> int:
+    import os
+
+    try:
+        return int(os.getenv(env_name, str(default)))
+    except Exception:
+        return default
+
 class IbkrPaperBroker:
     name = "ibkr"
 
@@ -16,15 +25,15 @@ class IbkrPaperBroker:
 
     def get_account(self) -> dict[str, Any]:
         self._ensure_bridge_enabled()
-        return ibkr_bridge_get("/account")
+        return ibkr_bridge_get("/account", timeout=_bridge_timeout("IBKR_BRIDGE_ACCOUNT_TIMEOUT_SECONDS", 5))
 
     def get_open_positions(self) -> list[dict[str, Any]]:
         self._ensure_bridge_enabled()
-        return ibkr_bridge_get("/positions") or []
+        return ibkr_bridge_get("/positions", timeout=_bridge_timeout("IBKR_BRIDGE_POSITIONS_TIMEOUT_SECONDS", 8)) or []
 
     def get_open_orders(self) -> list[dict[str, Any]]:
         self._ensure_bridge_enabled()
-        return ibkr_bridge_get("/orders/open") or []
+        return ibkr_bridge_get("/orders/open", timeout=_bridge_timeout("IBKR_BRIDGE_ORDERS_TIMEOUT_SECONDS", 8)) or []
 
     def cancel_open_orders_for_symbol(self, symbol: str) -> list[str]:
         self._ensure_bridge_enabled()

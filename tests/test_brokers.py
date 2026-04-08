@@ -53,7 +53,7 @@ class BrokerRegistryTests(unittest.TestCase):
                 result = broker.get_account()
 
         self.assertEqual(result, {"equity": "100000"})
-        mock_get.assert_called_once_with("/account")
+        mock_get.assert_called_once_with("/account", timeout=5)
 
 
 if __name__ == "__main__":
