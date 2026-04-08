@@ -45,6 +45,13 @@ Planned next work:
 - implement order sync / reconciliation helpers
 - add a small systemd-friendly deployment/runbook for the GCP VM
 
+Cost control recommendation:
+- keep the VM scheduled only for the trading window instead of running 24/7
+- recommended scheduler window:
+  - start VM at `9:15 AM ET`
+  - stop VM at `5:00 PM ET`
+- keep in mind that IB Gateway login is still manual right now, so the VM can auto-start but IB Gateway still needs a fresh daily paper-session login until that is automated
+
 ## GCP VM Runbook
 
 ### 1. Create the VM
@@ -127,3 +134,15 @@ When the VM bridge is reachable and implemented, configure the main app with:
 For parallel evaluation, keep:
 - `PAPER_BROKER=alpaca`
 - and use shadow/compare flags separately until IBKR is proven stable
+
+## VM Start/Stop Automation
+
+Use the helper script in [scripts/setup_ibkr_vm_scheduler.sh](/Users/viniththomas/stock-scanner-cloud/scripts/setup_ibkr_vm_scheduler.sh) to create two Cloud Scheduler jobs:
+- `ibkr-vm-start`
+- `ibkr-vm-stop`
+
+Default schedule:
+- start: `15 9 * * 1-5` in `America/New_York`
+- stop: `0 17 * * 1-5` in `America/New_York`
+
+That window leaves time before the open and enough room after the close for post-close comparison work.
