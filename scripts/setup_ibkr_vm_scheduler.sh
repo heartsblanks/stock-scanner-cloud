@@ -44,6 +44,7 @@ echo "Granting Compute Instance Admin role..."
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member="serviceAccount:${SERVICE_ACCOUNT_EMAIL}" \
   --role="roles/compute.instanceAdmin.v1" \
+  --condition=None \
   >/dev/null
 
 echo "Granting Cloud Run Invoker role..."
@@ -63,7 +64,7 @@ if gcloud scheduler jobs describe "${START_JOB_ID}" --project="${PROJECT_ID}" --
     --time-zone="${TIMEZONE}" \
     --uri="${START_URI}" \
     --http-method=POST \
-    --headers="Content-Type=application/json" \
+    --update-headers="Content-Type=application/json" \
     --message-body='{"action":"start"}' \
     --oidc-service-account-email="${SERVICE_ACCOUNT_EMAIL}" \
     --oidc-token-audience="${RUN_BASE_URL}"
@@ -75,7 +76,7 @@ else
     --time-zone="${TIMEZONE}" \
     --uri="${START_URI}" \
     --http-method=POST \
-    --headers="Content-Type=application/json" \
+    --update-headers="Content-Type=application/json" \
     --message-body='{"action":"start"}' \
     --oidc-service-account-email="${SERVICE_ACCOUNT_EMAIL}" \
     --oidc-token-audience="${RUN_BASE_URL}"
@@ -90,7 +91,7 @@ if gcloud scheduler jobs describe "${STOP_JOB_ID}" --project="${PROJECT_ID}" --l
     --time-zone="${TIMEZONE}" \
     --uri="${STOP_URI}" \
     --http-method=POST \
-    --headers="Content-Type=application/json" \
+    --update-headers="Content-Type=application/json" \
     --message-body='{"action":"stop"}' \
     --oidc-service-account-email="${SERVICE_ACCOUNT_EMAIL}" \
     --oidc-token-audience="${RUN_BASE_URL}"
@@ -102,7 +103,7 @@ else
     --time-zone="${TIMEZONE}" \
     --uri="${STOP_URI}" \
     --http-method=POST \
-    --headers="Content-Type=application/json" \
+    --update-headers="Content-Type=application/json" \
     --message-body='{"action":"stop"}' \
     --oidc-service-account-email="${SERVICE_ACCOUNT_EMAIL}" \
     --oidc-token-audience="${RUN_BASE_URL}"
