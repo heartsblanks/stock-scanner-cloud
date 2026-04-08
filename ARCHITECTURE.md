@@ -159,6 +159,40 @@ Current strategy status:
 - pending observation: review whether the `Price is above OR high and above VWAP.` breakout rule is too blunt after a few more live sessions
 - pending observation: monitor whether `No meaningful allocatable capital remains.` mostly disappears now that the oversized-order sizing bug is fixed
 
+Market data migration strategy:
+- current recommendation: stay on Twelve Data for now while strategy quality and symbol-universe quality continue to improve
+- why: live comparisons against recent real trades showed that Twelve Data and Alpaca were close on actual entry-minute prices, so provider mismatch did not look like the main driver of recent losing trades
+- why not Alpaca free `IEX`: live comparisons also showed that Alpaca free `IEX` bars are often sparser in the opening-range window, especially on thinner symbols, which can make opening-range and VWAP logic less reliable than the current setup
+- future implementation 1: migrate trading/account/order integration to `alpaca-py` first, without changing the scanner's market-data source
+- future implementation 2: only evaluate Alpaca as the primary market-data source through a side-by-side validation phase, ideally on paid `SIP` rather than free `IEX`
+- upgrade triggers for paid market data: repeated evidence that entry timing is meaningfully late despite otherwise stable strategy behavior, repeated chart-review cases where missed/late entries trace back to candle timing, or enough strategy stability that data quality becomes the next obvious bottleneck
+- if migration happens later, the intended order is:
+- `1.` keep Twelve Data live while adding Alpaca market-data adapters in parallel
+- `2.` compare OR completeness, VWAP, benchmark direction, and entry timing side by side for multiple sessions
+- `3.` cut over only after the higher-quality feed clearly improves scan quality
+
+Parallel IBKR evaluation strategy:
+- implementation approach: keep the current Alpaca paper-trading path stable while building IBKR support in parallel for comparison only
+- branch strategy: do IBKR work on a dedicated branch so broker-abstraction and bridge changes do not destabilize the current production path
+- hosting approach: use a GCP VM for the IBKR sidecar stack because Cloud Run is not a good fit for a persistent IB Gateway session
+- current implementation status: the first broker-abstraction layer is now in place, with Alpaca wired behind a generic paper-broker adapter and an IBKR placeholder adapter reserved for the future bridge integration
+- target architecture:
+- `1.` Cloud Run remains the main app, dashboard, scheduler, and Neon-backed API
+- `2.` a GCP VM runs IB Gateway plus a small authenticated IBKR bridge service
+- `3.` the main app talks to the bridge service rather than directly to IB Gateway
+- implementation order:
+- `1.` add a broker interface/abstraction layer in the app
+- `2.` refactor the existing Alpaca path to implement that interface without changing behavior
+- `3.` build the IBKR bridge on the VM for paper trading only
+- `4.` add an IBKR adapter in the app for account, orders, positions, cancel, close, sync, and reconcile operations
+- `5.` keep Alpaca as the primary paper broker while IBKR runs in shadow mode
+- `6.` log broker-side comparisons for market data, order acceptance, fill behavior, and lifecycle outcomes
+- comparison goals:
+- `1.` compare market-data completeness and opening-range reliability
+- `2.` compare paper fill behavior and rejection patterns
+- `3.` compare operational overhead, stability, and cost
+- decision point: only consider changing direction after enough parallel sessions show a clear advantage in data quality or execution quality
+
 ### 5.5 Operational checklist
 
 Daily:
@@ -242,6 +276,10 @@ Target direction:
 - `routes/dashboard.py`
 
 ### Broker integration
+- `brokers/`
+  - `base.py`
+  - `alpaca_adapter.py`
+  - `ibkr_adapter.py`
 - `alpaca/`
   - `alpaca_http.py`
   - `alpaca_client.py`

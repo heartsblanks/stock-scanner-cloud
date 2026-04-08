@@ -4,11 +4,10 @@ from datetime import datetime
 from flask import Flask
 from flask_cors import CORS
 from core.logging_utils import log_exception
-from alpaca.paper import place_paper_bracket_order_from_trade, get_open_positions, close_position, cancel_open_orders_for_symbol
-from alpaca.sync import sync_order_by_id, get_order_by_id
 from alpaca.reconcile import run_reconciliation, upload_file_to_gcs
 from analytics.trade_analysis import run_trade_analysis, upload_file_to_gcs as upload_analysis_file_to_gcs
 from analytics.signal_analysis import run_signal_analysis, upload_file_to_gcs as upload_signal_analysis_file_to_gcs
+from brokers import get_paper_broker, get_paper_broker_config
 from core.db import healthcheck as db_healthcheck
 from storage import (
     insert_scan_run,
@@ -104,6 +103,15 @@ PAPER_TRADE_MIN_CONFIDENCE = 70
 
 app = Flask(__name__)
 CORS(app)
+PAPER_BROKER = get_paper_broker()
+PAPER_BROKER_CONFIG = get_paper_broker_config()
+
+place_paper_bracket_order_from_trade = PAPER_BROKER.place_paper_bracket_order_from_trade
+get_open_positions = PAPER_BROKER.get_open_positions
+close_position = PAPER_BROKER.close_position
+cancel_open_orders_for_symbol = PAPER_BROKER.cancel_open_orders_for_symbol
+sync_order_by_id = PAPER_BROKER.sync_order_by_id
+get_order_by_id = PAPER_BROKER.get_order_by_id
 
 
 def env_flag(name: str, default: str = "true") -> bool:

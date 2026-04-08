@@ -5,9 +5,9 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
+from brokers import get_paper_broker
 from core.logging_utils import log_exception
 from core.paper_trade_config import get_paper_trade_limits
-from alpaca.paper import get_open_orders, get_open_positions
 from orchestration.scan_context import NY_TZ, parse_iso_utc, to_float_or_none
 from storage import (
     get_daily_realized_pnl,
@@ -25,6 +25,9 @@ PAPER_TARGET_COOLDOWN_MINUTES = int(os.getenv("PAPER_TARGET_COOLDOWN_MINUTES", "
 PAPER_MANUAL_CLOSE_COOLDOWN_MINUTES = int(os.getenv("PAPER_MANUAL_CLOSE_COOLDOWN_MINUTES", "0"))
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY")
 TWELVEDATA_BASE_URL = "https://api.twelvedata.com/time_series"
+PAPER_BROKER = get_paper_broker()
+get_open_orders = PAPER_BROKER.get_open_orders
+get_open_positions = PAPER_BROKER.get_open_positions
 
 
 def read_trade_rows_for_date(target_date: str) -> list[dict]:
