@@ -183,10 +183,16 @@ Parallel IBKR evaluation strategy:
 - current implementation status: the bridge now also supports the first operational write-path actions for cancel-by-symbol and market close-position flows; paper bracket placement remains deferred
 - current implementation status: holiday-aware VM control is now implemented in the main Cloud Run app through `POST /scheduler/ibkr-vm-control`, which reuses the NYSE calendar before starting the VM on trading days
 - current implementation status: the persistence model is being extended to tag paper-trading rows by broker so Alpaca and IBKR orders, trade events, lifecycles, and attempts can be compared cleanly from the database
+- current implementation status: the scan flow is now being split into two true parallel tracks instead of one shared candidate set, so Alpaca continues to evaluate from Twelve Data while IBKR evaluates from IBKR market data before placing to its own paper account
 - target architecture:
 - `1.` Cloud Run remains the main app, dashboard, scheduler, and Neon-backed API
 - `2.` a GCP VM runs IB Gateway plus a small authenticated IBKR bridge service
-- `3.` the main app talks to the bridge service rather than directly to IB Gateway
+- `3.` Cloud Run reaches the VM over an internal path using a Serverless VPC Access connector plus the VM internal IP, rather than a public bridge URL
+- `4.` the main app talks to the bridge service rather than directly to IB Gateway
+- scan-path split:
+- `1.` Alpaca paper flow uses Twelve Data candles plus Alpaca paper placement
+- `2.` IBKR paper flow uses IBKR market data plus IBKR paper placement
+- `3.` both flows run from the same scheduler invocation and persist separately with broker-tagged records for later comparison
 - VM operating window:
 - `1.` start the VM at `9:15 AM ET`
 - `2.` keep it available through the close and immediate post-close comparison window
