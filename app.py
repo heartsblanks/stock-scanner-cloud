@@ -588,6 +588,21 @@ def handle_scan_request(payload):
             "details": str(exc),
         }
 
+    if isinstance(ibkr_response, dict):
+        log_info(
+            "IBKR shadow scan completed",
+            component="app",
+            operation="handle_scan_request",
+            broker="IBKR",
+            ok=bool(ibkr_response.get("ok", False)),
+            mode=ibkr_payload.get("mode"),
+            error=ibkr_response.get("error"),
+            candidate_count=ibkr_response.get("candidate_count"),
+            placed_count=ibkr_response.get("placed_count"),
+            skipped_count=ibkr_response.get("skipped_count"),
+            scan_id=ibkr_response.get("scan_id"),
+        )
+
     if isinstance(alpaca_response, tuple) or isinstance(ibkr_response, tuple):
         return alpaca_response
 
