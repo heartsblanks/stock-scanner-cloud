@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from core.logging_utils import log_exception, log_info
+
 
 def _to_float(value: Any, default: float = 0.0) -> float:
     try:
@@ -213,18 +215,49 @@ class IbkrGatewayClient:
         ib = self._connect()
         _LimitOrder, _MarketOrder, _StopOrder, Stock = self._load_order_classes()
         contract = Stock(normalized_symbol, "SMART", "USD")
-        ib.qualifyContracts(contract)
-
-        bars = ib.reqHistoricalData(
-            contract,
-            endDateTime="",
-            durationStr="2 D",
-            barSizeSetting=bar_size,
-            whatToShow="TRADES",
-            useRTH=True,
-            formatDate=1,
-            timeout=float(self.config.timeout_seconds),
+        log_info(
+            "IBKR bridge intraday request started",
+            component="ibkr_bridge",
+            operation="get_intraday_candles",
+            symbol=normalized_symbol,
+            interval=interval,
+            outputsize=outputsize,
+            timeout=self.config.timeout_seconds,
         )
+        try:
+            ib.qualifyContracts(contract)
+            log_info(
+                "IBKR bridge contract qualified",
+                component="ibkr_bridge",
+                operation="get_intraday_candles",
+                symbol=normalized_symbol,
+                con_id=getattr(contract, "conId", None),
+                exchange=getattr(contract, "exchange", None),
+                primary_exchange=getattr(contract, "primaryExchange", None),
+            )
+
+            bars = ib.reqHistoricalData(
+                contract,
+                endDateTime="",
+                durationStr="2 D",
+                barSizeSetting=bar_size,
+                whatToShow="TRADES",
+                useRTH=True,
+                formatDate=1,
+                timeout=float(self.config.timeout_seconds),
+            )
+        except Exception as exc:
+            log_exception(
+                "IBKR bridge intraday request failed",
+                exc,
+                component="ibkr_bridge",
+                operation="get_intraday_candles",
+                symbol=normalized_symbol,
+                interval=interval,
+                outputsize=outputsize,
+                timeout=self.config.timeout_seconds,
+            )
+            raise
 
         normalized: list[dict[str, Any]] = []
         trimmed_bars = list(bars or [])
@@ -245,6 +278,15 @@ class IbkrGatewayClient:
                 "close": _to_float(getattr(bar, "close", 0.0)),
                 "volume": _to_float(getattr(bar, "volume", 0.0)),
             })
+        log_info(
+            "IBKR bridge intraday request completed",
+            component="ibkr_bridge",
+            operation="get_intraday_candles",
+            symbol=normalized_symbol,
+            interval=interval,
+            outputsize=outputsize,
+            count=len(normalized),
+        )
         return normalized
 
     def _normalize_trade(self, trade: Any) -> dict[str, Any]:
