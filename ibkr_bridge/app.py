@@ -5,6 +5,7 @@ from functools import wraps
 from typing import Any, Callable
 
 from flask import Flask, jsonify, request
+from ibkr_bridge.connector import get_ibkr_client
 
 
 app = Flask(__name__)
@@ -47,39 +48,79 @@ def not_implemented(operation: str):
     )
 
 
+def service_unavailable(message: str, *, operation: str, status_code: int = 503):
+    return (
+        jsonify(
+            {
+                "ok": False,
+                "error": "service_unavailable",
+                "operation": operation,
+                "message": message,
+            }
+        ),
+        status_code,
+    )
+
+
 @app.get("/health")
 def health():
-    return jsonify({"ok": True, "service": "ibkr-bridge"})
+    client = get_ibkr_client()
+    return jsonify({"ok": True, "service": "ibkr-bridge", "ibkr": client.health_snapshot()})
+
+
+def _run_bridge_operation(operation: str, fn: Callable[[], Any]):
+    try:
+        return jsonify(fn())
+    except RuntimeError as exc:
+        return service_unavailable(str(exc), operation=operation)
+    except Exception as exc:
+        return service_unavailable(str(exc), operation=operation)
 
 
 @app.get("/account")
 @require_auth
 def get_account():
-    return not_implemented("get_account")
+    return _run_bridge_operation("get_account", lambda: get_ibkr_client().get_account())
 
 
 @app.get("/positions")
 @require_auth
 def get_positions():
-    return not_implemented("get_positions")
+    return _run_bridge_operation("get_positions", lambda: get_ibkr_client().get_positions())
 
 
 @app.get("/orders/open")
 @require_auth
 def get_open_orders():
-    return not_implemented("get_open_orders")
+    return _run_bridge_operation("get_open_orders", lambda: get_ibkr_client().get_open_orders())
 
 
 @app.get("/orders/<order_id>")
 @require_auth
 def get_order(order_id: str):
-    return not_implemented(f"get_order:{order_id}")
+    def build_order():
+        order = get_ibkr_client().get_order(order_id)
+        if not order:
+            raise RuntimeError(f"Order '{order_id}' was not found in open IBKR trades.")
+        return order
+
+    return _run_bridge_operation(f"get_order:{order_id}", build_order)
 
 
 @app.get("/orders/<order_id>/sync")
 @require_auth
 def sync_order(order_id: str):
-    return not_implemented(f"sync_order:{order_id}")
+    def sync_open_order():
+        order = get_ibkr_client().get_order(order_id)
+        if order:
+            return order
+        return {
+            "id": str(order_id).strip(),
+            "status": "unknown",
+            "message": "Order was not found in current open IBKR trades.",
+        }
+
+    return _run_bridge_operation(f"sync_order:{order_id}", sync_open_order)
 
 
 @app.post("/orders/paper-bracket")
@@ -102,4 +143,3 @@ def close_position():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8090")), debug=False)
-

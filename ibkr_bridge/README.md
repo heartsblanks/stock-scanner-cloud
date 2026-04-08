@@ -8,9 +8,9 @@ Purpose:
 - support parallel paper-trading evaluation against the current Alpaca setup
 
 Current status:
-- scaffold only
-- endpoints exist and are authenticated
-- broker connectivity is not implemented yet
+- read-path implementation started
+- authenticated endpoints now support real IBKR reads for account, positions, and open orders
+- write-path endpoints are still scaffolded until IB Gateway connectivity is verified on the VM
 
 Recommended VM layout:
 - VM OS: Ubuntu on GCP Compute Engine
@@ -23,6 +23,10 @@ Recommended VM layout:
 Expected runtime env:
 - `IBKR_BRIDGE_TOKEN`
 - `PORT` (optional, defaults to `8090`)
+- `IBKR_HOST` (defaults to `127.0.0.1`)
+- `IBKR_PORT` (defaults to paper `4002`)
+- `IBKR_CLIENT_ID` (defaults to `101`)
+- `IBKR_ACCOUNT_ID` (optional; pin a specific paper account if needed)
 
 Current endpoint contract:
 - `GET /health`
@@ -36,8 +40,7 @@ Current endpoint contract:
 - `POST /positions/close`
 
 Planned next work:
-- connect to IB Gateway / TWS on the VM
-- implement account, order, and position reads
+- connect the running bridge to IB Gateway / TWS on the VM
 - implement paper bracket-order placement
 - implement order sync / reconciliation helpers
 - add a small systemd-friendly deployment/runbook for the GCP VM
