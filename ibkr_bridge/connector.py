@@ -87,6 +87,21 @@ class IbkrGatewayClient:
         self._ib = ib
         return ib
 
+    def _disconnect(self) -> None:
+        ib = self._ib
+        self._ib = None
+        if ib is None:
+            return
+        try:
+            if ib.isConnected():
+                ib.disconnect()
+        except Exception:
+            pass
+
+    def _reset_connection(self):
+        self._disconnect()
+        return self._connect()
+
     def _resolve_account_id(self, ib) -> str:
         if self.config.account_id:
             return self.config.account_id
@@ -212,7 +227,7 @@ class IbkrGatewayClient:
         if not bar_size:
             raise RuntimeError("unsupported interval")
 
-        ib = self._connect()
+        ib = self._reset_connection()
         _LimitOrder, _MarketOrder, _StopOrder, Stock = self._load_order_classes()
         contract = Stock(normalized_symbol, "SMART", "USD")
         log_info(
@@ -247,6 +262,7 @@ class IbkrGatewayClient:
                 timeout=float(self.config.timeout_seconds),
             )
         except Exception as exc:
+            self._disconnect()
             log_exception(
                 "IBKR bridge intraday request failed",
                 exc,
@@ -287,6 +303,7 @@ class IbkrGatewayClient:
             outputsize=outputsize,
             count=len(normalized),
         )
+        self._disconnect()
         return normalized
 
     def _normalize_trade(self, trade: Any) -> dict[str, Any]:
