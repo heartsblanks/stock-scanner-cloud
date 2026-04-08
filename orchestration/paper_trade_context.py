@@ -39,13 +39,16 @@ def read_trade_rows_for_date(target_date: str) -> list[dict]:
         price = str(row.get("price", "") or "").strip()
         broker_order_id = str(row.get("broker_order_id", "") or "").strip()
         broker_parent_order_id = str(row.get("broker_parent_order_id", "") or "").strip()
+        broker = str(row.get("broker", "") or "").strip().upper()
+        trade_source = f"{broker}_PAPER" if broker else ("ALPACA_PAPER" if (broker_order_id or broker_parent_order_id) else "MANUAL")
 
         normalized_rows.append({
             "timestamp_utc": row.get("timestamp_utc", ""),
             "event_type": event_type,
             "symbol": row.get("symbol", ""),
             "mode": row.get("mode", ""),
-            "trade_source": "ALPACA_PAPER" if (broker_order_id or broker_parent_order_id) else "MANUAL",
+            "trade_source": trade_source,
+            "broker": broker,
             "shares": row.get("shares", ""),
             "entry_price": price if event_type == "OPEN" else "",
             "exit_price": price if event_type != "OPEN" else "",
@@ -126,7 +129,8 @@ def get_open_paper_trades() -> list[dict]:
                 "target_price": row.get("target_price", ""),
                 "status": row.get("status") or "OPEN",
                 "exit_reason": row.get("exit_reason") or "",
-                "trade_source": "ALPACA_PAPER",
+                "trade_source": f"{str(row.get('broker', '') or 'ALPACA').strip().upper()}_PAPER",
+                "broker": str(row.get("broker", "") or "ALPACA").strip().upper(),
                 "broker_order_id": order_id,
                 "broker_parent_order_id": parent_order_id,
                 "linked_signal_timestamp_utc": row.get("signal_timestamp") or "",
@@ -420,7 +424,7 @@ def find_latest_open_trade(symbol: str, trade_source: str | None = None, broker_
     if not normalized_symbol:
         return None
 
-    if normalized_trade_source == "ALPACA_PAPER":
+    if normalized_trade_source.endswith("_PAPER"):
         open_rows = get_open_paper_trades()
         if normalized_parent_order_id:
             for row in reversed(open_rows):

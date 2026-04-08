@@ -126,7 +126,14 @@ def sync_order(order_id: str):
 @app.post("/orders/paper-bracket")
 @require_auth
 def place_paper_bracket():
-    return not_implemented("place_paper_bracket")
+    def place_bracket():
+        payload = request.get_json(silent=True) or {}
+        trade = payload.get("trade") or {}
+        max_notional_raw = payload.get("max_notional")
+        max_notional = None if max_notional_raw in (None, "") else float(max_notional_raw)
+        return get_ibkr_client().place_paper_bracket_order(trade, max_notional=max_notional)
+
+    return _run_bridge_operation("place_paper_bracket", place_bracket)
 
 
 @app.post("/orders/cancel-by-symbol")

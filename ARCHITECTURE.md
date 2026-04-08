@@ -182,6 +182,7 @@ Parallel IBKR evaluation strategy:
 - cost-control plan: the IBKR VM should not run 24/7; it should be started and stopped by dedicated Cloud Scheduler jobs around the trading window, while IB Gateway login remains a manual daily step for now
 - current implementation status: the bridge now also supports the first operational write-path actions for cancel-by-symbol and market close-position flows; paper bracket placement remains deferred
 - current implementation status: holiday-aware VM control is now implemented in the main Cloud Run app through `POST /scheduler/ibkr-vm-control`, which reuses the NYSE calendar before starting the VM on trading days
+- current implementation status: the persistence model is being extended to tag paper-trading rows by broker so Alpaca and IBKR orders, trade events, lifecycles, and attempts can be compared cleanly from the database
 - target architecture:
 - `1.` Cloud Run remains the main app, dashboard, scheduler, and Neon-backed API
 - `2.` a GCP VM runs IB Gateway plus a small authenticated IBKR bridge service
@@ -215,6 +216,7 @@ Parallel IBKR evaluation strategy:
 - `1.` compare market-data completeness and opening-range reliability
 - `2.` compare paper fill behavior and rejection patterns
 - `3.` compare operational overhead, stability, and cost
+- `4.` compare broker-tagged DB records directly so dashboard and SQL analysis can distinguish Alpaca vs IBKR behavior without code-specific heuristics
 - decision point: only consider changing direction after enough parallel sessions show a clear advantage in data quality or execution quality
 
 ### 5.5 Operational checklist

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -59,13 +60,13 @@ class IbkrGatewayClient:
     def _load_order_classes(self):
         self._ensure_event_loop()
         try:
-            from ib_insync import MarketOrder, Stock
+            from ib_insync import LimitOrder, MarketOrder, StopOrder, Stock
         except ImportError as exc:
             raise RuntimeError(
                 "ib_insync is not installed on the IBKR bridge host. "
                 "Install requirements after adding the IBKR bridge dependency."
             ) from exc
-        return MarketOrder, Stock
+        return LimitOrder, MarketOrder, StopOrder, Stock
 
     def _connect(self):
         self._ensure_event_loop()
@@ -230,6 +231,97 @@ class IbkrGatewayClient:
             if trade_order_id == normalized_order_id:
                 return self._normalize_trade(trade)
         return None
+
+    def place_paper_bracket_order(self, trade: dict[str, Any], max_notional: float | None = None) -> dict[str, Any]:
+        metrics = trade.get("metrics", {}) if isinstance(trade, dict) else {}
+        symbol = str(metrics.get("symbol", "")).strip().upper()
+        direction = str(metrics.get("direction", "BUY")).strip().upper() or "BUY"
+        entry = _to_float(metrics.get("entry"))
+        stop = _to_float(metrics.get("stop"))
+        target = _to_float(metrics.get("target"))
+        scanner_shares = int(_to_float(metrics.get("shares"), 0))
+        per_trade_notional = _to_float(metrics.get("per_trade_notional"), 0.0)
+        remaining_allocatable_capital = _to_float(metrics.get("remaining_allocatable_capital"), 0.0)
+
+        if not symbol:
+            return {"attempted": False, "placed": False, "broker": "IBKR", "reason": "missing_symbol"}
+        if entry <= 0 or stop <= 0 or target <= 0:
+            return {"attempted": False, "placed": False, "broker": "IBKR", "symbol": symbol, "reason": "invalid_price_inputs"}
+        if direction not in {"BUY", "SELL"}:
+            return {"attempted": False, "placed": False, "broker": "IBKR", "symbol": symbol, "reason": "invalid_direction"}
+        if direction == "BUY" and not (stop < entry < target):
+            return {"attempted": False, "placed": False, "broker": "IBKR", "symbol": symbol, "reason": "invalid_long_bracket"}
+        if direction == "SELL" and not (target < entry < stop):
+            return {"attempted": False, "placed": False, "broker": "IBKR", "symbol": symbol, "reason": "invalid_short_bracket"}
+
+        notional_cap_candidates = [value for value in (max_notional, per_trade_notional, remaining_allocatable_capital) if _to_float(value) > 0]
+        notional_cap = min(notional_cap_candidates) if notional_cap_candidates else 0.0
+        capped_shares = int(math.floor(notional_cap / entry)) if notional_cap > 0 else 0
+        final_shares = min(scanner_shares, capped_shares) if scanner_shares > 0 and capped_shares > 0 else max(scanner_shares, capped_shares)
+        if final_shares <= 0:
+            return {"attempted": False, "placed": False, "broker": "IBKR", "symbol": symbol, "reason": "position_size_too_small"}
+
+        ib = self._connect()
+        LimitOrder, MarketOrder, StopOrder, Stock = self._load_order_classes()
+        contract = Stock(symbol, "SMART", "USD")
+        ib.qualifyContracts(contract)
+
+        action = "BUY" if direction == "BUY" else "SELL"
+        exit_action = "SELL" if action == "BUY" else "BUY"
+        client_order_id = f"scanner-{symbol}-{direction}-{int(round(entry * 10000))}-{final_shares}"
+
+        base_order_id = ib.client.getReqId()
+        parent = MarketOrder(action, final_shares, transmit=False)
+        parent.orderId = base_order_id
+        parent.orderRef = client_order_id
+        parent.tif = "DAY"
+
+        take_profit = LimitOrder(exit_action, final_shares, round(target, 2), transmit=False)
+        take_profit.orderId = base_order_id + 1
+        take_profit.parentId = base_order_id
+        take_profit.orderRef = client_order_id
+        take_profit.tif = "GTC"
+
+        stop_loss = StopOrder(exit_action, final_shares, round(stop, 2), transmit=True)
+        stop_loss.orderId = base_order_id + 2
+        stop_loss.parentId = base_order_id
+        stop_loss.orderRef = client_order_id
+        stop_loss.tif = "GTC"
+
+        try:
+            parent_trade = ib.placeOrder(contract, parent)
+            take_profit_trade = ib.placeOrder(contract, take_profit)
+            stop_loss_trade = ib.placeOrder(contract, stop_loss)
+        except Exception as exc:
+            return {
+                "attempted": True,
+                "placed": False,
+                "broker": "IBKR",
+                "symbol": symbol,
+                "reason": "ibkr_order_rejected",
+                "details": str(exc),
+            }
+
+        estimated_notional = round(final_shares * entry, 2)
+        parent_status = str(getattr(getattr(parent_trade, "orderStatus", None), "status", "")).strip()
+
+        return {
+            "attempted": True,
+            "placed": True,
+            "broker": "IBKR",
+            "symbol": symbol,
+            "shares": final_shares,
+            "estimated_notional": estimated_notional,
+            "client_order_id": client_order_id,
+            "broker_order_id": str(base_order_id),
+            "broker_parent_order_id": str(base_order_id),
+            "broker_order_status": parent_status,
+            "take_profit_order_id": str(base_order_id + 1),
+            "stop_loss_order_id": str(base_order_id + 2),
+            "order_id": str(base_order_id),
+            "parent_order_id": str(base_order_id),
+            "order_status": parent_status,
+        }
 
     def cancel_orders_by_symbol(self, symbol: str) -> list[str]:
         normalized_symbol = str(symbol).strip().upper()

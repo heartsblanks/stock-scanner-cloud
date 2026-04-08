@@ -60,6 +60,7 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(captured_lifecycle["symbol"], "NU")
         self.assertEqual(captured_lifecycle["side"], "BUY")
         self.assertEqual(captured_lifecycle["direction"], "LONG")
+        self.assertEqual(captured_lifecycle["broker"], "ALPACA")
         self.assertAlmostEqual(captured_lifecycle["realized_pnl"], -25.44, places=2)
         self.assertAlmostEqual(captured_lifecycle["realized_pnl_percent"], -0.428266, places=6)
 

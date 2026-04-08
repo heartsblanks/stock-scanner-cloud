@@ -15,6 +15,7 @@ def insert_trade_event(
     shares: Optional[float] = None,
     price: Optional[float] = None,
     mode: Optional[str] = None,
+    broker: Optional[str] = None,
     order_id: Optional[str] = None,
     parent_order_id: Optional[str] = None,
     status: Optional[str] = None,
@@ -30,6 +31,7 @@ def insert_trade_event(
           AND COALESCE(shares, -1) = %(shares_match)s
           AND COALESCE(price, -1) = %(price_match)s
           AND COALESCE(mode, '') = %(mode)s
+          AND COALESCE(broker, '') = %(broker)s
           AND COALESCE(order_id, '') = %(order_id)s
           AND COALESCE(parent_order_id, '') = %(parent_order_id)s
           AND COALESCE(status, '') = %(status)s
@@ -43,6 +45,7 @@ def insert_trade_event(
             "shares_match": shares if shares is not None else -1,
             "price_match": price if price is not None else -1,
             "mode": normalize_text(mode),
+            "broker": normalize_text(broker),
             "order_id": normalize_text(order_id),
             "parent_order_id": normalize_text(parent_order_id),
             "status": normalize_text(status),
@@ -53,9 +56,9 @@ def insert_trade_event(
     execute(
         """
         INSERT INTO trade_events (
-            event_time, event_type, symbol, side, shares, price, mode, order_id, parent_order_id, status
+            event_time, event_type, symbol, side, shares, price, mode, broker, order_id, parent_order_id, status
         ) VALUES (
-            %(event_time)s, %(event_type)s, %(symbol)s, %(side)s, %(shares)s, %(price)s, %(mode)s, %(order_id)s, %(parent_order_id)s, %(status)s
+            %(event_time)s, %(event_type)s, %(symbol)s, %(side)s, %(shares)s, %(price)s, %(mode)s, %(broker)s, %(order_id)s, %(parent_order_id)s, %(status)s
         )
         """,
         {
@@ -66,6 +69,7 @@ def insert_trade_event(
             "shares": shares,
             "price": price,
             "mode": mode,
+            "broker": broker,
             "order_id": order_id,
             "parent_order_id": parent_order_id,
             "status": status,
@@ -90,6 +94,7 @@ def get_trade_event_rows_for_date(target_date: str, limit: int = 1000) -> list[d
         """
         SELECT
             event_time AS timestamp_utc, event_type, symbol, mode, COALESCE(side, '') AS side,
+            COALESCE(broker, '') AS broker,
             COALESCE(shares::text, '') AS shares, COALESCE(price::text, '') AS price,
             COALESCE(order_id, '') AS broker_order_id, COALESCE(parent_order_id, '') AS broker_parent_order_id,
             COALESCE(status, '') AS status
@@ -158,6 +163,7 @@ def upsert_trade_lifecycle(
     signal_stop: Optional[float] = None,
     signal_target: Optional[float] = None,
     signal_confidence: Optional[float] = None,
+    broker: Optional[str] = None,
     order_id: Optional[str] = None,
     parent_order_id: Optional[str] = None,
     exit_order_id: Optional[str] = None,
@@ -189,6 +195,7 @@ def upsert_trade_lifecycle(
         "signal_stop": signal_stop,
         "signal_target": signal_target,
         "signal_confidence": signal_confidence,
+        "broker": broker,
         "order_id": order_id,
         "parent_order_id": parent_order_id,
         "exit_order_id": exit_order_id,
@@ -203,7 +210,7 @@ def upsert_trade_lifecycle(
                 stop_price = %(stop_price)s, target_price = %(target_price)s, exit_reason = %(exit_reason)s, shares = %(shares)s,
                 realized_pnl = %(realized_pnl)s, realized_pnl_percent = %(realized_pnl_percent)s, duration_minutes = %(duration_minutes)s,
                 signal_timestamp = %(signal_timestamp)s, signal_entry = %(signal_entry)s, signal_stop = %(signal_stop)s,
-                signal_target = %(signal_target)s, signal_confidence = %(signal_confidence)s, order_id = %(order_id)s,
+                signal_target = %(signal_target)s, signal_confidence = %(signal_confidence)s, broker = COALESCE(NULLIF(%(broker)s, ''), broker), order_id = %(order_id)s,
                 parent_order_id = %(parent_order_id)s, exit_order_id = %(exit_order_id)s, updated_at = NOW()
             WHERE id = %(id)s
             """,
@@ -215,11 +222,11 @@ def upsert_trade_lifecycle(
         INSERT INTO trade_lifecycles (
             trade_key, symbol, mode, side, direction, status, entry_time, entry_price, exit_time, exit_price,
             stop_price, target_price, exit_reason, shares, realized_pnl, realized_pnl_percent, duration_minutes,
-            signal_timestamp, signal_entry, signal_stop, signal_target, signal_confidence, order_id, parent_order_id, exit_order_id
+            signal_timestamp, signal_entry, signal_stop, signal_target, signal_confidence, broker, order_id, parent_order_id, exit_order_id
         ) VALUES (
             %(trade_key)s, %(symbol)s, %(mode)s, %(side)s, %(direction)s, %(status)s, %(entry_time)s, %(entry_price)s, %(exit_time)s, %(exit_price)s,
             %(stop_price)s, %(target_price)s, %(exit_reason)s, %(shares)s, %(realized_pnl)s, %(realized_pnl_percent)s, %(duration_minutes)s,
-            %(signal_timestamp)s, %(signal_entry)s, %(signal_stop)s, %(signal_target)s, %(signal_confidence)s, %(order_id)s, %(parent_order_id)s, %(exit_order_id)s
+            %(signal_timestamp)s, %(signal_entry)s, %(signal_stop)s, %(signal_target)s, %(signal_confidence)s, %(broker)s, %(order_id)s, %(parent_order_id)s, %(exit_order_id)s
         )
         """,
         params,

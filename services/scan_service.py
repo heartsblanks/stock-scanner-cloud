@@ -74,6 +74,44 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _paper_trade_broker_name(paper_trade_result: dict[str, Any]) -> str:
+    broker = str(paper_trade_result.get("broker", "") or "").strip().upper()
+    return broker or "ALPACA"
+
+
+def _paper_trade_source(broker: str) -> str:
+    normalized = str(broker or "").strip().upper() or "ALPACA"
+    return f"{normalized}_PAPER"
+
+
+def _paper_trade_order_id(paper_trade_result: dict[str, Any]) -> str:
+    return str(
+        paper_trade_result.get("broker_order_id")
+        or paper_trade_result.get("order_id")
+        or paper_trade_result.get("alpaca_order_id")
+        or ""
+    ).strip()
+
+
+def _paper_trade_parent_order_id(paper_trade_result: dict[str, Any]) -> str:
+    return str(
+        paper_trade_result.get("broker_parent_order_id")
+        or paper_trade_result.get("parent_order_id")
+        or paper_trade_result.get("alpaca_order_id")
+        or _paper_trade_order_id(paper_trade_result)
+        or ""
+    ).strip()
+
+
+def _paper_trade_order_status(paper_trade_result: dict[str, Any]) -> str:
+    return str(
+        paper_trade_result.get("broker_order_status")
+        or paper_trade_result.get("order_status")
+        or paper_trade_result.get("alpaca_order_status")
+        or ""
+    ).strip()
+
+
 def _get_live_alpaca_account_equity(payload: dict[str, Any]) -> float:
     """
     Resolve sizing equity from Alpaca first, with a safe fallback chain:
@@ -354,6 +392,7 @@ def execute_full_scan(
         metrics: dict[str, Any] | None = None,
         final_reason: str | None = None,
         placed: bool | None = None,
+        broker: str | None = None,
         broker_order_id: str | None = None,
         broker_parent_order_id: str | None = None,
         broker_rejection_reason: str | None = None,
@@ -388,6 +427,7 @@ def execute_full_scan(
             loss_multiplier=to_float_or_none(attempt_metrics.get("loss_multiplier", "")),
             final_multiplier=to_float_or_none(attempt_metrics.get("final_multiplier", "")),
             placed=placed,
+            broker=broker,
             broker_order_id=broker_order_id,
             broker_parent_order_id=broker_parent_order_id,
             broker_rejection_reason=broker_rejection_reason,
@@ -814,14 +854,18 @@ def execute_full_scan(
                     paper_results.append(paper_trade_result)
 
                     if paper_trade_result.get("placed"):
-                        broker_order_id = str(paper_trade_result.get("alpaca_order_id", "") or "")
-                        broker_parent_order_id = str(paper_trade_result.get("alpaca_order_id", "") or "")
+                        broker_name = _paper_trade_broker_name(paper_trade_result)
+                        trade_source = _paper_trade_source(broker_name)
+                        broker_order_id = _paper_trade_order_id(paper_trade_result)
+                        broker_parent_order_id = _paper_trade_parent_order_id(paper_trade_result)
+                        broker_order_status = _paper_trade_order_status(paper_trade_result)
                         record_attempt(
                             "PLACED",
                             symbol=candidate_symbol,
                             metrics=paper_metrics,
                             final_reason="placed",
                             placed=True,
+                            broker=broker_name,
                             broker_order_id=broker_order_id,
                             broker_parent_order_id=broker_parent_order_id,
                         )
@@ -840,11 +884,11 @@ def execute_full_scan(
                             "symbol": paper_metrics.get("symbol", ""),
                             "name": paper_trade_candidate.get("name", ""),
                             "mode": mode,
-                            "trade_source": "ALPACA_PAPER",
-                            "broker": "ALPACA",
-                            "broker_order_id": paper_trade_result.get("alpaca_order_id", ""),
-                            "broker_parent_order_id": paper_trade_result.get("alpaca_order_id", ""),
-                            "broker_status": paper_trade_result.get("alpaca_order_status", ""),
+                            "trade_source": trade_source,
+                            "broker": broker_name,
+                            "broker_order_id": broker_order_id,
+                            "broker_parent_order_id": broker_parent_order_id,
+                            "broker_status": broker_order_status,
                             "broker_filled_qty": "",
                             "broker_filled_avg_price": "",
                             "broker_exit_order_id": "",
@@ -875,16 +919,18 @@ def execute_full_scan(
                             shares=to_float_or_none(paper_trade_result.get("shares", "")),
                             price=to_float_or_none(paper_metrics.get("entry", "")),
                             mode=mode,
-                            order_id=str(paper_trade_result.get("alpaca_order_id", "") or ""),
-                            parent_order_id=str(paper_trade_result.get("alpaca_order_id", "") or ""),
+                            broker=broker_name,
+                            order_id=broker_order_id,
+                            parent_order_id=broker_parent_order_id,
                             status="OPEN",
                         )
                         safe_insert_broker_order(
-                            order_id=str(paper_trade_result.get("alpaca_order_id", "") or ""),
+                            order_id=broker_order_id,
+                            broker=broker_name,
                             symbol=str(paper_metrics.get("symbol", "") or ""),
                             side=str(paper_metrics.get("direction", "") or ""),
                             order_type="bracket_entry",
-                            status=str(paper_trade_result.get("alpaca_order_status", "") or ""),
+                            status=broker_order_status,
                             qty=to_float_or_none(paper_trade_result.get("shares", "")),
                             filled_qty=None,
                             avg_fill_price=None,
@@ -933,6 +979,7 @@ def execute_full_scan(
                             signal_stop=to_float_or_none(stop_price),
                             signal_target=to_float_or_none(target_price),
                             signal_confidence=to_float_or_none(paper_metrics.get("final_confidence", "")),
+                            broker=broker_name,
                             order_id=broker_order_id,
                             parent_order_id=broker_parent_order_id,
                             exit_order_id=None,
@@ -944,8 +991,9 @@ def execute_full_scan(
                             metrics=paper_metrics,
                             final_reason=str(paper_trade_result.get("reason", "") or "not_placed"),
                             placed=False,
-                            broker_order_id=str(paper_trade_result.get("alpaca_order_id", "") or ""),
-                            broker_parent_order_id=str(paper_trade_result.get("alpaca_order_id", "") or ""),
+                            broker=_paper_trade_broker_name(paper_trade_result),
+                            broker_order_id=_paper_trade_order_id(paper_trade_result),
+                            broker_parent_order_id=_paper_trade_parent_order_id(paper_trade_result),
                             broker_rejection_reason=str(paper_trade_result.get("details", "") or paper_trade_result.get("reason", "") or ""),
                         )
                         skipped_symbols.append(candidate_symbol)

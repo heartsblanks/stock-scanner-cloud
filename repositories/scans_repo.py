@@ -286,6 +286,7 @@ def insert_paper_trade_attempt(
     loss_multiplier: Optional[float] = None,
     final_multiplier: Optional[float] = None,
     placed: Optional[bool] = None,
+    broker: Optional[str] = None,
     broker_order_id: Optional[str] = None,
     broker_parent_order_id: Optional[str] = None,
     broker_rejection_reason: Optional[str] = None,
@@ -298,7 +299,7 @@ def insert_paper_trade_attempt(
             current_open_positions, current_open_exposure, remaining_slots, effective_remaining_slots,
             remaining_allocatable_capital, per_trade_notional, adjusted_per_trade_notional, shares,
             cash_affordable_shares, notional_capped_shares, confidence_multiplier, loss_multiplier,
-            final_multiplier, placed, broker_order_id, broker_parent_order_id, broker_rejection_reason
+            final_multiplier, placed, broker, broker_order_id, broker_parent_order_id, broker_rejection_reason
         )
         VALUES (
             %(timestamp_utc)s, %(scan_id)s, %(mode)s, %(scan_source)s, %(market_phase)s, %(symbol)s, %(decision_stage)s,
@@ -306,7 +307,7 @@ def insert_paper_trade_attempt(
             %(current_open_positions)s, %(current_open_exposure)s, %(remaining_slots)s, %(effective_remaining_slots)s,
             %(remaining_allocatable_capital)s, %(per_trade_notional)s, %(adjusted_per_trade_notional)s, %(shares)s,
             %(cash_affordable_shares)s, %(notional_capped_shares)s, %(confidence_multiplier)s, %(loss_multiplier)s,
-            %(final_multiplier)s, %(placed)s, %(broker_order_id)s, %(broker_parent_order_id)s, %(broker_rejection_reason)s
+            %(final_multiplier)s, %(placed)s, %(broker)s, %(broker_order_id)s, %(broker_parent_order_id)s, %(broker_rejection_reason)s
         )
         """,
         {
@@ -338,6 +339,7 @@ def insert_paper_trade_attempt(
             "loss_multiplier": loss_multiplier,
             "final_multiplier": final_multiplier,
             "placed": placed,
+            "broker": normalize_text(broker).upper() or None,
             "broker_order_id": normalize_text(broker_order_id) or None,
             "broker_parent_order_id": normalize_text(broker_parent_order_id) or None,
             "broker_rejection_reason": normalize_text(broker_rejection_reason) or None,

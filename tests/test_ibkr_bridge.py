@@ -33,6 +33,20 @@ class FakeIbkrClient:
             return {"attempted": True, "placed": True, "symbol": "AAPL", "order_id": "2001", "status": "Submitted"}
         return {"attempted": False, "placed": False, "symbol": str(symbol).upper(), "reason": "no_open_position"}
 
+    def place_paper_bracket_order(self, trade, max_notional=None):
+        return {
+            "attempted": True,
+            "placed": True,
+            "broker": "IBKR",
+            "symbol": str(((trade or {}).get("metrics") or {}).get("symbol", "")).upper(),
+            "broker_order_id": "3001",
+            "broker_parent_order_id": "3001",
+            "broker_order_status": "Submitted",
+            "shares": 10,
+            "client_order_id": "scanner-AAPL-BUY-1-10",
+            "estimated_notional": 1000.0,
+        }
+
 
 @unittest.skipIf(app is None, "Flask is not installed in the local Python environment")
 class IbkrBridgeApiTests(unittest.TestCase):
@@ -93,6 +107,19 @@ class IbkrBridgeApiTests(unittest.TestCase):
         self.assertTrue(payload["attempted"])
         self.assertTrue(payload["placed"])
         self.assertEqual(payload["order_id"], "2001")
+
+    def test_place_paper_bracket_route_returns_order_payload(self):
+        with patch("ibkr_bridge.app.get_ibkr_client", return_value=FakeIbkrClient()):
+            response = self.client.post(
+                "/orders/paper-bracket",
+                json={"trade": {"metrics": {"symbol": "AAPL"}}},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["placed"])
+        self.assertEqual(payload["broker"], "IBKR")
+        self.assertEqual(payload["broker_order_id"], "3001")
 
 
 if __name__ == "__main__":

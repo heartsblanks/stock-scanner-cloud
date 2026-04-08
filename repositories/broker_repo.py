@@ -9,6 +9,7 @@ from core.db import execute, fetch_all, fetch_one
 
 def insert_broker_order(
     order_id: str,
+    broker: Optional[str] = None,
     symbol: Optional[str] = None,
     side: Optional[str] = None,
     order_type: Optional[str] = None,
@@ -29,13 +30,15 @@ def insert_broker_order(
         execute(
             """
             UPDATE broker_orders
-            SET symbol = %(symbol)s, side = %(side)s, order_type = %(order_type)s, status = %(status)s,
+            SET broker = COALESCE(NULLIF(%(broker)s, ''), broker),
+                symbol = %(symbol)s, side = %(side)s, order_type = %(order_type)s, status = %(status)s,
                 qty = %(qty)s, filled_qty = %(filled_qty)s, avg_fill_price = %(avg_fill_price)s,
                 submitted_at = %(submitted_at)s, filled_at = %(filled_at)s
             WHERE id = %(id)s
             """,
             {
                 "id": existing["id"],
+                "broker": broker,
                 "symbol": symbol,
                 "side": side,
                 "order_type": order_type,
@@ -51,13 +54,14 @@ def insert_broker_order(
     execute(
         """
         INSERT INTO broker_orders (
-            order_id, symbol, side, order_type, status, qty, filled_qty, avg_fill_price, submitted_at, filled_at
+            order_id, broker, symbol, side, order_type, status, qty, filled_qty, avg_fill_price, submitted_at, filled_at
         ) VALUES (
-            %(order_id)s, %(symbol)s, %(side)s, %(order_type)s, %(status)s, %(qty)s, %(filled_qty)s, %(avg_fill_price)s, %(submitted_at)s, %(filled_at)s
+            %(order_id)s, %(broker)s, %(symbol)s, %(side)s, %(order_type)s, %(status)s, %(qty)s, %(filled_qty)s, %(avg_fill_price)s, %(submitted_at)s, %(filled_at)s
         )
         """,
         {
             "order_id": order_id,
+            "broker": broker,
             "symbol": symbol,
             "side": side,
             "order_type": order_type,
