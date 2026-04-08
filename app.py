@@ -69,6 +69,7 @@ from orchestration.paper_trade_context import (
 )
 from orchestration.scan_context import (
     NY_TZ,
+    SCHEDULED_ROUND_ROBIN_MODES,
     build_scan_id,
     build_scheduled_scan_payload,
     debug_to_dict,
@@ -565,6 +566,83 @@ def execute_scan_pipeline(
     )
 
 
+def _run_ibkr_shadow_scan(payload: dict[str, Any]) -> dict[str, Any]:
+    ibkr_payload = dict(payload)
+    try:
+        return execute_scan_pipeline(
+            ibkr_payload,
+            broker_name="IBKR",
+            run_scan_fn=lambda account_size, mode, current_open_positions=0, current_open_exposure=0.0: run_scan(
+                account_size,
+                mode,
+                current_open_positions=current_open_positions,
+                current_open_exposure=current_open_exposure,
+                fetch_intraday_fn=fetch_ibkr_intraday,
+                source_label=f"IBKR_{mode.upper()}",
+            ),
+            resolve_account_size_fn=resolve_ibkr_shadow_account_size,
+            get_current_open_position_state_fn=lambda: get_current_open_position_state_for_broker(IBKR_PAPER_BROKER),
+            get_risk_exposure_summary_fn=lambda: get_ibkr_shadow_risk_exposure_summary(ibkr_payload),
+            get_latest_open_trade_fn=lambda symbol: get_latest_open_paper_trade_for_symbol_for_broker(symbol, "IBKR"),
+            place_paper_orders_fn=place_ibkr_paper_orders_from_trade,
+        )
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": "ibkr_shadow_failed",
+            "details": str(exc),
+            "mode": ibkr_payload.get("mode"),
+        }
+
+
+def _run_ibkr_shadow_scans(payload: dict[str, Any]) -> dict[str, Any]:
+    scan_source = str((payload or {}).get("scan_source", "") or "").strip().upper()
+    scheduled_shadow = scan_source == "SCHEDULED"
+    modes = list(SCHEDULED_ROUND_ROBIN_MODES) if scheduled_shadow else [str(payload.get("mode", "primary")).strip().lower()]
+
+    per_mode_results: list[dict[str, Any]] = []
+    total_candidates = 0
+    total_placed = 0
+    total_skipped = 0
+
+    for mode in modes:
+        mode_payload = dict(payload)
+        mode_payload["mode"] = mode
+        mode_response = _run_ibkr_shadow_scan(mode_payload)
+        mode_result = mode_response if isinstance(mode_response, dict) else {"ok": False, "error": "invalid_ibkr_shadow_response", "mode": mode}
+        mode_result.setdefault("mode", mode)
+        per_mode_results.append(mode_result)
+
+        total_candidates += int(float(mode_result.get("candidate_count", 0) or 0))
+        total_placed += int(float(mode_result.get("placed_count", 0) or 0))
+        total_skipped += int(float(mode_result.get("skipped_count", 0) or 0))
+
+        log_info(
+            "IBKR shadow scan completed",
+            component="app",
+            operation="handle_scan_request",
+            broker="IBKR",
+            ok=bool(mode_result.get("ok", False)),
+            mode=mode,
+            error=mode_result.get("error"),
+            candidate_count=mode_result.get("candidate_count"),
+            placed_count=mode_result.get("placed_count"),
+            skipped_count=mode_result.get("skipped_count"),
+            scan_id=mode_result.get("scan_id"),
+        )
+
+    return {
+        "ok": all(bool(result.get("ok", False)) for result in per_mode_results),
+        "scheduled_all_modes": scheduled_shadow,
+        "mode_count": len(modes),
+        "modes": modes,
+        "candidate_count": total_candidates,
+        "placed_count": total_placed,
+        "skipped_count": total_skipped,
+        "per_mode_results": per_mode_results,
+    }
+
+
 
 
 def handle_sync_paper_trades():
@@ -598,46 +676,7 @@ def handle_scan_request(payload):
     if not (isinstance(payload, dict) and payload.get("paper_trade") and PAPER_BROKER_CONFIG.shadow_mode_enabled and ibkr_bridge_enabled()):
         return alpaca_response
 
-    ibkr_payload = dict(payload)
-    try:
-        ibkr_response = execute_scan_pipeline(
-            ibkr_payload,
-            broker_name="IBKR",
-            run_scan_fn=lambda account_size, mode, current_open_positions=0, current_open_exposure=0.0: run_scan(
-                account_size,
-                mode,
-                current_open_positions=current_open_positions,
-                current_open_exposure=current_open_exposure,
-                fetch_intraday_fn=fetch_ibkr_intraday,
-                source_label=f"IBKR_{mode.upper()}",
-            ),
-            resolve_account_size_fn=resolve_ibkr_shadow_account_size,
-            get_current_open_position_state_fn=lambda: get_current_open_position_state_for_broker(IBKR_PAPER_BROKER),
-            get_risk_exposure_summary_fn=lambda: get_ibkr_shadow_risk_exposure_summary(ibkr_payload),
-            get_latest_open_trade_fn=lambda symbol: get_latest_open_paper_trade_for_symbol_for_broker(symbol, "IBKR"),
-            place_paper_orders_fn=place_ibkr_paper_orders_from_trade,
-        )
-    except Exception as exc:
-        ibkr_response = {
-            "ok": False,
-            "error": "ibkr_shadow_failed",
-            "details": str(exc),
-        }
-
-    if isinstance(ibkr_response, dict):
-        log_info(
-            "IBKR shadow scan completed",
-            component="app",
-            operation="handle_scan_request",
-            broker="IBKR",
-            ok=bool(ibkr_response.get("ok", False)),
-            mode=ibkr_payload.get("mode"),
-            error=ibkr_response.get("error"),
-            candidate_count=ibkr_response.get("candidate_count"),
-            placed_count=ibkr_response.get("placed_count"),
-            skipped_count=ibkr_response.get("skipped_count"),
-            scan_id=ibkr_response.get("scan_id"),
-        )
+    ibkr_response = _run_ibkr_shadow_scans(payload)
 
     if isinstance(alpaca_response, tuple) or isinstance(ibkr_response, tuple):
         return alpaca_response
