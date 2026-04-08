@@ -180,6 +180,7 @@ Parallel IBKR evaluation strategy:
 - current implementation status: VM deployment scaffolding now exists under `ibkr_bridge/systemd/` with a service unit, env template, and bridge runbook for the GCP VM path
 - current implementation status: the first real IBKR bridge read-path is now implemented for account, positions, and open-order reads; write-path endpoints remain intentionally deferred until IB Gateway connectivity is verified on the VM
 - cost-control plan: the IBKR VM should not run 24/7; it should be started and stopped by dedicated Cloud Scheduler jobs around the trading window, while IB Gateway login remains a manual daily step for now
+- current implementation status: the bridge now also supports the first operational write-path actions for cancel-by-symbol and market close-position flows; paper bracket placement remains deferred
 - target architecture:
 - `1.` Cloud Run remains the main app, dashboard, scheduler, and Neon-backed API
 - `2.` a GCP VM runs IB Gateway plus a small authenticated IBKR bridge service
@@ -189,6 +190,9 @@ Parallel IBKR evaluation strategy:
 - `2.` keep it available through the close and immediate post-close comparison window
 - `3.` stop the VM at `5:00 PM ET`
 - `4.` keep IB Gateway login manual until a secure automation path is intentionally designed
+- holiday handling note:
+- `1.` plain Cloud Scheduler cron can handle weekdays and timezone shifts but not exchange holidays
+- `2.` if holiday-aware VM control is needed, add a small calendar-aware controller that checks the market calendar before calling the Compute Engine start/stop API
 - expected bridge contract:
 - `GET /account`
 - `GET /positions`

@@ -10,7 +10,10 @@ Purpose:
 Current status:
 - read-path implementation started
 - authenticated endpoints now support real IBKR reads for account, positions, and open orders
-- write-path endpoints are still scaffolded until IB Gateway connectivity is verified on the VM
+- the first operational write-path endpoints are now available for:
+  - `POST /orders/cancel-by-symbol`
+  - `POST /positions/close`
+- paper bracket-order placement is still intentionally deferred
 
 Recommended VM layout:
 - VM OS: Ubuntu on GCP Compute Engine
@@ -42,7 +45,7 @@ Current endpoint contract:
 Planned next work:
 - connect the running bridge to IB Gateway / TWS on the VM
 - implement paper bracket-order placement
-- implement order sync / reconciliation helpers
+- expand order sync / reconciliation helpers
 - add a small systemd-friendly deployment/runbook for the GCP VM
 
 Cost control recommendation:
@@ -51,6 +54,12 @@ Cost control recommendation:
   - start VM at `9:15 AM ET`
   - stop VM at `5:00 PM ET`
 - keep in mind that IB Gateway login is still manual right now, so the VM can auto-start but IB Gateway still needs a fresh daily paper-session login until that is automated
+- plain Cloud Scheduler cron cannot skip market holidays by itself
+- if you want holiday-aware VM control, the clean path is:
+  - Scheduler calls a tiny controller endpoint or script on weekdays
+  - that controller checks the NYSE calendar
+  - only then starts or stops the VM
+- for now, the scheduled jobs are weekday-based only
 
 ## GCP VM Runbook
 

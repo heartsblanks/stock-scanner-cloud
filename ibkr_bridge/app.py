@@ -132,13 +132,28 @@ def place_paper_bracket():
 @app.post("/orders/cancel-by-symbol")
 @require_auth
 def cancel_orders_by_symbol():
-    return not_implemented("cancel_orders_by_symbol")
+    def cancel_for_symbol():
+        payload = request.get_json(silent=True) or {}
+        symbol = str(payload.get("symbol", "")).strip().upper()
+        canceled_order_ids = get_ibkr_client().cancel_orders_by_symbol(symbol)
+        return {
+            "ok": True,
+            "symbol": symbol,
+            "canceled_order_ids": canceled_order_ids,
+        }
+
+    return _run_bridge_operation("cancel_orders_by_symbol", cancel_for_symbol)
 
 
 @app.post("/positions/close")
 @require_auth
 def close_position():
-    return not_implemented("close_position")
+    def close_for_symbol():
+        payload = request.get_json(silent=True) or {}
+        symbol = str(payload.get("symbol", "")).strip().upper()
+        return get_ibkr_client().close_position(symbol)
+
+    return _run_bridge_operation("close_position", close_for_symbol)
 
 
 if __name__ == "__main__":

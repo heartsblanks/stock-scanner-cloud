@@ -25,6 +25,14 @@ class FakeIbkrClient:
             return {"id": "1001", "symbol": "AAPL", "status": "Submitted"}
         return None
 
+    def cancel_orders_by_symbol(self, symbol):
+        return ["1001"] if str(symbol).upper() == "AAPL" else []
+
+    def close_position(self, symbol):
+        if str(symbol).upper() == "AAPL":
+            return {"attempted": True, "placed": True, "symbol": "AAPL", "order_id": "2001", "status": "Submitted"}
+        return {"attempted": False, "placed": False, "symbol": str(symbol).upper(), "reason": "no_open_position"}
+
 
 @unittest.skipIf(app is None, "Flask is not installed in the local Python environment")
 class IbkrBridgeApiTests(unittest.TestCase):
@@ -66,6 +74,25 @@ class IbkrBridgeApiTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["error"], "service_unavailable")
         self.assertEqual(payload["operation"], "get_order:9999")
+
+    def test_cancel_orders_by_symbol_route_returns_canceled_ids(self):
+        with patch("ibkr_bridge.app.get_ibkr_client", return_value=FakeIbkrClient()):
+            response = self.client.post("/orders/cancel-by-symbol", json={"symbol": "AAPL"})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["symbol"], "AAPL")
+        self.assertEqual(payload["canceled_order_ids"], ["1001"])
+
+    def test_close_position_route_returns_close_order(self):
+        with patch("ibkr_bridge.app.get_ibkr_client", return_value=FakeIbkrClient()):
+            response = self.client.post("/positions/close", json={"symbol": "AAPL"})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["attempted"])
+        self.assertTrue(payload["placed"])
+        self.assertEqual(payload["order_id"], "2001")
 
 
 if __name__ == "__main__":

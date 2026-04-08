@@ -56,6 +56,17 @@ class IbkrGatewayClient:
             ) from exc
         return IB
 
+    def _load_order_classes(self):
+        self._ensure_event_loop()
+        try:
+            from ib_insync import MarketOrder, Stock
+        except ImportError as exc:
+            raise RuntimeError(
+                "ib_insync is not installed on the IBKR bridge host. "
+                "Install requirements after adding the IBKR bridge dependency."
+            ) from exc
+        return MarketOrder, Stock
+
     def _connect(self):
         self._ensure_event_loop()
         if self._ib is not None and self._ib.isConnected():
@@ -219,6 +230,81 @@ class IbkrGatewayClient:
             if trade_order_id == normalized_order_id:
                 return self._normalize_trade(trade)
         return None
+
+    def cancel_orders_by_symbol(self, symbol: str) -> list[str]:
+        normalized_symbol = str(symbol).strip().upper()
+        if not normalized_symbol:
+            raise RuntimeError("symbol is required")
+
+        ib = self._connect()
+        canceled_order_ids: list[str] = []
+        for trade in ib.openTrades() or []:
+            contract = getattr(trade, "contract", None)
+            if str(getattr(contract, "symbol", "")).strip().upper() != normalized_symbol:
+                continue
+
+            order = getattr(trade, "order", None)
+            order_id = str(getattr(order, "orderId", "")).strip()
+            ib.cancelOrder(order)
+            if order_id:
+                canceled_order_ids.append(order_id)
+
+        return canceled_order_ids
+
+    def close_position(self, symbol: str) -> dict[str, Any]:
+        normalized_symbol = str(symbol).strip().upper()
+        if not normalized_symbol:
+            raise RuntimeError("symbol is required")
+
+        ib = self._connect()
+        account_id = self._resolve_account_id(ib)
+        target_position = None
+        for row in ib.positions() or []:
+            if account_id and str(getattr(row, "account", "")).strip() != account_id:
+                continue
+            contract = getattr(row, "contract", None)
+            if str(getattr(contract, "symbol", "")).strip().upper() == normalized_symbol:
+                target_position = row
+                break
+
+        if target_position is None:
+            return {
+                "attempted": False,
+                "placed": False,
+                "symbol": normalized_symbol,
+                "reason": "no_open_position",
+            }
+
+        qty = _to_float(getattr(target_position, "position", 0.0))
+        if qty == 0:
+            return {
+                "attempted": False,
+                "placed": False,
+                "symbol": normalized_symbol,
+                "reason": "no_open_position",
+            }
+
+        MarketOrder, Stock = self._load_order_classes()
+        contract = getattr(target_position, "contract", None)
+        if contract is None:
+            contract = Stock(normalized_symbol, "SMART", "USD")
+            ib.qualifyContracts(contract)
+
+        action = "SELL" if qty > 0 else "BUY"
+        order = MarketOrder(action, abs(qty))
+        order.orderRef = f"scanner-close-{normalized_symbol}"
+        trade = ib.placeOrder(contract, order)
+
+        normalized_trade = self._normalize_trade(trade)
+        return {
+            "attempted": True,
+            "placed": True,
+            "symbol": normalized_symbol,
+            "action": action.lower(),
+            "qty": abs(qty),
+            "order_id": normalized_trade.get("id", ""),
+            "status": normalized_trade.get("status", ""),
+        }
 
 
 _client: IbkrGatewayClient | None = None
