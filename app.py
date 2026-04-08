@@ -1,5 +1,6 @@
 import os
 from datetime import datetime
+from typing import Any
 
 from flask import Flask
 from flask_cors import CORS
@@ -10,6 +11,9 @@ from alpaca.reconcile import run_reconciliation, upload_file_to_gcs
 from analytics.trade_analysis import run_trade_analysis, upload_file_to_gcs as upload_analysis_file_to_gcs
 from analytics.signal_analysis import run_signal_analysis, upload_file_to_gcs as upload_signal_analysis_file_to_gcs
 from brokers import get_paper_broker, get_paper_broker_config
+from brokers.alpaca_adapter import AlpacaPaperBroker
+from brokers.ibkr_adapter import IbkrPaperBroker
+from brokers.ibkr_bridge_client import ibkr_bridge_enabled
 from core.db import healthcheck as db_healthcheck
 from storage import (
     insert_scan_run,
@@ -109,6 +113,8 @@ app = Flask(__name__)
 CORS(app)
 PAPER_BROKER = get_paper_broker()
 PAPER_BROKER_CONFIG = get_paper_broker_config()
+ALPACA_PAPER_BROKER = AlpacaPaperBroker()
+IBKR_PAPER_BROKER = IbkrPaperBroker()
 
 place_paper_bracket_order_from_trade = PAPER_BROKER.place_paper_bracket_order_from_trade
 get_open_positions = PAPER_BROKER.get_open_positions
@@ -116,6 +122,32 @@ close_position = PAPER_BROKER.close_position
 cancel_open_orders_for_symbol = PAPER_BROKER.cancel_open_orders_for_symbol
 sync_order_by_id = PAPER_BROKER.sync_order_by_id
 get_order_by_id = PAPER_BROKER.get_order_by_id
+
+
+def place_paper_orders_from_trade(trade: dict[str, Any], max_notional: float | None = None) -> list[dict]:
+    results: list[dict] = []
+
+    primary_result = ALPACA_PAPER_BROKER.place_paper_bracket_order_from_trade(trade, max_notional=max_notional)
+    if isinstance(primary_result, dict):
+        primary_result.setdefault("broker", "ALPACA")
+        results.append(primary_result)
+
+    if PAPER_BROKER_CONFIG.shadow_mode_enabled and ibkr_bridge_enabled():
+        try:
+            ibkr_result = IBKR_PAPER_BROKER.place_paper_bracket_order_from_trade(trade, max_notional=max_notional)
+        except Exception as exc:
+            ibkr_result = {
+                "attempted": True,
+                "placed": False,
+                "broker": "IBKR",
+                "reason": "ibkr_shadow_exception",
+                "details": str(exc),
+            }
+        if isinstance(ibkr_result, dict):
+            ibkr_result.setdefault("broker", "IBKR")
+            results.append(ibkr_result)
+
+    return results
 
 
 def env_flag(name: str, default: str = "true") -> bool:
@@ -344,7 +376,7 @@ def handle_scan_request(payload):
         evaluate_symbol=evaluate_symbol,
         get_latest_open_paper_trade_for_symbol=get_latest_open_paper_trade_for_symbol,
         is_symbol_in_paper_cooldown=is_symbol_in_paper_cooldown,
-        place_paper_bracket_order_from_trade=place_paper_bracket_order_from_trade,
+        place_paper_orders_from_trade=place_paper_orders_from_trade,
         append_trade_log=append_trade_log,
         safe_insert_trade_event=safe_insert_trade_event,
         safe_insert_broker_order=safe_insert_broker_order,

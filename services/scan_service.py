@@ -112,6 +112,14 @@ def _paper_trade_order_status(paper_trade_result: dict[str, Any]) -> str:
     ).strip()
 
 
+def _normalize_paper_trade_results(raw_result: Any) -> list[dict[str, Any]]:
+    if isinstance(raw_result, list):
+        return [item for item in raw_result if isinstance(item, dict)]
+    if isinstance(raw_result, dict):
+        return [raw_result]
+    return []
+
+
 def _get_live_alpaca_account_equity(payload: dict[str, Any]) -> float:
     """
     Resolve sizing equity from Alpaca first, with a safe fallback chain:
@@ -329,7 +337,7 @@ def execute_full_scan(
     evaluate_symbol: Callable[..., Any],
     get_latest_open_paper_trade_for_symbol: Callable[[str], Any],
     is_symbol_in_paper_cooldown: Callable[[str, str], tuple[bool, str]],
-    place_paper_bracket_order_from_trade: Callable[[Any], dict[str, Any]],
+    place_paper_orders_from_trade: Callable[[Any], Any],
     append_trade_log: Callable[[dict[str, Any]], None],
     safe_insert_trade_event: Callable[..., None],
     safe_insert_broker_order: Callable[..., None],
@@ -850,154 +858,166 @@ def execute_full_scan(
                     continue
 
                 try:
-                    paper_trade_result = place_paper_bracket_order_from_trade(paper_trade_candidate)
-                    paper_results.append(paper_trade_result)
+                    broker_results = _normalize_paper_trade_results(place_paper_orders_from_trade(paper_trade_candidate))
+                    paper_results.extend(broker_results)
+                    candidate_placed_any = False
+                    candidate_rejection_reasons: list[str] = []
 
-                    if paper_trade_result.get("placed"):
+                    for paper_trade_result in broker_results:
                         broker_name = _paper_trade_broker_name(paper_trade_result)
-                        trade_source = _paper_trade_source(broker_name)
-                        broker_order_id = _paper_trade_order_id(paper_trade_result)
-                        broker_parent_order_id = _paper_trade_parent_order_id(paper_trade_result)
-                        broker_order_status = _paper_trade_order_status(paper_trade_result)
-                        record_attempt(
-                            "PLACED",
-                            symbol=candidate_symbol,
-                            metrics=paper_metrics,
-                            final_reason="placed",
-                            placed=True,
-                            broker=broker_name,
-                            broker_order_id=broker_order_id,
-                            broker_parent_order_id=broker_parent_order_id,
-                        )
+                        if paper_trade_result.get("placed"):
+                            candidate_placed_any = True
+                            trade_source = _paper_trade_source(broker_name)
+                            broker_order_id = _paper_trade_order_id(paper_trade_result)
+                            broker_parent_order_id = _paper_trade_parent_order_id(paper_trade_result)
+                            broker_order_status = _paper_trade_order_status(paper_trade_result)
+                            record_attempt(
+                                "PLACED",
+                                symbol=candidate_symbol,
+                                metrics=paper_metrics,
+                                final_reason="placed",
+                                placed=True,
+                                broker=broker_name,
+                                broker_order_id=broker_order_id,
+                                broker_parent_order_id=broker_parent_order_id,
+                            )
+                            placed_trade_ids.append(str(paper_trade_result.get("client_order_id", "")).strip())
+                            append_trade_log({
+                                "timestamp_utc": timestamp_utc,
+                                "event_type": "OPEN",
+                                "symbol": paper_metrics.get("symbol", ""),
+                                "name": paper_trade_candidate.get("name", ""),
+                                "mode": mode,
+                                "trade_source": trade_source,
+                                "broker": broker_name,
+                                "broker_order_id": broker_order_id,
+                                "broker_parent_order_id": broker_parent_order_id,
+                                "broker_status": broker_order_status,
+                                "broker_filled_qty": "",
+                                "broker_filled_avg_price": "",
+                                "broker_exit_order_id": "",
+                                "shares": paper_trade_result.get("shares", ""),
+                                "entry_price": paper_metrics.get("entry", ""),
+                                "stop_price": paper_metrics.get("stop", ""),
+                                "target_price": paper_metrics.get("target", ""),
+                                "exit_price": "",
+                                "exit_reason": "",
+                                "status": "OPEN",
+                                "notes": f"Paper {paper_metrics.get('direction', '')} bracket order submitted. client_order_id={paper_trade_result.get('client_order_id', '')}",
+                                "linked_signal_timestamp_utc": timestamp_utc,
+                                "linked_signal_entry": paper_metrics.get("entry", ""),
+                                "linked_signal_stop": paper_metrics.get("stop", ""),
+                                "linked_signal_target": paper_metrics.get("target", ""),
+                                "linked_signal_confidence": paper_metrics.get("final_confidence", ""),
+                                "inferred_stop_hit": "",
+                                "inferred_target_hit": "",
+                                "inferred_first_level_hit": "",
+                                "inferred_analysis_start_utc": "",
+                                "inferred_analysis_end_utc": "",
+                            })
+                            safe_insert_trade_event(
+                                event_time=parse_iso_utc(timestamp_utc),
+                                event_type="OPEN",
+                                symbol=str(paper_metrics.get("symbol", "") or ""),
+                                side=str(paper_metrics.get("direction", "") or ""),
+                                shares=to_float_or_none(paper_trade_result.get("shares", "")),
+                                price=to_float_or_none(paper_metrics.get("entry", "")),
+                                mode=mode,
+                                broker=broker_name,
+                                order_id=broker_order_id,
+                                parent_order_id=broker_parent_order_id,
+                                status="OPEN",
+                            )
+                            safe_insert_broker_order(
+                                order_id=broker_order_id,
+                                broker=broker_name,
+                                symbol=str(paper_metrics.get("symbol", "") or ""),
+                                side=str(paper_metrics.get("direction", "") or ""),
+                                order_type="bracket_entry",
+                                status=broker_order_status,
+                                qty=to_float_or_none(paper_trade_result.get("shares", "")),
+                                filled_qty=None,
+                                avg_fill_price=None,
+                                submitted_at=parse_iso_utc(timestamp_utc),
+                                filled_at=None,
+                            )
+
+                            entry_price = paper_metrics.get("entry", "")
+                            stop_price = paper_metrics.get("stop", "")
+                            target_price = paper_metrics.get("target", "")
+                            shares_value = paper_trade_result.get("shares", "")
+                            direction = _infer_direction(
+                                entry_price=entry_price,
+                                stop_price=stop_price,
+                                target_price=target_price,
+                                side=paper_metrics.get("direction", ""),
+                            )
+                            trade_key = _normalize_trade_key(
+                                str(paper_metrics.get("symbol", "") or ""),
+                                broker_parent_order_id,
+                                broker_order_id,
+                            )
+
+                            upsert_trade_lifecycle(
+                                trade_key=trade_key,
+                                symbol=str(paper_metrics.get("symbol", "") or ""),
+                                mode=mode,
+                                side=_to_upper_or_none(paper_metrics.get("direction", "")),
+                                direction=direction,
+                                status="OPEN",
+                                entry_time=parse_iso_utc(timestamp_utc),
+                                entry_price=to_float_or_none(entry_price),
+                                exit_time=None,
+                                exit_price=None,
+                                stop_price=to_float_or_none(stop_price),
+                                target_price=to_float_or_none(target_price),
+                                exit_reason=None,
+                                shares=to_float_or_none(shares_value),
+                                realized_pnl=None,
+                                realized_pnl_percent=None,
+                                duration_minutes=None,
+                                signal_timestamp=parse_iso_utc(timestamp_utc),
+                                signal_entry=to_float_or_none(entry_price),
+                                signal_stop=to_float_or_none(stop_price),
+                                signal_target=to_float_or_none(target_price),
+                                signal_confidence=to_float_or_none(paper_metrics.get("final_confidence", "")),
+                                broker=broker_name,
+                                order_id=broker_order_id,
+                                parent_order_id=broker_parent_order_id,
+                                exit_order_id=None,
+                            )
+                        else:
+                            rejection_reason = str(paper_trade_result.get("reason", "") or "not_placed")
+                            candidate_rejection_reasons.append(f"{broker_name}:{rejection_reason}")
+                            record_attempt(
+                                "PLACEMENT_REJECTED",
+                                symbol=candidate_symbol,
+                                metrics=paper_metrics,
+                                final_reason=rejection_reason,
+                                placed=False,
+                                broker=broker_name,
+                                broker_order_id=_paper_trade_order_id(paper_trade_result),
+                                broker_parent_order_id=_paper_trade_parent_order_id(paper_trade_result),
+                                broker_rejection_reason=str(paper_trade_result.get("details", "") or rejection_reason or ""),
+                            )
+
+                    if candidate_placed_any:
                         placed_count += 1
                         if paper_metrics.get("direction") == "BUY":
                             placed_long_count += 1
                         elif paper_metrics.get("direction") == "SELL":
                             placed_short_count += 1
-
-                        placed_trade_ids.append(str(paper_trade_result.get("client_order_id", "")).strip())
                         current_open_positions += 1
-                        current_open_exposure += _to_float(paper_trade_result.get("estimated_notional", 0.0), 0.0)
-                        append_trade_log({
-                            "timestamp_utc": timestamp_utc,
-                            "event_type": "OPEN",
-                            "symbol": paper_metrics.get("symbol", ""),
-                            "name": paper_trade_candidate.get("name", ""),
-                            "mode": mode,
-                            "trade_source": trade_source,
-                            "broker": broker_name,
-                            "broker_order_id": broker_order_id,
-                            "broker_parent_order_id": broker_parent_order_id,
-                            "broker_status": broker_order_status,
-                            "broker_filled_qty": "",
-                            "broker_filled_avg_price": "",
-                            "broker_exit_order_id": "",
-                            "shares": paper_trade_result.get("shares", ""),
-                            "entry_price": paper_metrics.get("entry", ""),
-                            "stop_price": paper_metrics.get("stop", ""),
-                            "target_price": paper_metrics.get("target", ""),
-                            "exit_price": "",
-                            "exit_reason": "",
-                            "status": "OPEN",
-                            "notes": f"Paper {paper_metrics.get('direction', '')} bracket order submitted. client_order_id={paper_trade_result.get('client_order_id', '')}",
-                            "linked_signal_timestamp_utc": timestamp_utc,
-                            "linked_signal_entry": paper_metrics.get("entry", ""),
-                            "linked_signal_stop": paper_metrics.get("stop", ""),
-                            "linked_signal_target": paper_metrics.get("target", ""),
-                            "linked_signal_confidence": paper_metrics.get("final_confidence", ""),
-                            "inferred_stop_hit": "",
-                            "inferred_target_hit": "",
-                            "inferred_first_level_hit": "",
-                            "inferred_analysis_start_utc": "",
-                            "inferred_analysis_end_utc": "",
-                        })
-                        safe_insert_trade_event(
-                            event_time=parse_iso_utc(timestamp_utc),
-                            event_type="OPEN",
-                            symbol=str(paper_metrics.get("symbol", "") or ""),
-                            side=str(paper_metrics.get("direction", "") or ""),
-                            shares=to_float_or_none(paper_trade_result.get("shares", "")),
-                            price=to_float_or_none(paper_metrics.get("entry", "")),
-                            mode=mode,
-                            broker=broker_name,
-                            order_id=broker_order_id,
-                            parent_order_id=broker_parent_order_id,
-                            status="OPEN",
-                        )
-                        safe_insert_broker_order(
-                            order_id=broker_order_id,
-                            broker=broker_name,
-                            symbol=str(paper_metrics.get("symbol", "") or ""),
-                            side=str(paper_metrics.get("direction", "") or ""),
-                            order_type="bracket_entry",
-                            status=broker_order_status,
-                            qty=to_float_or_none(paper_trade_result.get("shares", "")),
-                            filled_qty=None,
-                            avg_fill_price=None,
-                            submitted_at=parse_iso_utc(timestamp_utc),
-                            filled_at=None,
-                        )
-
-                        entry_price = paper_metrics.get("entry", "")
-                        stop_price = paper_metrics.get("stop", "")
-                        target_price = paper_metrics.get("target", "")
-                        shares_value = paper_trade_result.get("shares", "")
-                        paper_metrics["current_open_positions"] = current_open_positions
-                        paper_metrics["current_open_exposure"] = current_open_exposure
-                        direction = _infer_direction(
-                            entry_price=entry_price,
-                            stop_price=stop_price,
-                            target_price=target_price,
-                            side=paper_metrics.get("direction", ""),
-                        )
-                        trade_key = _normalize_trade_key(
-                            str(paper_metrics.get("symbol", "") or ""),
-                            broker_parent_order_id,
-                            broker_order_id,
-                        )
-
-                        upsert_trade_lifecycle(
-                            trade_key=trade_key,
-                            symbol=str(paper_metrics.get("symbol", "") or ""),
-                            mode=mode,
-                            side=_to_upper_or_none(paper_metrics.get("direction", "")),
-                            direction=direction,
-                            status="OPEN",
-                            entry_time=parse_iso_utc(timestamp_utc),
-                            entry_price=to_float_or_none(entry_price),
-                            exit_time=None,
-                            exit_price=None,
-                            stop_price=to_float_or_none(stop_price),
-                            target_price=to_float_or_none(target_price),
-                            exit_reason=None,
-                            shares=to_float_or_none(shares_value),
-                            realized_pnl=None,
-                            realized_pnl_percent=None,
-                            duration_minutes=None,
-                            signal_timestamp=parse_iso_utc(timestamp_utc),
-                            signal_entry=to_float_or_none(entry_price),
-                            signal_stop=to_float_or_none(stop_price),
-                            signal_target=to_float_or_none(target_price),
-                            signal_confidence=to_float_or_none(paper_metrics.get("final_confidence", "")),
-                            broker=broker_name,
-                            order_id=broker_order_id,
-                            parent_order_id=broker_parent_order_id,
-                            exit_order_id=None,
-                        )
+                        representative_result = next((item for item in broker_results if item.get("placed")), None)
+                        if representative_result is not None:
+                            current_open_exposure += _to_float(representative_result.get("estimated_notional", 0.0), 0.0)
+                            paper_metrics["current_open_positions"] = current_open_positions
+                            paper_metrics["current_open_exposure"] = current_open_exposure
                     else:
-                        record_attempt(
-                            "PLACEMENT_REJECTED",
-                            symbol=candidate_symbol,
-                            metrics=paper_metrics,
-                            final_reason=str(paper_trade_result.get("reason", "") or "not_placed"),
-                            placed=False,
-                            broker=_paper_trade_broker_name(paper_trade_result),
-                            broker_order_id=_paper_trade_order_id(paper_trade_result),
-                            broker_parent_order_id=_paper_trade_parent_order_id(paper_trade_result),
-                            broker_rejection_reason=str(paper_trade_result.get("details", "") or paper_trade_result.get("reason", "") or ""),
-                        )
                         skipped_symbols.append(candidate_symbol)
-                        skip_reasons.append(f"{candidate_symbol}:{paper_trade_result.get('reason', 'not_placed')}")
+                        skip_reasons.append(
+                            f"{candidate_symbol}:{'|'.join(candidate_rejection_reasons) if candidate_rejection_reasons else 'not_placed'}"
+                        )
                 except Exception as e:
                     log_exception(
                         "Paper trade placement failed",
