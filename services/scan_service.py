@@ -344,6 +344,8 @@ def execute_full_scan(
     upsert_trade_lifecycle: Callable[..., None],
     to_float_or_none: Callable[[Any], float | None],
     MIN_CONFIDENCE: float,
+    resolve_account_size: Callable[[dict[str, Any]], float],
+    active_broker: str = "ALPACA",
 ) -> dict[str, Any] | tuple[dict[str, Any], int]:
     mode = str(payload.get("mode", "primary")).lower()
     debug_raw = payload.get("debug", False)
@@ -368,11 +370,11 @@ def execute_full_scan(
         paper_trade = bool(paper_trade_raw)
 
     try:
-        account_size = float(_get_live_alpaca_account_equity(payload))
+        account_size = float(resolve_account_size(payload))
     except Exception as e:
         return {
             "ok": False,
-            "error": "unable to resolve account_size from Alpaca",
+            "error": f"unable to resolve account_size from {active_broker}",
             "details": str(e),
         }, 400
     

@@ -310,12 +310,18 @@ def read_all_signal_rows() -> list[dict]:
     return normalized_rows
 
 
-def get_latest_open_paper_trade_for_symbol(symbol: str) -> dict | None:
+def get_latest_open_paper_trade_for_symbol(symbol: str, broker: str | None = None) -> dict | None:
     normalized_symbol = str(symbol).strip().upper()
+    normalized_broker = str(broker or "").strip().upper()
     if not normalized_symbol:
         return None
 
-    matching_rows = [row for row in get_open_paper_trades() if str(row.get("symbol", "")).strip().upper() == normalized_symbol]
+    matching_rows = [
+        row
+        for row in get_open_paper_trades()
+        if str(row.get("symbol", "")).strip().upper() == normalized_symbol
+        and (not normalized_broker or str(row.get("broker", "") or "ALPACA").strip().upper() == normalized_broker)
+    ]
     if not matching_rows:
         return None
 

@@ -41,6 +41,8 @@ class AppOrchestrationTests(unittest.TestCase):
             to_float_or_none=lambda value: float(value) if value not in (None, "") else None,
             min_confidence=70,
             upsert_trade_lifecycle=lambda **kwargs: None,
+            resolve_account_size=lambda payload: 100000.0,
+            active_broker="ALPACA",
         )
 
         self.assertEqual(result, {"ok": True})

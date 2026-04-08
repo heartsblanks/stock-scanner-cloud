@@ -197,6 +197,55 @@ class IbkrGatewayClient:
 
         return normalized
 
+    def get_intraday_candles(self, symbol: str, interval: str = "1min", outputsize: int | None = None) -> list[dict[str, Any]]:
+        normalized_symbol = str(symbol).strip().upper()
+        if not normalized_symbol:
+            raise RuntimeError("symbol is required")
+
+        bar_size_by_interval = {
+            "1min": "1 min",
+            "5min": "5 mins",
+        }
+        bar_size = bar_size_by_interval.get(str(interval).strip().lower())
+        if not bar_size:
+            raise RuntimeError("unsupported interval")
+
+        ib = self._connect()
+        _LimitOrder, _MarketOrder, _StopOrder, Stock = self._load_order_classes()
+        contract = Stock(normalized_symbol, "SMART", "USD")
+        ib.qualifyContracts(contract)
+
+        bars = ib.reqHistoricalData(
+            contract,
+            endDateTime="",
+            durationStr="2 D",
+            barSizeSetting=bar_size,
+            whatToShow="TRADES",
+            useRTH=True,
+            formatDate=1,
+        )
+
+        normalized: list[dict[str, Any]] = []
+        trimmed_bars = list(bars or [])
+        if outputsize and outputsize > 0:
+            trimmed_bars = trimmed_bars[-int(outputsize):]
+
+        for bar in trimmed_bars:
+            bar_dt = getattr(bar, "date", None)
+            if hasattr(bar_dt, "strftime"):
+                dt_str = bar_dt.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                dt_str = str(bar_dt)
+            normalized.append({
+                "datetime": dt_str,
+                "open": _to_float(getattr(bar, "open", 0.0)),
+                "high": _to_float(getattr(bar, "high", 0.0)),
+                "low": _to_float(getattr(bar, "low", 0.0)),
+                "close": _to_float(getattr(bar, "close", 0.0)),
+                "volume": _to_float(getattr(bar, "volume", 0.0)),
+            })
+        return normalized
+
     def _normalize_trade(self, trade: Any) -> dict[str, Any]:
         contract = getattr(trade, "contract", None)
         order = getattr(trade, "order", None)

@@ -812,14 +812,14 @@ def get_benchmark_instruments():
     }
 
 
-def fetch_instruments(instruments: dict):
+def fetch_instruments(instruments: dict, *, fetch_intraday_fn=fetch_intraday):
     cache = {}
     fetch_ok = []
     fetch_fail = []
 
     for name, info in instruments.items():
         try:
-            candles = fetch_intraday(info["symbol"])
+            candles = fetch_intraday_fn(info["symbol"])
             cache[name] = candles
             fetch_ok.append(f"{name} ({info['symbol']})")
         except Exception as e:
@@ -845,7 +845,15 @@ def get_benchmark_directions_from_cache(cache: dict):
     return directions, failures
 
 
-def run_scan(account_size: float, mode: str, current_open_positions: int = 0, current_open_exposure: float = 0.0):
+def run_scan(
+    account_size: float,
+    mode: str,
+    current_open_positions: int = 0,
+    current_open_exposure: float = 0.0,
+    *,
+    fetch_intraday_fn=fetch_intraday,
+    source_label: str | None = None,
+):
     if mode == "primary":
         selected_instruments = PRIMARY_INSTRUMENTS
     elif mode == "secondary":
@@ -871,12 +879,12 @@ def run_scan(account_size: float, mode: str, current_open_positions: int = 0, cu
 
     benchmark_instruments = get_benchmark_instruments()
 
-    benchmark_cache, benchmark_ok, benchmark_fail = fetch_instruments(benchmark_instruments)
+    benchmark_cache, benchmark_ok, benchmark_fail = fetch_instruments(benchmark_instruments, fetch_intraday_fn=fetch_intraday_fn)
     benchmark_directions, benchmark_direction_fail = get_benchmark_directions_from_cache(benchmark_cache)
 
     non_benchmark_instruments = selected_instruments
 
-    instrument_cache, instrument_ok, instrument_fail = fetch_instruments(non_benchmark_instruments)
+    instrument_cache, instrument_ok, instrument_fail = fetch_instruments(non_benchmark_instruments, fetch_intraday_fn=fetch_intraday_fn)
 
     combined_cache = {}
     combined_cache.update(benchmark_cache)
@@ -927,7 +935,7 @@ def run_scan(account_size: float, mode: str, current_open_positions: int = 0, cu
         direction = trade["metrics"].get("direction")
         trade["metrics"]["manual_eligible"] = direction == "BUY"
         trade["metrics"]["paper_eligible"] = trade["metrics"].get("final_confidence", 0) > 90
-    return valid_trades, evaluations, fetch_ok, fetch_fail, benchmark_directions, mode.upper()
+    return valid_trades, evaluations, fetch_ok, fetch_fail, benchmark_directions, (source_label or mode.upper())
 
 
 def print_test(account_size: float, mode: str, debug: bool, current_open_positions: int = 0, current_open_exposure: float = 0.0):

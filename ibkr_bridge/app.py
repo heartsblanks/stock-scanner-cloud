@@ -89,6 +89,22 @@ def get_positions():
     return _run_bridge_operation("get_positions", lambda: get_ibkr_client().get_positions())
 
 
+@app.get("/market-data/intraday")
+@require_auth
+def get_intraday_market_data():
+    def fetch_intraday():
+        symbol = str(request.args.get("symbol", "")).strip().upper()
+        interval = str(request.args.get("interval", "1min")).strip().lower() or "1min"
+        outputsize_raw = request.args.get("outputsize", "0")
+        try:
+            outputsize = int(outputsize_raw) if str(outputsize_raw).strip() else None
+        except Exception:
+            outputsize = None
+        return get_ibkr_client().get_intraday_candles(symbol, interval=interval, outputsize=outputsize)
+
+    return _run_bridge_operation("get_intraday_market_data", fetch_intraday)
+
+
 @app.get("/orders/open")
 @require_auth
 def get_open_orders():

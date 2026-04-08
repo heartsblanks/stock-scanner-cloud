@@ -13,7 +13,7 @@ from analytics.signal_analysis import run_signal_analysis, upload_file_to_gcs as
 from brokers import get_paper_broker, get_paper_broker_config
 from brokers.alpaca_adapter import AlpacaPaperBroker
 from brokers.ibkr_adapter import IbkrPaperBroker
-from brokers.ibkr_bridge_client import ibkr_bridge_enabled
+from brokers.ibkr_bridge_client import ibkr_bridge_enabled, ibkr_bridge_get
 from core.db import healthcheck as db_healthcheck
 from storage import (
     insert_scan_run,
@@ -148,6 +148,103 @@ def place_paper_orders_from_trade(trade: dict[str, Any], max_notional: float | N
             results.append(ibkr_result)
 
     return results
+
+
+def place_alpaca_paper_orders_from_trade(trade: dict[str, Any], max_notional: float | None = None) -> list[dict]:
+    result = ALPACA_PAPER_BROKER.place_paper_bracket_order_from_trade(trade, max_notional=max_notional)
+    if isinstance(result, dict):
+        result.setdefault("broker", "ALPACA")
+        return [result]
+    return []
+
+
+def place_ibkr_paper_orders_from_trade(trade: dict[str, Any], max_notional: float | None = None) -> list[dict]:
+    try:
+        result = IBKR_PAPER_BROKER.place_paper_bracket_order_from_trade(trade, max_notional=max_notional)
+    except Exception as exc:
+        result = {
+            "attempted": True,
+            "placed": False,
+            "broker": "IBKR",
+            "reason": "ibkr_shadow_exception",
+            "details": str(exc),
+        }
+    if isinstance(result, dict):
+        result.setdefault("broker", "IBKR")
+        return [result]
+    return []
+
+
+def _account_equity_from_broker_account(account: dict[str, Any] | None) -> float:
+    if not isinstance(account, dict):
+        return 0.0
+    try:
+        return float(account.get("equity") or 0.0)
+    except Exception:
+        return 0.0
+
+
+def resolve_alpaca_account_size(payload: dict[str, Any]) -> float:
+    account = ALPACA_PAPER_BROKER.get_account()
+    equity = _account_equity_from_broker_account(account)
+    if equity > 0:
+        return equity
+    raise ValueError("Unable to resolve Alpaca account equity")
+
+
+def resolve_ibkr_account_size(payload: dict[str, Any]) -> float:
+    account = IBKR_PAPER_BROKER.get_account()
+    equity = _account_equity_from_broker_account(account)
+    if equity > 0:
+        return equity
+    raise ValueError("Unable to resolve IBKR account equity")
+
+
+def get_current_open_position_state_for_broker(broker) -> tuple[int, float]:
+    try:
+        positions = broker.get_open_positions() or []
+    except Exception:
+        return 0, 0.0
+
+    open_count = 0
+    open_exposure = 0.0
+    for position in positions:
+        symbol = str(position.get("symbol", "")).strip().upper()
+        if not symbol:
+            continue
+        open_count += 1
+        market_value = to_float_or_none(position.get("market_value"))
+        if market_value is not None:
+            open_exposure += abs(market_value)
+            continue
+        qty = to_float_or_none(position.get("qty"))
+        current_price = to_float_or_none(position.get("current_price"))
+        if qty is not None and current_price is not None:
+            open_exposure += abs(qty * current_price)
+    return open_count, open_exposure
+
+
+def get_risk_exposure_summary_for_broker(broker) -> dict[str, Any]:
+    account_size = _account_equity_from_broker_account(broker.get_account())
+    open_count, open_exposure = get_current_open_position_state_for_broker(broker)
+    return {
+        "account_size": account_size,
+        "open_position_count": open_count,
+        "total_open_exposure": open_exposure,
+        "daily_realized_pnl": 0.0,
+        "daily_unrealized_pnl": 0.0,
+    }
+
+
+def get_latest_open_paper_trade_for_symbol_for_broker(symbol: str, broker_name: str) -> dict | None:
+    return context_get_latest_open_paper_trade_for_symbol(symbol, broker=broker_name)
+
+
+def fetch_ibkr_intraday(symbol: str, interval: str = "1min", outputsize: int | None = None) -> list[dict]:
+    params: dict[str, Any] = {"symbol": symbol, "interval": interval}
+    if outputsize is not None:
+        params["outputsize"] = int(outputsize)
+    return ibkr_bridge_get("/market-data/intraday", params=params) or []
 
 
 def env_flag(name: str, default: str = "true") -> bool:
@@ -338,6 +435,48 @@ def infer_first_level_hit(open_row: dict, close_timestamp_utc: str) -> dict:
     return context_infer_first_level_hit(open_row, close_timestamp_utc)
 
 
+def execute_scan_pipeline(
+    payload: dict[str, Any],
+    *,
+    broker_name: str,
+    run_scan_fn,
+    resolve_account_size_fn,
+    get_current_open_position_state_fn,
+    get_risk_exposure_summary_fn,
+    get_latest_open_trade_fn,
+    place_paper_orders_fn,
+):
+    return run_handle_scan_request(
+        payload,
+        get_current_open_position_state=get_current_open_position_state_fn,
+        get_risk_exposure_summary=get_risk_exposure_summary_fn,
+        execute_full_scan=execute_full_scan,
+        market_time_check=market_time_check,
+        build_scan_id=build_scan_id,
+        market_phase_from_timestamp=market_phase_from_timestamp,
+        append_signal_log=append_signal_log,
+        safe_insert_paper_trade_attempt=safe_insert_paper_trade_attempt,
+        safe_insert_scan_run=safe_insert_scan_run,
+        parse_iso_utc=parse_iso_utc,
+        run_scan=run_scan_fn,
+        trade_to_dict=trade_to_dict,
+        debug_to_dict=debug_to_dict,
+        paper_candidate_from_evaluation=paper_candidate_from_evaluation,
+        evaluate_symbol=evaluate_symbol,
+        get_latest_open_paper_trade_for_symbol=get_latest_open_trade_fn,
+        is_symbol_in_paper_cooldown=is_symbol_in_paper_cooldown,
+        place_paper_orders_from_trade=place_paper_orders_fn,
+        append_trade_log=append_trade_log,
+        safe_insert_trade_event=safe_insert_trade_event,
+        safe_insert_broker_order=safe_insert_broker_order,
+        to_float_or_none=to_float_or_none,
+        min_confidence=MIN_CONFIDENCE,
+        upsert_trade_lifecycle=upsert_trade_lifecycle,
+        resolve_account_size=resolve_account_size_fn,
+        active_broker=broker_name,
+    )
+
+
 
 
 def handle_sync_paper_trades():
@@ -357,33 +496,49 @@ def handle_sync_paper_trades():
     )
 
 def handle_scan_request(payload):
-    return run_handle_scan_request(
+    alpaca_response = execute_scan_pipeline(
         payload,
-        get_current_open_position_state=get_current_open_position_state,
-        get_risk_exposure_summary=get_risk_exposure_summary,
-        execute_full_scan=execute_full_scan,
-        market_time_check=market_time_check,
-        build_scan_id=build_scan_id,
-        market_phase_from_timestamp=market_phase_from_timestamp,
-        append_signal_log=append_signal_log,
-        safe_insert_paper_trade_attempt=safe_insert_paper_trade_attempt,
-        safe_insert_scan_run=safe_insert_scan_run,
-        parse_iso_utc=parse_iso_utc,
-        run_scan=run_scan,
-        trade_to_dict=trade_to_dict,
-        debug_to_dict=debug_to_dict,
-        paper_candidate_from_evaluation=paper_candidate_from_evaluation,
-        evaluate_symbol=evaluate_symbol,
-        get_latest_open_paper_trade_for_symbol=get_latest_open_paper_trade_for_symbol,
-        is_symbol_in_paper_cooldown=is_symbol_in_paper_cooldown,
-        place_paper_orders_from_trade=place_paper_orders_from_trade,
-        append_trade_log=append_trade_log,
-        safe_insert_trade_event=safe_insert_trade_event,
-        safe_insert_broker_order=safe_insert_broker_order,
-        to_float_or_none=to_float_or_none,
-        min_confidence=MIN_CONFIDENCE,
-        upsert_trade_lifecycle=upsert_trade_lifecycle,
+        broker_name="ALPACA",
+        run_scan_fn=run_scan,
+        resolve_account_size_fn=resolve_alpaca_account_size,
+        get_current_open_position_state_fn=lambda: get_current_open_position_state_for_broker(ALPACA_PAPER_BROKER),
+        get_risk_exposure_summary_fn=lambda: get_risk_exposure_summary_for_broker(ALPACA_PAPER_BROKER),
+        get_latest_open_trade_fn=lambda symbol: get_latest_open_paper_trade_for_symbol_for_broker(symbol, "ALPACA"),
+        place_paper_orders_fn=place_alpaca_paper_orders_from_trade,
     )
+
+    if not (isinstance(payload, dict) and payload.get("paper_trade") and PAPER_BROKER_CONFIG.shadow_mode_enabled and ibkr_bridge_enabled()):
+        return alpaca_response
+
+    ibkr_payload = dict(payload)
+    ibkr_response = execute_scan_pipeline(
+        ibkr_payload,
+        broker_name="IBKR",
+        run_scan_fn=lambda account_size, mode, current_open_positions=0, current_open_exposure=0.0: run_scan(
+            account_size,
+            mode,
+            current_open_positions=current_open_positions,
+            current_open_exposure=current_open_exposure,
+            fetch_intraday_fn=fetch_ibkr_intraday,
+            source_label=f"IBKR_{mode.upper()}",
+        ),
+        resolve_account_size_fn=resolve_ibkr_account_size,
+        get_current_open_position_state_fn=lambda: get_current_open_position_state_for_broker(IBKR_PAPER_BROKER),
+        get_risk_exposure_summary_fn=lambda: get_risk_exposure_summary_for_broker(IBKR_PAPER_BROKER),
+        get_latest_open_trade_fn=lambda symbol: get_latest_open_paper_trade_for_symbol_for_broker(symbol, "IBKR"),
+        place_paper_orders_fn=place_ibkr_paper_orders_from_trade,
+    )
+
+    if isinstance(alpaca_response, tuple) or isinstance(ibkr_response, tuple):
+        return alpaca_response
+
+    if isinstance(alpaca_response, dict):
+        alpaca_response["parallel_runs"] = {
+            "alpaca": {"ok": bool(alpaca_response.get("ok", False))},
+            "ibkr": {"ok": bool(ibkr_response.get("ok", False)) if isinstance(ibkr_response, dict) else False},
+        }
+        alpaca_response["shadow_ibkr"] = ibkr_response
+    return alpaca_response
 
 
 def run_scan_wrapper(payload):

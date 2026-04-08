@@ -63,6 +63,8 @@ def handle_scan_request(
     to_float_or_none: Callable[[Any], float | None],
     min_confidence: float,
     upsert_trade_lifecycle: Callable[..., None],
+    resolve_account_size: Callable[[dict[str, Any]], float],
+    active_broker: str,
 ):
     scan_payload = dict(payload or {})
     if scan_payload.get("paper_trade"):
@@ -103,6 +105,8 @@ def handle_scan_request(
         to_float_or_none=to_float_or_none,
         MIN_CONFIDENCE=min_confidence,
         upsert_trade_lifecycle=upsert_trade_lifecycle,
+        resolve_account_size=resolve_account_size,
+        active_broker=active_broker,
     )
 
 
