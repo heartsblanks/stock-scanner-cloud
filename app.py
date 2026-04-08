@@ -511,23 +511,30 @@ def handle_scan_request(payload):
         return alpaca_response
 
     ibkr_payload = dict(payload)
-    ibkr_response = execute_scan_pipeline(
-        ibkr_payload,
-        broker_name="IBKR",
-        run_scan_fn=lambda account_size, mode, current_open_positions=0, current_open_exposure=0.0: run_scan(
-            account_size,
-            mode,
-            current_open_positions=current_open_positions,
-            current_open_exposure=current_open_exposure,
-            fetch_intraday_fn=fetch_ibkr_intraday,
-            source_label=f"IBKR_{mode.upper()}",
-        ),
-        resolve_account_size_fn=resolve_ibkr_account_size,
-        get_current_open_position_state_fn=lambda: get_current_open_position_state_for_broker(IBKR_PAPER_BROKER),
-        get_risk_exposure_summary_fn=lambda: get_risk_exposure_summary_for_broker(IBKR_PAPER_BROKER),
-        get_latest_open_trade_fn=lambda symbol: get_latest_open_paper_trade_for_symbol_for_broker(symbol, "IBKR"),
-        place_paper_orders_fn=place_ibkr_paper_orders_from_trade,
-    )
+    try:
+        ibkr_response = execute_scan_pipeline(
+            ibkr_payload,
+            broker_name="IBKR",
+            run_scan_fn=lambda account_size, mode, current_open_positions=0, current_open_exposure=0.0: run_scan(
+                account_size,
+                mode,
+                current_open_positions=current_open_positions,
+                current_open_exposure=current_open_exposure,
+                fetch_intraday_fn=fetch_ibkr_intraday,
+                source_label=f"IBKR_{mode.upper()}",
+            ),
+            resolve_account_size_fn=resolve_ibkr_account_size,
+            get_current_open_position_state_fn=lambda: get_current_open_position_state_for_broker(IBKR_PAPER_BROKER),
+            get_risk_exposure_summary_fn=lambda: get_risk_exposure_summary_for_broker(IBKR_PAPER_BROKER),
+            get_latest_open_trade_fn=lambda symbol: get_latest_open_paper_trade_for_symbol_for_broker(symbol, "IBKR"),
+            place_paper_orders_fn=place_ibkr_paper_orders_from_trade,
+        )
+    except Exception as exc:
+        ibkr_response = {
+            "ok": False,
+            "error": "ibkr_shadow_failed",
+            "details": str(exc),
+        }
 
     if isinstance(alpaca_response, tuple) or isinstance(ibkr_response, tuple):
         return alpaca_response

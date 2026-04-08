@@ -223,6 +223,7 @@ class IbkrGatewayClient:
             whatToShow="TRADES",
             useRTH=True,
             formatDate=1,
+            timeout=float(self.config.timeout_seconds),
         )
 
         normalized: list[dict[str, Any]] = []
