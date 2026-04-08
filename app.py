@@ -216,6 +216,18 @@ def resolve_ibkr_account_size(payload: dict[str, Any]) -> float:
     raise ValueError("Unable to resolve IBKR account equity")
 
 
+def resolve_ibkr_shadow_account_size(payload: dict[str, Any]) -> float:
+    fallback = to_float_or_none(
+        payload.get("ibkr_account_size")
+        or payload.get("shadow_account_size")
+        or os.getenv("IBKR_SHADOW_ACCOUNT_SIZE_FALLBACK")
+        or "1000000"
+    )
+    if fallback is not None and fallback > 0:
+        return float(fallback)
+    return 1000000.0
+
+
 def get_current_open_position_state_for_broker(broker) -> tuple[int, float]:
     try:
         positions = broker.get_open_positions() or []
@@ -254,6 +266,17 @@ def get_risk_exposure_summary_for_broker(broker) -> dict[str, Any]:
     open_count, open_exposure = get_current_open_position_state_for_broker(broker)
     return {
         "account_size": account_size,
+        "open_position_count": open_count,
+        "total_open_exposure": open_exposure,
+        "daily_realized_pnl": 0.0,
+        "daily_unrealized_pnl": 0.0,
+    }
+
+
+def get_ibkr_shadow_risk_exposure_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    open_count, open_exposure = get_current_open_position_state_for_broker(IBKR_PAPER_BROKER)
+    return {
+        "account_size": resolve_ibkr_shadow_account_size(payload),
         "open_position_count": open_count,
         "total_open_exposure": open_exposure,
         "daily_realized_pnl": 0.0,
@@ -552,9 +575,9 @@ def handle_scan_request(payload):
                 fetch_intraday_fn=fetch_ibkr_intraday,
                 source_label=f"IBKR_{mode.upper()}",
             ),
-            resolve_account_size_fn=resolve_ibkr_account_size,
+            resolve_account_size_fn=resolve_ibkr_shadow_account_size,
             get_current_open_position_state_fn=lambda: get_current_open_position_state_for_broker(IBKR_PAPER_BROKER),
-            get_risk_exposure_summary_fn=lambda: get_risk_exposure_summary_for_broker(IBKR_PAPER_BROKER),
+            get_risk_exposure_summary_fn=lambda: get_ibkr_shadow_risk_exposure_summary(ibkr_payload),
             get_latest_open_trade_fn=lambda symbol: get_latest_open_paper_trade_for_symbol_for_broker(symbol, "IBKR"),
             place_paper_orders_fn=place_ibkr_paper_orders_from_trade,
         )
