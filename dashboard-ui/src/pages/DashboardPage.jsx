@@ -145,9 +145,18 @@ export default function DashboardPage() {
       ? "dashboard-pill-ok"
       : mismatchLabel === "WARNING"
         ? "dashboard-pill-warn"
-        : mismatchLabel === "CRITICAL"
+      : mismatchLabel === "CRITICAL"
           ? "dashboard-pill-danger"
           : "dashboard-pill-info";
+  const ibkrState = String(ibkrStatus?.state || "UNKNOWN").toUpperCase();
+  const ibkrTone =
+    ibkrState === "READY"
+      ? "dashboard-pill-ok"
+      : ibkrState === "LOGIN_REQUIRED" || ibkrState === "MARKET_DATA_UNAVAILABLE"
+        ? "dashboard-pill-warn"
+        : ibkrState === "DISABLED"
+          ? "dashboard-pill-info"
+          : "dashboard-pill-danger";
   const hasDrilldown = Boolean(drilldown.symbol || drilldown.mode || drilldown.hourUtc);
 
   const filteredOpenTrades = openTrades.filter((row) => {
@@ -217,10 +226,28 @@ export default function DashboardPage() {
                 <span className="dashboard-kicker-dot" />
                 Trading Operations Console
               </div>
-              <h1 className="dashboard-title">See the trading day as one connected system.</h1>
+              <h1 className="dashboard-title">Open the page and know what needs attention.</h1>
+              <div className="dashboard-hero-status-row">
+                <span className="dashboard-hero-status-label">Health Snapshot</span>
+                <span className={`dashboard-pill dashboard-pill-status ${backendHealthStatus === "OK" ? "dashboard-pill-ok" : backendHealthStatus === "WARNING" ? "dashboard-pill-warn" : "dashboard-pill-danger"}`}>
+                  Backend {backendHealthStatus || "UNKNOWN"}
+                </span>
+                <span className="dashboard-pill">Sync {syncHealthStatus || "UNKNOWN"}</span>
+                <span className={`dashboard-pill dashboard-pill-status ${mismatchTone}`}>
+                  Recon {reconciliationHealthStatus || "UNKNOWN"}
+                </span>
+                <span className={`dashboard-pill dashboard-pill-status ${ibkrTone}`}>
+                  IBKR {ibkrState}
+                </span>
+                {ibkrStatus?.enabled && (
+                  <span className="dashboard-pill">
+                    Login {ibkrStatus?.login_required ? "Needed" : "Not Needed"}
+                  </span>
+                )}
+              </div>
               <p className="dashboard-subtitle">
-                A sharper command view for scan quality, risk posture, reconciliation, broker health, and the state of
-                every paper trade moving through the stack.
+                Fast read on backend health, reconciliation, and IBKR readiness before you drill into trades,
+                execution quality, or broker comparison.
               </p>
               <div className="dashboard-hero-meta">
                 <div className="dashboard-hero-stat">
