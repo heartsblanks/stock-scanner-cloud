@@ -13,7 +13,7 @@ Current status:
 - the first operational write-path endpoints are now available for:
   - `POST /orders/cancel-by-symbol`
   - `POST /positions/close`
-- paper bracket-order placement is still intentionally deferred
+- paper bracket-order placement is now available and manually verified through the bridge
 
 Recommended VM layout:
 - VM OS: Ubuntu on GCP Compute Engine
@@ -43,10 +43,9 @@ Current endpoint contract:
 - `POST /positions/close`
 
 Planned next work:
-- connect the running bridge to IB Gateway / TWS on the VM
-- implement paper bracket-order placement
 - expand order sync / reconciliation helpers
-- add a small systemd-friendly deployment/runbook for the GCP VM
+- improve broker-session durability and startup automation
+- reduce or eliminate the remaining daily manual IB Gateway login steps
 
 Cost control recommendation:
 - keep the VM scheduled only for the trading window instead of running 24/7
@@ -125,6 +124,23 @@ sudo systemctl enable ibkr-bridge
 sudo systemctl start ibkr-bridge
 ```
 
+### 7a. Optional: install IB Gateway as a managed service
+If you want the VM to start IB Gateway automatically when it boots, add the optional service files:
+
+```bash
+sudo cp ibkr_bridge/systemd/ibkr-gateway.env.example /etc/ibkr-gateway.env
+sudo cp ibkr_bridge/systemd/ibkr-gateway.service /etc/systemd/system/ibkr-gateway.service
+sudo chmod 600 /etc/ibkr-gateway.env
+sudo systemctl daemon-reload
+sudo systemctl enable ibkr-gateway
+sudo systemctl start ibkr-gateway
+```
+
+Notes:
+- you still need to verify the launcher path in `/etc/ibkr-gateway.env`
+- this helps auto-start the application, but it does not magically solve IBKR login/session prompts by itself
+- keep the bridge separate from Gateway so the API service can be restarted independently
+
 ### 8. Verify the bridge
 Health should work without auth:
 ```bash
@@ -145,6 +161,36 @@ When the VM bridge is reachable and implemented, configure the main app with:
 For parallel evaluation, keep:
 - `PAPER_BROKER=alpaca`
 - and use shadow/compare flags separately until IBKR is proven stable
+
+## Why VM Deployment Is Separate From `git push`
+
+Cloud Run is being deployed through `cloudbuild.yaml`, so pushing code and triggering builds updates the managed service automatically.
+
+The IBKR VM is different:
+- it is a stateful machine, not a managed serverless deploy target
+- it runs local software next to IB Gateway
+- we intentionally have not wired a VM auto-deploy hook yet, because an automatic restart during market hours could interrupt the broker session
+
+So today the VM deploy step is explicit:
+
+```bash
+bash scripts/deploy_ibkr_vm.sh
+```
+
+That script:
+- SSHes into the VM
+- fast-forwards the `ibkr-parallel-eval` checkout
+- restarts `ibkr-bridge`
+
+This is safer than silently redeploying the VM on every push while the broker session is live.
+
+## Recommended Next Sequence
+
+The best order from here is:
+- auto-start IB Gateway on boot
+- keep the bridge updated with `scripts/deploy_ibkr_vm.sh`
+- verify live dual placement during market hours
+- then decide whether to automate the remaining login/session step further
 
 ## VM Start/Stop Automation
 
