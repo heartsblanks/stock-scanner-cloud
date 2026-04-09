@@ -370,10 +370,51 @@ class IbkrGatewayClient:
         if final_shares <= 0:
             return {"attempted": False, "placed": False, "broker": "IBKR", "symbol": symbol, "reason": "position_size_too_small"}
 
-        ib = self._connect()
+        log_info(
+            "IBKR bridge paper bracket placement started",
+            component="ibkr_bridge",
+            operation="place_paper_bracket_order",
+            symbol=symbol,
+            direction=direction,
+            entry=entry,
+            stop=stop,
+            target=target,
+            scanner_shares=scanner_shares,
+            final_shares=final_shares,
+            notional_cap=round(notional_cap, 2),
+        )
+
+        ib = self._reset_connection()
         LimitOrder, MarketOrder, StopOrder, Stock = self._load_order_classes()
         contract = Stock(symbol, "SMART", "USD")
-        ib.qualifyContracts(contract)
+        try:
+            ib.qualifyContracts(contract)
+            log_info(
+                "IBKR bridge paper bracket contract qualified",
+                component="ibkr_bridge",
+                operation="place_paper_bracket_order",
+                symbol=symbol,
+                con_id=int(getattr(contract, "conId", 0) or 0),
+                exchange=str(getattr(contract, "exchange", "")).strip(),
+                primary_exchange=str(getattr(contract, "primaryExchange", "")).strip(),
+            )
+        except Exception as exc:
+            log_exception(
+                "IBKR bridge paper bracket contract qualification failed",
+                exc,
+                component="ibkr_bridge",
+                operation="place_paper_bracket_order",
+                symbol=symbol,
+            )
+            self._disconnect()
+            return {
+                "attempted": True,
+                "placed": False,
+                "broker": "IBKR",
+                "symbol": symbol,
+                "reason": "ibkr_contract_qualification_failed",
+                "details": str(exc),
+            }
 
         action = "BUY" if direction == "BUY" else "SELL"
         exit_action = "SELL" if action == "BUY" else "BUY"
@@ -397,11 +438,52 @@ class IbkrGatewayClient:
         stop_loss.orderRef = client_order_id
         stop_loss.tif = "GTC"
 
+        log_info(
+            "IBKR bridge paper bracket orders prepared",
+            component="ibkr_bridge",
+            operation="place_paper_bracket_order",
+            symbol=symbol,
+            client_order_id=client_order_id,
+            parent_order_id=base_order_id,
+            take_profit_order_id=base_order_id + 1,
+            stop_loss_order_id=base_order_id + 2,
+        )
+
         try:
             parent_trade = ib.placeOrder(contract, parent)
+            log_info(
+                "IBKR bridge parent order submitted",
+                component="ibkr_bridge",
+                operation="place_paper_bracket_order",
+                symbol=symbol,
+                order_id=base_order_id,
+            )
             take_profit_trade = ib.placeOrder(contract, take_profit)
+            log_info(
+                "IBKR bridge take profit order submitted",
+                component="ibkr_bridge",
+                operation="place_paper_bracket_order",
+                symbol=symbol,
+                order_id=base_order_id + 1,
+            )
             stop_loss_trade = ib.placeOrder(contract, stop_loss)
+            log_info(
+                "IBKR bridge stop loss order submitted",
+                component="ibkr_bridge",
+                operation="place_paper_bracket_order",
+                symbol=symbol,
+                order_id=base_order_id + 2,
+            )
         except Exception as exc:
+            log_exception(
+                "IBKR bridge paper bracket placement failed",
+                exc,
+                component="ibkr_bridge",
+                operation="place_paper_bracket_order",
+                symbol=symbol,
+                client_order_id=client_order_id,
+            )
+            self._disconnect()
             return {
                 "attempted": True,
                 "placed": False,
@@ -413,6 +495,22 @@ class IbkrGatewayClient:
 
         estimated_notional = round(final_shares * entry, 2)
         parent_status = str(getattr(getattr(parent_trade, "orderStatus", None), "status", "")).strip()
+        take_profit_status = str(getattr(getattr(take_profit_trade, "orderStatus", None), "status", "")).strip()
+        stop_loss_status = str(getattr(getattr(stop_loss_trade, "orderStatus", None), "status", "")).strip()
+
+        log_info(
+            "IBKR bridge paper bracket placement completed",
+            component="ibkr_bridge",
+            operation="place_paper_bracket_order",
+            symbol=symbol,
+            client_order_id=client_order_id,
+            parent_order_id=base_order_id,
+            parent_status=parent_status,
+            take_profit_status=take_profit_status,
+            stop_loss_status=stop_loss_status,
+            estimated_notional=estimated_notional,
+        )
+        self._disconnect()
 
         return {
             "attempted": True,
