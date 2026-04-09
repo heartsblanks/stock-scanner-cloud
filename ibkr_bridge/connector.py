@@ -325,21 +325,69 @@ class IbkrGatewayClient:
             "stop_price": _to_float(getattr(order, "auxPrice", 0.0)),
         }
 
+    def _fetch_open_trades(self, ib) -> list[Any]:
+        trades = list(ib.openTrades() or [])
+        if trades:
+            return trades
+
+        for fetch_name in ("reqAllOpenOrders", "reqOpenOrders"):
+            fetch_fn = getattr(ib, fetch_name, None)
+            if fetch_fn is None:
+                continue
+            try:
+                fetched = list(fetch_fn() or [])
+            except Exception as exc:
+                log_exception(
+                    "IBKR bridge open-order fetch failed",
+                    exc,
+                    component="ibkr_bridge",
+                    operation="fetch_open_trades",
+                    method=fetch_name,
+                )
+                continue
+            if fetched:
+                log_info(
+                    "IBKR bridge open-order fetch returned trades",
+                    component="ibkr_bridge",
+                    operation="fetch_open_trades",
+                    method=fetch_name,
+                    count=len(fetched),
+                )
+                return fetched
+
+        fallback_trades = list(getattr(ib, "trades", lambda: [])() or [])
+        if fallback_trades:
+            log_info(
+                "IBKR bridge open-order fetch used trade fallback",
+                component="ibkr_bridge",
+                operation="fetch_open_trades",
+                method="trades",
+                count=len(fallback_trades),
+            )
+        return fallback_trades
+
     def get_open_orders(self) -> list[dict[str, Any]]:
-        ib = self._connect()
-        return [self._normalize_trade(trade) for trade in (ib.openTrades() or [])]
+        ib = self._reset_connection()
+        try:
+            trades = self._fetch_open_trades(ib)
+            return [self._normalize_trade(trade) for trade in trades]
+        finally:
+            self._disconnect()
 
     def get_order(self, order_id: str) -> dict[str, Any] | None:
         normalized_order_id = str(order_id).strip()
         if not normalized_order_id:
             return None
 
-        ib = self._connect()
-        for trade in ib.openTrades() or []:
-            trade_order_id = str(getattr(getattr(trade, "order", None), "orderId", "")).strip()
-            if trade_order_id == normalized_order_id:
-                return self._normalize_trade(trade)
-        return None
+        ib = self._reset_connection()
+        try:
+            for trade in self._fetch_open_trades(ib):
+                trade_order_id = str(getattr(getattr(trade, "order", None), "orderId", "")).strip()
+                if trade_order_id == normalized_order_id:
+                    return self._normalize_trade(trade)
+            return None
+        finally:
+            self._disconnect()
 
     def place_paper_bracket_order(self, trade: dict[str, Any], max_notional: float | None = None) -> dict[str, Any]:
         metrics = trade.get("metrics", {}) if isinstance(trade, dict) else {}
