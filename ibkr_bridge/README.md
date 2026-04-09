@@ -140,6 +140,21 @@ Notes:
 - you still need to verify the launcher path in `/etc/ibkr-gateway.env`
 - this helps auto-start the application, but it does not magically solve IBKR login/session prompts by itself
 - keep the bridge separate from Gateway so the API service can be restarted independently
+- the bridge service now waits for the Gateway port before it starts
+
+### 7b. Add a readiness check
+Once both services are installed, you can verify whether automation actually resulted in a usable broker session:
+
+```bash
+sudo bash -lc 'set -a; source /etc/ibkr-bridge.env; source /etc/ibkr-gateway.env; python3 /opt/stock-scanner-cloud/ibkr_bridge/scripts/check_ibkr_bridge_ready.py'
+```
+
+This is intentionally stricter than a simple port check. It verifies:
+- bridge health
+- account access
+- one small intraday market-data fetch
+
+If that command fails, the stack is up but the IBKR session still needs manual attention, usually a login or re-login.
 
 ### 8. Verify the bridge
 Health should work without auth:
@@ -189,6 +204,7 @@ This is safer than silently redeploying the VM on every push while the broker se
 The best order from here is:
 - auto-start IB Gateway on boot
 - keep the bridge updated with `scripts/deploy_ibkr_vm.sh`
+- run the readiness check after boot or after deployment
 - verify live dual placement during market hours
 - then decide whether to automate the remaining login/session step further
 
