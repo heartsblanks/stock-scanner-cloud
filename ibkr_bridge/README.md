@@ -52,7 +52,7 @@ Cost control recommendation:
 - recommended scheduler window:
   - start VM at `9:15 AM ET`
   - stop VM at `5:00 PM ET`
-- keep in mind that IB Gateway login is still manual right now, so the VM can auto-start but IB Gateway still needs a fresh daily paper-session login until that is automated
+- keep in mind that IB Gateway login is still manual right now, so the VM can auto-start but IB Gateway may still need a fresh daily paper-session login until that is automated
 - plain Cloud Scheduler cron cannot skip market holidays by itself
 - if you want holiday-aware VM control, the clean path is:
   - Scheduler calls a tiny controller endpoint or script on weekdays
@@ -61,6 +61,12 @@ Cost control recommendation:
 - the current repo now includes that controller on the main Cloud Run app at:
   - `POST /scheduler/ibkr-vm-control`
 - the scheduler setup script now points the weekday jobs at that controller instead of calling Compute Engine directly
+
+Current manual-access convenience:
+- the VM now has a static public IP for manual RDP access:
+  - `34.77.242.163:3389`
+- that means your phone/laptop login address should stay stable even though the VM is stopped and started on a schedule
+- Cloud Run still reaches the bridge over the VM's internal IP through the VPC connector, so the static public IP is only for operator access
 
 ## GCP VM Runbook
 
@@ -156,6 +162,23 @@ This is intentionally stricter than a simple port check. It verifies:
 
 If that command fails, the stack is up but the IBKR session still needs manual attention, usually a login or re-login.
 
+### 7c. Daily operator flow
+Recommended daily flow now that VM startup is automated:
+
+1. let the weekday scheduler start the VM
+2. let `ibkr-gateway.service` and `ibkr-bridge.service` start automatically
+3. run the readiness check
+4. only log into IB Gateway if readiness fails
+
+That keeps the manual step as a fallback instead of a required daily ritual.
+
+Phone-friendly fallback:
+- you can use your phone for the IBKR approval/IB Key step if IBKR prompts for it
+- you can also use a phone RDP client to connect to the VM at `34.77.242.163:3389` if the session needs manual attention
+- the goal is:
+  - automation handles VM + Gateway + bridge startup
+  - you only intervene when the readiness check says the session is not usable
+
 ### 8. Verify the bridge
 Health should work without auth:
 ```bash
@@ -205,6 +228,7 @@ The best order from here is:
 - auto-start IB Gateway on boot
 - keep the bridge updated with `scripts/deploy_ibkr_vm.sh`
 - run the readiness check after boot or after deployment
+- use manual phone/laptop login only when readiness fails
 - verify live dual placement during market hours
 - then decide whether to automate the remaining login/session step further
 

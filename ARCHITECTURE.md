@@ -197,11 +197,16 @@ Parallel IBKR evaluation strategy:
 - `1.` start the VM at `9:15 AM ET`
 - `2.` keep it available through the close and immediate post-close comparison window
 - `3.` stop the VM at `5:00 PM ET`
-- `4.` keep IB Gateway login manual until a secure automation path is intentionally designed
+- `4.` keep a manual IB Gateway login fallback for now, but auto-start the VM, IB Gateway process, and bridge so operator intervention is only needed when readiness fails
+- `5.` keep a static public VM IP for operator access so phone/laptop RDP does not change across stop/start cycles
 - holiday handling note:
 - `1.` plain Cloud Scheduler cron can handle weekdays and timezone shifts but not exchange holidays
 - `2.` the current design now uses a calendar-aware Cloud Run controller at `POST /scheduler/ibkr-vm-control`
 - `3.` start requests skip cleanly on NYSE holidays and weekends; stop requests remain safe idempotent calls for cost control
+- operator flow note:
+- `1.` Cloud Run and scheduler automation should bring the VM-side stack up automatically
+- `2.` the readiness check is the gate for "usable broker session" rather than simple process uptime
+- `3.` only if readiness fails should the operator log into IB Gateway, which can be done from a laptop or phone over RDP
 - expected bridge contract:
 - `GET /account`
 - `GET /positions`
