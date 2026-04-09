@@ -108,7 +108,7 @@ from analytics.trade_scan import (
 )
 from analytics.instruments import INSTRUMENT_GROUPS
 PAPER_TRADE_MIN_CONFIDENCE = 70
-IBKR_PAPER_TRADE_MIN_CONFIDENCE = int(os.getenv("IBKR_PAPER_TRADE_MIN_CONFIDENCE", "65"))
+IBKR_PAPER_TRADE_MIN_CONFIDENCE = int(os.getenv("IBKR_PAPER_TRADE_MIN_CONFIDENCE", "40"))
 
 
 app = Flask(__name__)
