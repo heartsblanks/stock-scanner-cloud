@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from brokers.ibkr_bridge_client import ibkr_bridge_get, ibkr_bridge_post, ibkr_bridge_enabled
@@ -12,6 +13,42 @@ def _bridge_timeout(env_name: str, default: int) -> int:
         return int(os.getenv(env_name, str(default)))
     except Exception:
         return default
+
+
+def _json_safe_value(value: Any) -> Any:
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return value
+        return None
+    if isinstance(value, dict):
+        return {str(key): _json_safe_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe_value(item) for item in value]
+    return value
+
+
+def _compact_trade_for_bridge(trade: dict[str, Any]) -> dict[str, Any]:
+    trade_dict = trade if isinstance(trade, dict) else {}
+    metrics = trade_dict.get("metrics") if isinstance(trade_dict.get("metrics"), dict) else {}
+
+    compact_metrics = {
+        "symbol": metrics.get("symbol"),
+        "direction": metrics.get("direction"),
+        "entry": metrics.get("entry"),
+        "stop": metrics.get("stop"),
+        "target": metrics.get("target"),
+        "shares": metrics.get("shares"),
+        "per_trade_notional": metrics.get("per_trade_notional"),
+        "remaining_allocatable_capital": metrics.get("remaining_allocatable_capital"),
+    }
+
+    compact_trade = {
+        "name": trade_dict.get("name"),
+        "final_reason": trade_dict.get("final_reason"),
+        "decision": trade_dict.get("decision"),
+        "metrics": compact_metrics,
+    }
+    return _json_safe_value(compact_trade)
 
 class IbkrPaperBroker:
     name = "ibkr"
@@ -53,7 +90,7 @@ class IbkrPaperBroker:
         max_notional: float | None = None,
     ) -> dict[str, Any]:
         self._ensure_bridge_enabled()
-        payload = {"trade": trade}
+        payload = {"trade": _compact_trade_for_bridge(trade)}
         if max_notional is not None:
             payload["max_notional"] = max_notional
         return ibkr_bridge_post("/orders/paper-bracket", json_body=payload)
