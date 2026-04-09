@@ -14,6 +14,7 @@ export default function HealthOverviewSection({
   lastReconciliationAt,
   alpacaApiErrors,
   isRunningSync,
+  ibkrStatus,
   riskExposureSummary,
   confidenceMultiplier,
   lossMultiplier,
@@ -33,6 +34,16 @@ export default function HealthOverviewSection({
       ? (((riskExposureSummary.daily_realized_pnl ?? 0) + (riskExposureSummary.daily_unrealized_pnl ?? 0)) /
           riskExposureSummary.account_size) <= -0.02
       : null;
+
+  const ibkrState = String(ibkrStatus?.state || "UNKNOWN").toUpperCase();
+  const ibkrStateColor =
+    ibkrState === "READY"
+      ? "#16a34a"
+      : ibkrState === "LOGIN_REQUIRED" || ibkrState === "MARKET_DATA_UNAVAILABLE"
+        ? "#f59e0b"
+        : ibkrState === "DISABLED"
+          ? "#64748b"
+          : "#dc2626";
 
   return (
     <div className="dashboard-section dashboard-stack">
@@ -110,6 +121,11 @@ export default function HealthOverviewSection({
                     : undefined
             }
           />
+          <InsightCard
+            title="IBKR Status"
+            value={ibkrState}
+            valueColor={ibkrStateColor}
+          />
           </div>
         {mismatch !== null && (
             <div className="dashboard-inline-meta">
@@ -124,7 +140,23 @@ export default function HealthOverviewSection({
             </span>
             <span className="dashboard-pill">Recent Alpaca Errors: {alpacaApiErrors.length}</span>
             <span className="dashboard-pill">Sync Action State: {isRunningSync ? "In progress" : "Idle"}</span>
+            {ibkrStatus?.enabled && (
+              <span className="dashboard-pill">
+                IBKR Login: {ibkrStatus?.login_required ? "Needed" : ibkrState === "READY" ? "Ready" : ibkrState}
+              </span>
+            )}
           </div>
+          {ibkrStatus?.enabled && (
+            <div className="dashboard-inline-meta">
+              <span className="dashboard-pill">IBKR Account: {ibkrStatus?.account_id || "-"}</span>
+              <span className="dashboard-pill">
+                Market Data: {ibkrStatus?.market_data_symbol || "SPY"} {ibkrStatus?.market_data_count ?? 0} bars
+              </span>
+              <span className="dashboard-pill">
+                Bridge Health: {ibkrStatus?.bridge_health_ok ? "OK" : "Unavailable"}
+              </span>
+            </div>
+          )}
         </div>
       </div>
 

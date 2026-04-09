@@ -130,6 +130,9 @@ export default function DashboardPage() {
     paperTradeAttemptRejections,
     paperTradeAttemptDailySummary,
     paperTradeAttemptHourlySummary,
+    alpacaRecentAttempts,
+    ibkrRecentAttempts,
+    ibkrStatus,
     handleApplyFilters,
     refreshData,
     rerunReconciliation,
@@ -359,6 +362,7 @@ export default function DashboardPage() {
                 lastReconciliationAt={lastReconciliationAt}
                 alpacaApiErrors={alpacaApiErrors}
                 isRunningSync={isRunningSync}
+                ibkrStatus={ibkrStatus}
                 riskExposureSummary={riskExposureSummary}
                 confidenceMultiplier={confidenceMultiplier}
                 lossMultiplier={lossMultiplier}
@@ -384,6 +388,9 @@ export default function DashboardPage() {
                   paperTradeAttemptRejections={paperTradeAttemptRejections}
                   paperTradeAttemptDailySummary={paperTradeAttemptDailySummary}
                   paperTradeAttemptHourlySummary={paperTradeAttemptHourlySummary}
+                  alpacaRecentAttempts={alpacaRecentAttempts}
+                  ibkrRecentAttempts={ibkrRecentAttempts}
+                  ibkrStatus={ibkrStatus}
                   hourlyOutcomeQuality={strategyHourlyOutcomeQuality}
                   externalExitSummary={externalExitSummary}
                 />

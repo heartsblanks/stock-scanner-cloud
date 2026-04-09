@@ -229,6 +229,80 @@ def resolve_ibkr_shadow_account_size(payload: dict[str, Any]) -> float:
     return 1000000.0
 
 
+def get_ibkr_operational_status() -> dict[str, Any]:
+    status: dict[str, Any] = {
+        "ok": True,
+        "enabled": ibkr_bridge_enabled(),
+        "state": "DISABLED",
+        "bridge_health_ok": False,
+        "account_ok": False,
+        "market_data_ok": False,
+        "login_required": False,
+        "message": "",
+        "bridge": None,
+        "account_id": "",
+        "equity": None,
+        "market_data_symbol": os.getenv("IBKR_READINESS_SYMBOL", "SPY").strip().upper() or "SPY",
+        "market_data_count": 0,
+        "errors": [],
+    }
+
+    if not status["enabled"]:
+        status["message"] = "IBKR bridge is not configured."
+        return status
+
+    bridge_timeout = int(os.getenv("IBKR_BRIDGE_HEALTH_TIMEOUT_SECONDS", "4"))
+    account_timeout = int(os.getenv("IBKR_BRIDGE_ACCOUNT_TIMEOUT_SECONDS", "5"))
+    market_timeout = int(os.getenv("IBKR_BRIDGE_STATUS_MARKET_DATA_TIMEOUT_SECONDS", "8"))
+
+    try:
+        bridge_payload = ibkr_bridge_get("/health", timeout=bridge_timeout) or {}
+        status["bridge_health_ok"] = bool(bridge_payload.get("ok"))
+        status["bridge"] = bridge_payload.get("ibkr")
+    except Exception as exc:
+        status["errors"].append(f"bridge_health: {exc}")
+        status["state"] = "UNAVAILABLE"
+        status["message"] = "IBKR bridge is not reachable."
+        return status
+
+    try:
+        account_payload = ibkr_bridge_get("/account", timeout=account_timeout) or {}
+        equity = _account_equity_from_broker_account(account_payload)
+        status["account_ok"] = bool(account_payload.get("account_id"))
+        status["account_id"] = str(account_payload.get("account_id", "") or "")
+        status["equity"] = equity if equity > 0 else None
+    except Exception as exc:
+        status["errors"].append(f"account: {exc}")
+
+    try:
+        candles = ibkr_bridge_get(
+            "/market-data/intraday",
+            params={"symbol": status["market_data_symbol"], "interval": "1min", "outputsize": 5},
+            timeout=market_timeout,
+        ) or []
+        status["market_data_count"] = len(candles)
+        status["market_data_ok"] = len(candles) > 0
+    except Exception as exc:
+        status["errors"].append(f"market_data: {exc}")
+
+    if status["bridge_health_ok"] and status["account_ok"] and status["market_data_ok"]:
+        status["state"] = "READY"
+        status["message"] = "IBKR bridge, account, and market data checks passed."
+        return status
+
+    status["login_required"] = True
+    if status["bridge_health_ok"] and not status["account_ok"]:
+        status["state"] = "LOGIN_REQUIRED"
+        status["message"] = "IBKR bridge is up, but the account session is not ready."
+    elif status["bridge_health_ok"] and status["account_ok"] and not status["market_data_ok"]:
+        status["state"] = "MARKET_DATA_UNAVAILABLE"
+        status["message"] = "IBKR account is up, but market data is not ready."
+    else:
+        status["state"] = "DEGRADED"
+        status["message"] = "IBKR bridge is partially available but not ready for scans."
+    return status
+
+
 def get_current_open_position_state_for_broker(broker) -> tuple[int, float]:
     try:
         positions = broker.get_open_positions() or []
@@ -847,6 +921,7 @@ register_health_routes(
     get_recent_paper_trade_rejections=get_recent_paper_trade_rejections,
     get_paper_trade_attempt_daily_summary=get_paper_trade_attempt_daily_summary,
     get_paper_trade_attempt_hourly_summary=get_paper_trade_attempt_hourly_summary,
+    get_ibkr_operational_status=get_ibkr_operational_status,
     prune_alpaca_api_logs=prune_alpaca_api_logs,
 )
 register_export_routes(app, run_daily_snapshot=run_daily_snapshot)

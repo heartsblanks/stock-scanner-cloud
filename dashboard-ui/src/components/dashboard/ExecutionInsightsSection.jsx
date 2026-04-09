@@ -31,6 +31,9 @@ export default function ExecutionInsightsSection({
   paperTradeAttemptRejections,
   paperTradeAttemptDailySummary,
   paperTradeAttemptHourlySummary,
+  alpacaRecentAttempts,
+  ibkrRecentAttempts,
+  ibkrStatus,
   hourlyOutcomeQuality,
   externalExitSummary,
 }) {
@@ -71,6 +74,20 @@ export default function ExecutionInsightsSection({
     const rightMismatch = Math.abs(right.placement_rate) + (right.realized_pnl_total < 0 ? 100 : 0);
     return rightMismatch - leftMismatch;
   })[0] || null;
+  const latestAlpacaAttempt = alpacaRecentAttempts?.[0] || null;
+  const latestIbkrAttempt = ibkrRecentAttempts?.[0] || null;
+  const ibkrState = String(ibkrStatus?.state || "UNKNOWN").toUpperCase();
+
+  function renderAttemptLine(label, attempt) {
+    return (
+      <div className="dashboard-inline-kv">
+        <div><strong>{label} Symbol:</strong> {attempt?.symbol || "-"}</div>
+        <div><strong>Stage:</strong> {attempt?.decision_stage || "-"}</div>
+        <div><strong>Reason:</strong> {attempt?.final_reason || "-"}</div>
+        <div><strong>Time:</strong> {attempt?.timestamp_utc ? new Date(attempt.timestamp_utc).toLocaleString() : "-"}</div>
+      </div>
+    );
+  }
 
   return (
     <section className="dashboard-section">
@@ -144,6 +161,55 @@ export default function ExecutionInsightsSection({
                     <div><strong>Stage Categories Seen:</strong> {(stageCounts || []).length}</div>
                     <div><strong>Recent Rejections Loaded:</strong> {(paperTradeAttemptRejections || []).length}</div>
                     <div><strong>Daily Summary Rows:</strong> {(paperTradeAttemptDailySummary || []).length}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="dashboard-panel dashboard-panel-strong">
+            <div className="dashboard-panel-body dashboard-panel-body-tight">
+              <div className="dashboard-panel-heading">
+                <div>
+                  <h3>Broker Comparison</h3>
+                  <p className="dashboard-panel-subtitle">
+                    Quick check that Alpaca and IBKR are both active, and whether IBKR needs a manual login.
+                  </p>
+                </div>
+              </div>
+
+              {sectionErrors.ibkr && <div className="dashboard-error">{sectionErrors.ibkr}</div>}
+
+              <div className="dashboard-metrics-grid">
+                <InsightCard title="IBKR Readiness" value={ibkrState} valueColor={ibkrState === "READY" ? "#16a34a" : ibkrState === "LOGIN_REQUIRED" ? "#f59e0b" : "#dc2626"} />
+                <InsightCard title="Latest Alpaca Attempt" value={latestAlpacaAttempt?.symbol || "-"} />
+                <InsightCard title="Latest IBKR Attempt" value={latestIbkrAttempt?.symbol || "-"} />
+                <InsightCard title="IBKR Market Bars" value={ibkrStatus?.market_data_count ?? "-"} />
+              </div>
+
+              <div className="dashboard-split">
+                <div className="dashboard-stack">
+                  <div className="dashboard-panel dashboard-panel-strong">
+                    <div className="dashboard-panel-body dashboard-panel-body-tight">
+                      <div className="dashboard-panel-heading">
+                        <div><h3>Alpaca Track</h3></div>
+                      </div>
+                      {latestAlpacaAttempt ? renderAttemptLine("Latest", latestAlpacaAttempt) : <div className="dashboard-empty">No recent Alpaca attempts loaded.</div>}
+                    </div>
+                  </div>
+                </div>
+                <div className="dashboard-stack">
+                  <div className="dashboard-panel dashboard-panel-strong">
+                    <div className="dashboard-panel-body dashboard-panel-body-tight">
+                      <div className="dashboard-panel-heading">
+                        <div><h3>IBKR Track</h3></div>
+                      </div>
+                      {latestIbkrAttempt ? renderAttemptLine("Latest", latestIbkrAttempt) : <div className="dashboard-empty">No recent IBKR attempts loaded.</div>}
+                      <div className="dashboard-inline-meta">
+                        <span className="dashboard-pill">Login Required: {ibkrStatus?.login_required ? "Yes" : "No"}</span>
+                        <span className="dashboard-pill">Account: {ibkrStatus?.account_id || "-"}</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>

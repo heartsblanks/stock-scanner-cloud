@@ -16,6 +16,7 @@ def register_health_routes(
     get_recent_paper_trade_rejections,
     get_paper_trade_attempt_daily_summary,
     get_paper_trade_attempt_hourly_summary,
+    get_ibkr_operational_status,
     prune_alpaca_api_logs,
 ) -> None:
     cache: dict[tuple[str, str], tuple[float, dict]] = {}
@@ -56,6 +57,7 @@ def register_health_routes(
                 "/paper-trade-attempts/rejections",
                 "/paper-trade-attempts/daily-summary",
                 "/paper-trade-attempts/hourly-summary",
+                "/ibkr-status",
                 "/alpaca-api-logs/recent",
                 "/alpaca-api-logs/errors",
                 "/alpaca-api-logs/prune",
@@ -92,6 +94,15 @@ def register_health_routes(
             return jsonify(payload)
         except Exception as e:
             log_exception("Ops summary failed", e, route="/ops-summary")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.get("/ibkr-status")
+    def ibkr_status():
+        try:
+            payload = get_cached_json(("ibkr-status", ""), 20, lambda: get_ibkr_operational_status())
+            return jsonify(payload)
+        except Exception as e:
+            log_exception("IBKR status failed", e, route="/ibkr-status")
             return jsonify({"ok": False, "error": str(e)}), 500
 
 

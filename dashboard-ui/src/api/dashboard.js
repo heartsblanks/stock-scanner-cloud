@@ -56,6 +56,31 @@ export async function fetchOpsSummary() {
   return response.data;
 }
 
+export async function fetchIbkrStatus() {
+  const response = await apiClient.get("/ibkr-status");
+  return response.data || {};
+}
+
+export async function fetchPaperTradeAttemptRecent(limit = 25, broker, decisionStage) {
+  const params = { limit };
+  if (broker) {
+    params.broker = broker;
+  }
+  if (decisionStage) {
+    params.decision_stage = decisionStage;
+  }
+
+  const response = await apiClient.get("/paper-trade-attempts/recent", { params });
+  const data = response.data || {};
+  return {
+    ...data,
+    rows: Array.isArray(data?.rows) ? data.rows : [],
+    count: data?.count ?? (Array.isArray(data?.rows) ? data.rows.length : 0),
+    limit: data?.limit || limit,
+    broker: data?.broker || broker || null,
+  };
+}
+
 export async function fetchPaperTradeAttemptRejections(limit = 25) {
   const response = await apiClient.get("/paper-trade-attempts/rejections", {
     params: { limit },

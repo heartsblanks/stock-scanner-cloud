@@ -14,7 +14,9 @@ import {
   fetchOpsSummary,
   fetchPaperTradeAttemptDailySummary,
   fetchPaperTradeAttemptHourlySummary,
+  fetchPaperTradeAttemptRecent,
   fetchPaperTradeAttemptRejections,
+  fetchIbkrStatus,
   runReconciliationNow,
   runSyncPaperTrades,
 } from "../api/dashboard";
@@ -58,6 +60,7 @@ const INITIAL_SECTION_ERRORS = {
   alpacaLogs: null,
   sizing: null,
   attempts: null,
+  ibkr: null,
 };
 
 function getInitialSectionLoading(activeView) {
@@ -68,6 +71,7 @@ function getInitialSectionLoading(activeView) {
     alpacaLogs: activeView === "broker",
     sizing: activeView === "overview" || activeView === "trades" || activeView === "analytics",
     attempts: activeView === "overview" || activeView === "analytics",
+    ibkr: activeView === "overview" || activeView === "analytics",
   };
 }
 
@@ -92,6 +96,9 @@ export function useDashboardData(activeView = "overview") {
   const [paperTradeAttemptRejections, setPaperTradeAttemptRejections] = useState([]);
   const [paperTradeAttemptDailySummary, setPaperTradeAttemptDailySummary] = useState([]);
   const [paperTradeAttemptHourlySummary, setPaperTradeAttemptHourlySummary] = useState([]);
+  const [alpacaRecentAttempts, setAlpacaRecentAttempts] = useState([]);
+  const [ibkrRecentAttempts, setIbkrRecentAttempts] = useState([]);
+  const [ibkrStatus, setIbkrStatus] = useState(null);
   const [latestScanSummary, setLatestScanSummary] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [nextRefreshAt, setNextRefreshAt] = useState(null);
@@ -146,19 +153,52 @@ export function useDashboardData(activeView = "overview") {
 
   const loadAttemptsSection = useCallback(async () => {
     try {
-      setSectionLoading((prev) => ({ ...prev, attempts: true }));
-      const [opsRes, rejectionRes, dailyRes, hourlyRes] = await Promise.all([
+      setSectionLoading((prev) => ({ ...prev, attempts: true, ibkr: true }));
+      const [opsResult, rejectionResult, dailyResult, hourlyResult, alpacaRecentResult, ibkrRecentResult, ibkrStatusResult] = await Promise.allSettled([
         fetchOpsSummary(),
         fetchPaperTradeAttemptRejections(12),
         fetchPaperTradeAttemptDailySummary(7),
         fetchPaperTradeAttemptHourlySummary(7),
+        fetchPaperTradeAttemptRecent(8, "ALPACA"),
+        fetchPaperTradeAttemptRecent(8, "IBKR"),
+        fetchIbkrStatus(),
       ]);
+
+      const baseFailure =
+        [opsResult, rejectionResult, dailyResult, hourlyResult, alpacaRecentResult].some((result) => result.status === "rejected");
+      if (baseFailure) {
+        throw new Error("Failed to load execution attempt analytics");
+      }
+
+      const opsRes = opsResult.status === "fulfilled" ? opsResult.value : null;
+      const rejectionRes = rejectionResult.status === "fulfilled" ? rejectionResult.value : null;
+      const dailyRes = dailyResult.status === "fulfilled" ? dailyResult.value : null;
+      const hourlyRes = hourlyResult.status === "fulfilled" ? hourlyResult.value : null;
+      const alpacaRecentRes = alpacaRecentResult.status === "fulfilled" ? alpacaRecentResult.value : null;
 
       setOpsSummary(opsRes || null);
       setPaperTradeAttemptRejections(Array.isArray(rejectionRes?.rows) ? rejectionRes.rows : []);
       setPaperTradeAttemptDailySummary(Array.isArray(dailyRes?.rows) ? dailyRes.rows : []);
       setPaperTradeAttemptHourlySummary(Array.isArray(hourlyRes?.rows) ? hourlyRes.rows : []);
-      setSectionErrors((prev) => ({ ...prev, attempts: null }));
+      setAlpacaRecentAttempts(Array.isArray(alpacaRecentRes?.rows) ? alpacaRecentRes.rows : []);
+
+      if (ibkrRecentResult.status === "fulfilled") {
+        setIbkrRecentAttempts(Array.isArray(ibkrRecentResult.value?.rows) ? ibkrRecentResult.value.rows : []);
+      } else {
+        setIbkrRecentAttempts([]);
+      }
+
+      if (ibkrStatusResult.status === "fulfilled") {
+        setIbkrStatus(ibkrStatusResult.value || null);
+        setSectionErrors((prev) => ({ ...prev, attempts: null, ibkr: null }));
+      } else {
+        setIbkrStatus(null);
+        setSectionErrors((prev) => ({
+          ...prev,
+          attempts: null,
+          ibkr: ibkrStatusResult.reason?.message || "Failed to load IBKR status",
+        }));
+      }
     } catch (sectionErr) {
       setSectionErrors((prev) => ({
         ...prev,
@@ -166,7 +206,7 @@ export function useDashboardData(activeView = "overview") {
       }));
       throw sectionErr;
     } finally {
-      setSectionLoading((prev) => ({ ...prev, attempts: false }));
+      setSectionLoading((prev) => ({ ...prev, attempts: false, ibkr: false }));
     }
   }, []);
 
@@ -514,7 +554,7 @@ export function useDashboardData(activeView = "overview") {
 
   const backendHealthStatus = sectionErrors.overview
     ? "DEGRADED"
-    : sectionErrors.reconciliation || sectionErrors.risk || sectionErrors.alpacaLogs
+    : sectionErrors.reconciliation || sectionErrors.risk || sectionErrors.alpacaLogs || sectionErrors.ibkr
       ? "WARNING"
       : "OK";
 
@@ -565,6 +605,15 @@ export function useDashboardData(activeView = "overview") {
       severity: "critical",
       title: "Recent Alpaca API failures",
       detail: `${alpacaApiErrors.length} recent broker error call(s) were recorded.`,
+    });
+  }
+
+  if (ibkrStatus?.enabled && ibkrStatus?.login_required) {
+    attentionItems.push({
+      id: "ibkr-login",
+      severity: "warning",
+      title: "IBKR login required",
+      detail: ibkrStatus?.message || "IBKR bridge is up, but the broker session is not ready.",
     });
   }
 
@@ -639,6 +688,9 @@ export function useDashboardData(activeView = "overview") {
     paperTradeAttemptRejections,
     paperTradeAttemptDailySummary,
     paperTradeAttemptHourlySummary: attemptHourlySummary,
+    alpacaRecentAttempts,
+    ibkrRecentAttempts,
+    ibkrStatus,
     topAttemptReasons,
     stageCounts,
     paperTradePlacementRate,
