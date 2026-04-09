@@ -108,6 +108,7 @@ from analytics.trade_scan import (
 )
 from analytics.instruments import INSTRUMENT_GROUPS
 PAPER_TRADE_MIN_CONFIDENCE = 70
+IBKR_PAPER_TRADE_MIN_CONFIDENCE = int(os.getenv("IBKR_PAPER_TRADE_MIN_CONFIDENCE", "65"))
 
 
 app = Flask(__name__)
@@ -498,8 +499,8 @@ TRADE_ANALYSIS_PAIRED_OBJECT = os.getenv("TRADE_ANALYSIS_PAIRED_OBJECT", "report
 SIGNAL_ANALYSIS_BUCKET = os.getenv("SIGNAL_ANALYSIS_BUCKET", "stock-scanner-490821-logs")
 SIGNAL_ANALYSIS_SUMMARY_OBJECT = os.getenv("SIGNAL_ANALYSIS_SUMMARY_OBJECT", "reports/signal_analysis_summary.csv")
 SIGNAL_ANALYSIS_ROWS_OBJECT = os.getenv("SIGNAL_ANALYSIS_ROWS_OBJECT", "reports/signal_analysis_rows.csv")
-def paper_candidate_from_evaluation(eval_result: dict) -> dict | None:
-    return build_paper_candidate_from_evaluation(eval_result, PAPER_TRADE_MIN_CONFIDENCE)
+def paper_candidate_from_evaluation(eval_result: dict, min_confidence: float = PAPER_TRADE_MIN_CONFIDENCE) -> dict | None:
+    return build_paper_candidate_from_evaluation(eval_result, min_confidence)
 
 
 def append_signal_log(row: dict) -> None:
@@ -608,6 +609,7 @@ def execute_scan_pipeline(
     get_risk_exposure_summary_fn,
     get_latest_open_trade_fn,
     place_paper_orders_fn,
+    paper_trade_min_confidence: float = PAPER_TRADE_MIN_CONFIDENCE,
 ):
     return run_handle_scan_request(
         payload,
@@ -624,7 +626,10 @@ def execute_scan_pipeline(
         run_scan=run_scan_fn,
         trade_to_dict=trade_to_dict,
         debug_to_dict=debug_to_dict,
-        paper_candidate_from_evaluation=paper_candidate_from_evaluation,
+        paper_candidate_from_evaluation=lambda eval_result: paper_candidate_from_evaluation(
+            eval_result,
+            min_confidence=paper_trade_min_confidence,
+        ),
         evaluate_symbol=evaluate_symbol,
         get_latest_open_paper_trade_for_symbol=get_latest_open_trade_fn,
         is_symbol_in_paper_cooldown=is_symbol_in_paper_cooldown,
@@ -659,6 +664,7 @@ def _run_ibkr_shadow_scan(payload: dict[str, Any]) -> dict[str, Any]:
             get_risk_exposure_summary_fn=lambda: get_ibkr_shadow_risk_exposure_summary(ibkr_payload),
             get_latest_open_trade_fn=lambda symbol: get_latest_open_paper_trade_for_symbol_for_broker(symbol, "IBKR"),
             place_paper_orders_fn=place_ibkr_paper_orders_from_trade,
+            paper_trade_min_confidence=IBKR_PAPER_TRADE_MIN_CONFIDENCE,
         )
     except Exception as exc:
         return {
