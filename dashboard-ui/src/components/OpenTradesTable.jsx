@@ -13,10 +13,10 @@ function getStatusBadge(status) {
 function getBrokerBadge(broker) {
   const normalized = String(broker || "").trim().toUpperCase();
   if (normalized === "ALPACA") {
-    return "dashboard-badge dashboard-badge-info";
+    return "dashboard-badge dashboard-badge-broker-alpaca";
   }
   if (normalized === "IBKR") {
-    return "dashboard-badge dashboard-badge-warn";
+    return "dashboard-badge dashboard-badge-broker-ibkr";
   }
   return "dashboard-badge dashboard-badge-neutral";
 }
@@ -37,13 +37,13 @@ export default function OpenTradesTable({ trades }) {
             <th>Broker</th>
             <th>Mode</th>
             <th>Status</th>
-            <th>Shares</th>
-            <th>Position Cost</th>
-            <th>Per Trade Notional</th>
-            <th>Entry Price</th>
-            <th>Stop</th>
-            <th>Target</th>
-            <th>Take Profit</th>
+            <th className="dashboard-col-number">Shares</th>
+            <th className="dashboard-col-number">Position Cost</th>
+            <th className="dashboard-col-number">Per Trade Notional</th>
+            <th className="dashboard-col-number">Entry Price</th>
+            <th className="dashboard-col-number">Stop</th>
+            <th className="dashboard-col-number">Target</th>
+            <th className="dashboard-col-number">Take Profit</th>
             <th>Entry Time</th>
           </tr>
         </thead>
@@ -58,13 +58,13 @@ export default function OpenTradesTable({ trades }) {
               <td data-label="Status">
                 <span className={getStatusBadge(trade.status)}>{formatValue(trade.status)}</span>
               </td>
-              <td data-label="Shares">{formatNumber(trade.shares, 0)}</td>
-              <td data-label="Position Cost">{formatCurrency(trade.position_cost)}</td>
-              <td data-label="Per Trade Notional">{formatCurrency(trade.per_trade_notional)}</td>
-              <td data-label="Entry Price">{formatCurrency(trade.entry_price)}</td>
-              <td data-label="Stop">{formatCurrency(trade.stop_price)}</td>
-              <td data-label="Target">{formatCurrency(trade.target_price)}</td>
-              <td data-label="Take Profit">{formatCurrency(trade.take_profit_dollars)}</td>
+              <td data-label="Shares" className="dashboard-cell-number">{formatNumber(trade.shares, 0)}</td>
+              <td data-label="Position Cost" className="dashboard-cell-number">{formatCurrency(trade.position_cost)}</td>
+              <td data-label="Per Trade Notional" className="dashboard-cell-number">{formatCurrency(trade.per_trade_notional)}</td>
+              <td data-label="Entry Price" className="dashboard-cell-number">{formatCurrency(trade.entry_price)}</td>
+              <td data-label="Stop" className="dashboard-cell-number">{formatCurrency(trade.stop_price)}</td>
+              <td data-label="Target" className="dashboard-cell-number">{formatCurrency(trade.target_price)}</td>
+              <td data-label="Take Profit" className="dashboard-cell-number">{formatCurrency(trade.take_profit_dollars)}</td>
               <td data-label="Entry Time" className="dashboard-cell-muted">{formatTimestamp(trade.entry_time)}</td>
             </tr>
           ))}

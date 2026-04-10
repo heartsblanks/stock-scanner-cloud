@@ -31,10 +31,10 @@ function directionBadge(direction) {
 function brokerBadge(broker) {
   const normalized = String(broker || "").trim().toUpperCase();
   if (normalized === "ALPACA") {
-    return "dashboard-badge dashboard-badge-info";
+    return "dashboard-badge dashboard-badge-broker-alpaca";
   }
   if (normalized === "IBKR") {
-    return "dashboard-badge dashboard-badge-warn";
+    return "dashboard-badge dashboard-badge-broker-ibkr";
   }
   return "dashboard-badge dashboard-badge-neutral";
 }
@@ -56,17 +56,17 @@ export default function TradeLifecycleTable({ rows }) {
             <th>Mode</th>
             <th>Status</th>
             <th>Direction</th>
-            <th>Shares</th>
-            <th>Position Cost</th>
-            <th>Per Trade Notional</th>
-            <th>Remaining Slots</th>
-            <th>Entry Price</th>
-            <th>Exit Price</th>
-            <th>P&amp;L</th>
-            <th>Take Profit</th>
-            <th>P&amp;L %</th>
+            <th className="dashboard-col-number">Shares</th>
+            <th className="dashboard-col-number">Position Cost</th>
+            <th className="dashboard-col-number">Per Trade Notional</th>
+            <th className="dashboard-col-number">Remaining Slots</th>
+            <th className="dashboard-col-number">Entry Price</th>
+            <th className="dashboard-col-number">Exit Price</th>
+            <th className="dashboard-col-number">P&amp;L</th>
+            <th className="dashboard-col-number">Take Profit</th>
+            <th className="dashboard-col-number">P&amp;L %</th>
             <th>Exit Reason</th>
-            <th>Duration</th>
+            <th className="dashboard-col-number">Duration</th>
             <th>Entry Time</th>
             <th>Exit Time</th>
           </tr>
@@ -94,17 +94,17 @@ export default function TradeLifecycleTable({ rows }) {
                 <td data-label="Direction">
                   <span className={directionBadge(row.direction)}>{formatValue(row.direction)}</span>
                 </td>
-                <td data-label="Shares">{formatNumber(row.shares, 0)}</td>
-                <td data-label="Position Cost">{formatCurrency(row.position_cost)}</td>
-                <td data-label="Per Trade Notional">{formatCurrency(row.per_trade_notional)}</td>
-                <td data-label="Remaining Slots">{formatNumber(row.remaining_slots, 0)}</td>
-                <td data-label="Entry Price">{formatCurrency(row.entry_price)}</td>
-                <td data-label="Exit Price">{formatCurrency(row.exit_price)}</td>
-                <td data-label="P&L" className={pnlTone}>{formatCurrency(row.realized_pnl)}</td>
-                <td data-label="Take Profit">{formatCurrency(row.take_profit_dollars)}</td>
-                <td data-label="P&L %" className={signedTone(row.realized_pnl_percent)}>{formatPercent(row.realized_pnl_percent)}</td>
+                <td data-label="Shares" className="dashboard-cell-number">{formatNumber(row.shares, 0)}</td>
+                <td data-label="Position Cost" className="dashboard-cell-number">{formatCurrency(row.position_cost)}</td>
+                <td data-label="Per Trade Notional" className="dashboard-cell-number">{formatCurrency(row.per_trade_notional)}</td>
+                <td data-label="Remaining Slots" className="dashboard-cell-number">{formatNumber(row.remaining_slots, 0)}</td>
+                <td data-label="Entry Price" className="dashboard-cell-number">{formatCurrency(row.entry_price)}</td>
+                <td data-label="Exit Price" className="dashboard-cell-number">{formatCurrency(row.exit_price)}</td>
+                <td data-label="P&L" className={`dashboard-cell-number ${pnlTone}`}>{formatCurrency(row.realized_pnl)}</td>
+                <td data-label="Take Profit" className="dashboard-cell-number">{formatCurrency(row.take_profit_dollars)}</td>
+                <td data-label="P&L %" className={`dashboard-cell-number ${signedTone(row.realized_pnl_percent)}`}>{formatPercent(row.realized_pnl_percent)}</td>
                 <td data-label="Exit Reason">{formatValue(row.exit_reason)}</td>
-                <td data-label="Duration">{formatNumber(row.duration_minutes, 1)} min</td>
+                <td data-label="Duration" className="dashboard-cell-number">{formatNumber(row.duration_minutes, 1)} min</td>
                 <td data-label="Entry Time" className="dashboard-cell-muted">{formatTimestamp(row.entry_time)}</td>
                 <td data-label="Exit Time" className="dashboard-cell-muted">{formatTimestamp(row.exit_time)}</td>
               </tr>
