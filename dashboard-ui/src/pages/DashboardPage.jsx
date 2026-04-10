@@ -87,10 +87,24 @@ function getInitialAdvancedViews() {
   return false;
 }
 
+function getInitialTradeBrokerView() {
+  if (typeof window === "undefined") {
+    return "all";
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const brokerParam = String(params.get("trade_broker") || "").trim().toLowerCase();
+  if (brokerParam === "alpaca" || brokerParam === "ibkr" || brokerParam === "all") {
+    return brokerParam;
+  }
+
+  return "all";
+}
+
 export default function DashboardPage() {
   const [activeView, setActiveView] = useState(getInitialView);
   const [drilldown, setDrilldown] = useState({ symbol: "", mode: "", hourUtc: "" });
-  const [tradeBrokerView, setTradeBrokerView] = useState("all");
+  const [tradeBrokerView, setTradeBrokerView] = useState(getInitialTradeBrokerView);
   const [showAdvancedViews, setShowAdvancedViews] = useState(getInitialAdvancedViews);
   const [theme, setTheme] = useState(() => {
     if (typeof window === "undefined") {
@@ -269,9 +283,14 @@ export default function DashboardPage() {
       } else {
         url.searchParams.delete("advanced");
       }
+      if (tradeBrokerView === "all") {
+        url.searchParams.delete("trade_broker");
+      } else {
+        url.searchParams.set("trade_broker", tradeBrokerView);
+      }
       window.history.replaceState({}, "", url);
     }
-  }, [activeView, showAdvancedViews]);
+  }, [activeView, showAdvancedViews, tradeBrokerView]);
 
   useEffect(() => {
     if (!showAdvancedViews && activeView === "broker") {
