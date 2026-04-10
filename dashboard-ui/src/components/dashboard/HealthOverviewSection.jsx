@@ -4,7 +4,6 @@ export default function HealthOverviewSection({
   lastUpdated,
   sectionLoading,
   sectionErrors,
-  openTrades,
   alpacaOpenCount,
   ibkrOpenCount,
   mismatch,
@@ -72,7 +71,6 @@ export default function HealthOverviewSection({
             <div className="dashboard-error">{sectionErrors.reconciliation}</div>
         )}
           <div className="dashboard-metrics-grid">
-          <InsightCard title="Open Trades (DB)" value={openTrades.length} />
           <InsightCard title="Open Positions (Alpaca)" value={alpacaOpenCount ?? "-"} />
           <InsightCard title="Open Positions (IBKR)" value={ibkrOpenCount ?? "-"} />
           <InsightCard
@@ -129,13 +127,6 @@ export default function HealthOverviewSection({
             valueColor={ibkrStateColor}
           />
           </div>
-        {mismatch !== null && (
-            <div className="dashboard-inline-meta">
-              <span className="dashboard-pill">
-              DB Open Trades: {openTrades.length} | Alpaca Open Positions: {alpacaOpenCount ?? "-"} | IBKR Open Positions: {ibkrOpenCount ?? "-"}
-              </span>
-            </div>
-        )}
           <div className="dashboard-inline-meta">
             <span className="dashboard-pill">
               Last Reconciliation: {lastReconciliationAt ? new Date(lastReconciliationAt).toLocaleString() : "-"}

@@ -1,6 +1,5 @@
 import SummaryCards from "../components/SummaryCards";
 import DashboardFilters from "../components/DashboardFilters";
-import InsightCard from "../components/InsightCard";
 import AttentionRequiredPanel from "../components/dashboard/AttentionRequiredPanel";
 import ExecutionInsightsSection from "../components/dashboard/ExecutionInsightsSection";
 import HealthOverviewSection from "../components/dashboard/HealthOverviewSection";
@@ -23,7 +22,6 @@ const DASHBOARD_VIEWS = [
   { id: "overview", label: "Overview", description: "Best for the first look each session." },
   { id: "trades", label: "Trades", description: "Open positions and lifecycle details." },
   { id: "reconciliation", label: "Reconciliation", description: "Mismatch and repair workflow." },
-  { id: "broker", label: "Broker Logs", description: "Alpaca call health and failures." },
   { id: "analytics", label: "Analytics", description: "Charts and performance patterns." },
 ];
 
@@ -271,7 +269,6 @@ export default function DashboardPage() {
                 <span className={`dashboard-pill dashboard-pill-status ${backendHealthStatus === "OK" ? "dashboard-pill-ok" : backendHealthStatus === "WARNING" ? "dashboard-pill-warn" : "dashboard-pill-danger"}`}>
                   Backend {backendHealthStatus || "UNKNOWN"}
                 </span>
-                <span className="dashboard-pill">Sync {syncHealthStatus || "UNKNOWN"}</span>
                 <span className={`dashboard-pill dashboard-pill-status ${mismatchTone}`}>
                   Recon {reconciliationHealthStatus || "UNKNOWN"}
                 </span>
@@ -285,8 +282,7 @@ export default function DashboardPage() {
                 )}
               </div>
               <p className="dashboard-subtitle">
-                Fast read on backend health, reconciliation, and IBKR readiness before you drill into trades,
-                execution quality, or broker comparison.
+                Immediate status for health, reconciliation, and IBKR readiness.
               </p>
               <div className="dashboard-hero-meta">
                 <div className="dashboard-hero-stat">
@@ -341,13 +337,6 @@ export default function DashboardPage() {
                 </button>
               </div>
 
-              <div className="dashboard-inline-meta">
-                <span className={`dashboard-pill dashboard-pill-status ${mismatchTone}`}>
-                  Mismatch {mismatch !== null ? mismatch : "-"}
-                </span>
-                <span className="dashboard-pill">Sync {syncHealthStatus || "UNKNOWN"}</span>
-                <span className="dashboard-pill">Recon {reconciliationHealthStatus || "UNKNOWN"}</span>
-              </div>
             </div>
           </div>
         </section>
@@ -363,22 +352,7 @@ export default function DashboardPage() {
         <div className="dashboard-grid">
           <DashboardFilters onApply={handleApplyFilters} />
 
-          <div className="dashboard-banner">
-            <div className="dashboard-banner-title">Focused Operations</div>
-            <div className="dashboard-banner-copy">
-              Refresh now follows the active view instead of reloading the whole dashboard. Manual sync and
-              reconciliation actions live inside their own workspaces so the landing page stays operational, not noisy.
-            </div>
-          </div>
-
           <section className="dashboard-view-nav-panel">
-            <div className="dashboard-view-nav-copy">
-              <div className="dashboard-banner-title">Focused Views</div>
-              <div className="dashboard-banner-copy">
-                Keep the landing screen light, then jump into the exact slice you need instead of scrolling through the
-                whole operating system at once.
-              </div>
-            </div>
             <div className="dashboard-view-nav">
               {DASHBOARD_VIEWS.map((view) => (
                 <button
@@ -424,7 +398,6 @@ export default function DashboardPage() {
                 lastUpdated={lastUpdated}
                 sectionLoading={sectionLoading}
                 sectionErrors={sectionErrors}
-                openTrades={openTrades}
                 alpacaOpenCount={alpacaOpenCount}
                 ibkrOpenCount={ibkrOpenTrades.length}
                 mismatch={mismatch}
