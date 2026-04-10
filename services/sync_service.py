@@ -28,7 +28,8 @@ def _resolve_exit_timestamp(sync_result: dict[str, Any], timestamp_utc: str, par
 def execute_sync_paper_trades(
     *,
     get_open_paper_trades: Callable[[], list[dict[str, Any]]],
-    sync_order_by_id: Callable[[str], dict[str, Any]],
+    sync_order_by_id: Callable[[str], dict[str, Any]] | None = None,
+    sync_order_by_id_for_broker: Callable[[str, str], dict[str, Any]] | None = None,
     paper_trade_exit_already_logged: Callable[[str, str], bool],
     append_trade_log: Callable[[dict[str, Any]], None],
     safe_insert_trade_event: Callable[..., None],
@@ -37,7 +38,9 @@ def execute_sync_paper_trades(
     parse_iso_utc: Callable[[str], Any],
     to_float_or_none: Callable[[Any], float | None],
     get_open_positions: Callable[[], list[dict[str, Any]]] | None = None,
+    get_open_positions_for_broker: Callable[[str], list[dict[str, Any]]] | None = None,
     close_position: Callable[[str], Any] | None = None,
+    close_position_for_broker: Callable[[str, str], Any] | None = None,
 ) -> dict[str, Any] | tuple[dict[str, Any], int]:
     try:
         open_rows = get_open_paper_trades()
@@ -52,10 +55,12 @@ def execute_sync_paper_trades(
     for open_row in open_rows:
         parent_order_id = str(open_row.get("broker_parent_order_id", "")).strip()
         symbol = str(open_row.get("symbol", "")).strip().upper()
+        broker_name = str(open_row.get("broker", "") or "ALPACA").strip().upper() or "ALPACA"
 
         if not parent_order_id:
             results.append({
                 "symbol": symbol,
+                "broker": broker_name,
                 "synced": False,
                 "reason": "missing_parent_order_id",
             })
@@ -63,7 +68,12 @@ def execute_sync_paper_trades(
             continue
 
         try:
-            sync_result = sync_order_by_id(parent_order_id)
+            if sync_order_by_id_for_broker is not None:
+                sync_result = sync_order_by_id_for_broker(broker_name, parent_order_id)
+            elif sync_order_by_id is not None:
+                sync_result = sync_order_by_id(parent_order_id)
+            else:
+                raise RuntimeError("sync_order_by_id is not configured")
         except Exception as e:
             log_exception(
                 "Paper trade sync failed",
@@ -75,6 +85,7 @@ def execute_sync_paper_trades(
             )
             results.append({
                 "symbol": symbol,
+                "broker": broker_name,
                 "parent_order_id": parent_order_id,
                 "synced": False,
                 "reason": "sync_exception",
@@ -87,6 +98,7 @@ def execute_sync_paper_trades(
         if not exit_event:
             results.append({
                 "symbol": symbol,
+                "broker": broker_name,
                 "parent_order_id": parent_order_id,
                 "synced": False,
                 "reason": "still_open",
@@ -100,6 +112,7 @@ def execute_sync_paper_trades(
         if paper_trade_exit_already_logged(parent_order_id, exit_event):
             results.append({
                 "symbol": symbol,
+                "broker": broker_name,
                 "parent_order_id": parent_order_id,
                 "synced": False,
                 "reason": "exit_already_logged",
@@ -120,7 +133,6 @@ def execute_sync_paper_trades(
             exit_price = sync_result.get("exit_price", "")
             direction = infer_direction(entry_price, exit_price, stop_price, target_price, open_row.get("side", ""))
             lifecycle_side = resolve_lifecycle_side(open_row, direction)
-            broker_name = str(open_row.get("broker", "") or "ALPACA").strip().upper() or "ALPACA"
             trade_source = str(open_row.get("trade_source", f"{broker_name}_PAPER")).strip().upper() or f"{broker_name}_PAPER"
 
             append_trade_log({
@@ -144,7 +156,7 @@ def execute_sync_paper_trades(
                 "exit_price": sync_result.get("exit_price", ""),
                 "exit_reason": sync_result.get("exit_reason", exit_event),
                 "status": "CLOSED",
-                "notes": f"Paper trade exit synced from Alpaca. exit_event={exit_event}",
+                "notes": f"Paper trade exit synced from {broker_name}. exit_event={exit_event}",
                 "linked_signal_timestamp_utc": open_row.get("linked_signal_timestamp_utc", ""),
                 "linked_signal_entry": open_row.get("linked_signal_entry", ""),
                 "linked_signal_stop": open_row.get("linked_signal_stop", ""),
@@ -233,6 +245,7 @@ def execute_sync_paper_trades(
             )
             results.append({
                 "symbol": symbol,
+                "broker": broker_name,
                 "parent_order_id": parent_order_id,
                 "synced": False,
                 "reason": "log_write_failed",
@@ -244,6 +257,7 @@ def execute_sync_paper_trades(
         synced_count += 1
         results.append({
             "symbol": symbol,
+            "broker": broker_name,
             "parent_order_id": parent_order_id,
             "synced": True,
             "exit_event": exit_event,
@@ -256,22 +270,37 @@ def execute_sync_paper_trades(
     auto_healed_positions: list[dict[str, Any]] = []
     auto_heal_errors: list[dict[str, Any]] = []
 
-    if get_open_positions and close_position:
+    broker_names = sorted(
+        {
+            str(row.get("broker", "") or "ALPACA").strip().upper() or "ALPACA"
+            for row in (open_rows or [])
+        }
+    )
+    if not broker_names and (get_open_positions_for_broker or get_open_positions):
+        broker_names = ["ALPACA"]
+
+    for broker_name in broker_names:
         try:
-            leftover_positions = get_open_positions() or []
+            if get_open_positions_for_broker is not None:
+                leftover_positions = get_open_positions_for_broker(broker_name) or []
+            elif get_open_positions is not None:
+                leftover_positions = get_open_positions() or []
+            else:
+                leftover_positions = []
         except Exception as e:
             leftover_positions = []
             auto_heal_errors.append({
+                "broker": broker_name,
                 "symbol": "",
                 "reason": "open_positions_read_failed",
                 "details": str(e),
             })
 
-        # Build DB open symbol set (source of truth)
         db_open_symbols = {
             str(row.get("symbol", "")).strip().upper()
-            for row in open_rows or []
+            for row in (open_rows or [])
             if str(row.get("symbol", "")).strip()
+            and (str(row.get("broker", "") or "ALPACA").strip().upper() or "ALPACA") == broker_name
         }
 
         for position in leftover_positions:
@@ -281,13 +310,18 @@ def execute_sync_paper_trades(
                 side = str(position.get("side", "")).strip().lower()
                 if not symbol:
                     continue
-
-                # Only auto-heal orphan positions (present in broker but not in DB open trades)
                 if symbol in db_open_symbols:
                     continue
 
-                close_result = close_position(symbol)
+                if close_position_for_broker is not None:
+                    close_result = close_position_for_broker(broker_name, symbol)
+                elif close_position is not None:
+                    close_result = close_position(symbol)
+                else:
+                    raise RuntimeError("close_position is not configured")
+
                 auto_healed_positions.append({
+                    "broker": broker_name,
                     "symbol": symbol,
                     "qty": qty,
                     "side": side,
@@ -296,6 +330,7 @@ def execute_sync_paper_trades(
                 })
             except Exception as e:
                 auto_heal_errors.append({
+                    "broker": broker_name,
                     "symbol": str(position.get("symbol", "")).strip().upper(),
                     "reason": "auto_heal_close_failed",
                     "details": str(e),

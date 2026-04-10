@@ -131,6 +131,28 @@ sync_order_by_id = PAPER_BROKER.sync_order_by_id
 get_order_by_id = PAPER_BROKER.get_order_by_id
 
 
+def _broker_instance_by_name(broker_name: str):
+    normalized = str(broker_name or "").strip().upper()
+    if normalized == "IBKR":
+        return IBKR_PAPER_BROKER
+    return ALPACA_PAPER_BROKER
+
+
+def sync_order_by_id_for_broker(broker_name: str, order_id: str) -> dict[str, Any]:
+    broker = _broker_instance_by_name(broker_name)
+    return broker.sync_order_by_id(order_id)
+
+
+def get_open_positions_for_broker_name(broker_name: str) -> list[dict[str, Any]]:
+    broker = _broker_instance_by_name(broker_name)
+    return broker.get_open_positions()
+
+
+def close_position_for_broker_name(broker_name: str, symbol: str):
+    broker = _broker_instance_by_name(broker_name)
+    return broker.close_position(symbol)
+
+
 def place_paper_orders_from_trade(trade: dict[str, Any], max_notional: float | None = None) -> list[dict]:
     results: list[dict] = []
 
@@ -773,6 +795,7 @@ def handle_sync_paper_trades():
         execute_sync_paper_trades=execute_sync_paper_trades,
         get_open_paper_trades=get_open_paper_trades,
         sync_order_by_id=sync_order_by_id,
+        sync_order_by_id_for_broker=sync_order_by_id_for_broker,
         paper_trade_exit_already_logged=paper_trade_exit_already_logged,
         append_trade_log=append_trade_log,
         safe_insert_trade_event=safe_insert_trade_event,
@@ -782,6 +805,8 @@ def handle_sync_paper_trades():
         upsert_trade_lifecycle=upsert_trade_lifecycle,
         get_open_positions=get_open_positions,
         close_position=close_position,
+        get_open_positions_for_broker=get_open_positions_for_broker_name,
+        close_position_for_broker=close_position_for_broker_name,
     )
 
 def handle_scan_request(payload):

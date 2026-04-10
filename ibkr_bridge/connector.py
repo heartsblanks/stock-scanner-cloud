@@ -176,7 +176,17 @@ class IbkrGatewayClient:
             if not account_id or str(getattr(row, "account", "")).strip() == account_id
         ]
         contracts = [row.contract for row in positions if getattr(row, "contract", None) is not None]
-        tickers = ib.reqTickers(*contracts) if contracts else []
+        try:
+            tickers = ib.reqTickers(*contracts) if contracts else []
+        except Exception as exc:
+            log_exception(
+                "IBKR bridge position ticker enrichment failed; using avg cost fallback",
+                exc,
+                component="ibkr_bridge",
+                operation="get_positions",
+                contract_count=len(contracts),
+            )
+            tickers = []
         ticker_by_conid = {
             int(getattr(ticker.contract, "conId", 0)): ticker
             for ticker in tickers or []

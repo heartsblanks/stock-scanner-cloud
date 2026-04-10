@@ -10,7 +10,8 @@ def handle_sync_paper_trades(
     *,
     execute_sync_paper_trades: Callable[..., Any],
     get_open_paper_trades: Callable[[], list[dict[str, Any]]],
-    sync_order_by_id: Callable[[str], dict[str, Any]],
+    sync_order_by_id: Callable[[str], dict[str, Any]] | None = None,
+    sync_order_by_id_for_broker: Callable[[str, str], dict[str, Any]] | None = None,
     paper_trade_exit_already_logged: Callable[[str, str], bool],
     append_trade_log: Callable[[dict[str, Any]], None],
     safe_insert_trade_event: Callable[..., None],
@@ -18,12 +19,15 @@ def handle_sync_paper_trades(
     parse_iso_utc: Callable[[str], Any],
     to_float_or_none: Callable[[Any], float | None],
     upsert_trade_lifecycle: Callable[..., None],
-    get_open_positions: Callable[[], list[dict[str, Any]]],
-    close_position: Callable[[str], Any],
+    get_open_positions: Callable[[], list[dict[str, Any]]] | None = None,
+    get_open_positions_for_broker: Callable[[str], list[dict[str, Any]]] | None = None,
+    close_position: Callable[[str], Any] | None = None,
+    close_position_for_broker: Callable[[str, str], Any] | None = None,
 ):
     return execute_sync_paper_trades(
         get_open_paper_trades=get_open_paper_trades,
         sync_order_by_id=sync_order_by_id,
+        sync_order_by_id_for_broker=sync_order_by_id_for_broker,
         paper_trade_exit_already_logged=paper_trade_exit_already_logged,
         append_trade_log=append_trade_log,
         safe_insert_trade_event=safe_insert_trade_event,
@@ -33,6 +37,8 @@ def handle_sync_paper_trades(
         upsert_trade_lifecycle=upsert_trade_lifecycle,
         get_open_positions=get_open_positions,
         close_position=close_position,
+        get_open_positions_for_broker=get_open_positions_for_broker,
+        close_position_for_broker=close_position_for_broker,
     )
 
 
