@@ -201,9 +201,11 @@ export function useDashboardData(activeView = "overview") {
         fetchIbkrStatus(),
       ]);
 
-      const baseFailure =
-        [opsResult, rejectionResult, dailyResult, hourlyResult, alpacaRecentResult].some((result) => result.status === "rejected");
-      if (baseFailure) {
+      const criticalFailures = [rejectionResult, dailyResult, hourlyResult, alpacaRecentResult]
+        .filter((result) => result.status === "rejected")
+        .length;
+
+      if (criticalFailures === 4) {
         throw new Error("Failed to load execution attempt analytics");
       }
 
@@ -227,12 +229,16 @@ export function useDashboardData(activeView = "overview") {
 
       if (ibkrStatusResult.status === "fulfilled") {
         setIbkrStatus(ibkrStatusResult.value || null);
-        setSectionErrors((prev) => ({ ...prev, attempts: null, ibkr: null }));
+        setSectionErrors((prev) => ({
+          ...prev,
+          attempts: criticalFailures > 0 ? "Some execution analytics are temporarily unavailable." : null,
+          ibkr: null,
+        }));
       } else {
         setIbkrStatus(null);
         setSectionErrors((prev) => ({
           ...prev,
-          attempts: null,
+          attempts: criticalFailures > 0 ? "Some execution analytics are temporarily unavailable." : null,
           ibkr: ibkrStatusResult.reason?.message || "Failed to load IBKR status",
         }));
       }
