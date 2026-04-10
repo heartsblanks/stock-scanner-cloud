@@ -18,12 +18,22 @@ const ModePerformanceChart = lazy(() => import("../components/ModePerformanceCha
 const AlpacaApiLogsSection = lazy(() => import("../components/dashboard/AlpacaApiLogsSection"));
 const ReconciliationSection = lazy(() => import("../components/dashboard/ReconciliationSection"));
 
-const DASHBOARD_VIEWS = [
+const CORE_DASHBOARD_VIEWS = [
   { id: "overview", label: "Overview", description: "Best for the first look each session." },
   { id: "trades", label: "Trades", description: "Open positions and lifecycle details." },
   { id: "reconciliation", label: "Reconciliation", description: "Mismatch and repair workflow." },
-  { id: "analytics", label: "Analytics", description: "Charts and performance patterns." },
+  { id: "analytics", label: "Analytics", description: "Charts and performance patterns." }
 ];
+
+const ADVANCED_DASHBOARD_VIEWS = [
+  { id: "broker", label: "Broker Logs", description: "Alpaca call health and failures." }
+];
+
+function getDashboardViews(showAdvancedViews) {
+  return showAdvancedViews
+    ? [...CORE_DASHBOARD_VIEWS, ...ADVANCED_DASHBOARD_VIEWS]
+    : CORE_DASHBOARD_VIEWS;
+}
 
 function formatCurrency(value) {
   if (value === null || value === undefined || value === "") {
@@ -58,13 +68,15 @@ function getInitialView() {
 
   const params = new URLSearchParams(window.location.search);
   const view = String(params.get("view") || "").trim().toLowerCase();
-  return DASHBOARD_VIEWS.some((item) => item.id === view) ? view : "overview";
+  const knownViews = [...CORE_DASHBOARD_VIEWS, ...ADVANCED_DASHBOARD_VIEWS];
+  return knownViews.some((item) => item.id === view) ? view : "overview";
 }
 
 export default function DashboardPage() {
   const [activeView, setActiveView] = useState(getInitialView);
   const [drilldown, setDrilldown] = useState({ symbol: "", mode: "", hourUtc: "" });
   const [tradeBrokerView, setTradeBrokerView] = useState("all");
+  const [showAdvancedViews, setShowAdvancedViews] = useState(false);
   const [theme, setTheme] = useState(() => {
     if (typeof window === "undefined") {
       return "light";
@@ -228,8 +240,10 @@ export default function DashboardPage() {
     window.localStorage.setItem("dashboard-theme", theme);
   }, [theme]);
 
+  const visibleViews = getDashboardViews(showAdvancedViews);
+
   useEffect(() => {
-    const viewLabel = DASHBOARD_VIEWS.find((view) => view.id === activeView)?.label || "Overview";
+    const viewLabel = [...CORE_DASHBOARD_VIEWS, ...ADVANCED_DASHBOARD_VIEWS].find((view) => view.id === activeView)?.label || "Overview";
     document.title = `${viewLabel} | Stock Scanner Console`;
 
     if (typeof window !== "undefined") {
@@ -238,6 +252,12 @@ export default function DashboardPage() {
       window.history.replaceState({}, "", url);
     }
   }, [activeView]);
+
+  useEffect(() => {
+    if (!showAdvancedViews && activeView === "broker") {
+      setActiveView("overview");
+    }
+  }, [showAdvancedViews, activeView]);
 
   if (error) {
     if (!lastUpdated && !summary && !reconciliationSummary) {
@@ -353,8 +373,17 @@ export default function DashboardPage() {
           <DashboardFilters onApply={handleApplyFilters} />
 
           <section className="dashboard-view-nav-panel">
+            <div className="dashboard-toolbar" style={{ marginBottom: 8 }}>
+              <button
+                type="button"
+                onClick={() => setShowAdvancedViews((current) => !current)}
+                className={`dashboard-button ${showAdvancedViews ? "dashboard-button-secondary" : "dashboard-button-neutral"}`}
+              >
+                {showAdvancedViews ? "Hide Advanced" : "Show Advanced"}
+              </button>
+            </div>
             <div className="dashboard-view-nav">
-              {DASHBOARD_VIEWS.map((view) => (
+              {visibleViews.map((view) => (
                 <button
                   key={view.id}
                   type="button"
