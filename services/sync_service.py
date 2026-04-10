@@ -24,6 +24,21 @@ def _resolve_exit_timestamp(sync_result: dict[str, Any], timestamp_utc: str, par
     return parse_iso_utc(timestamp_utc)
 
 
+def _read_broker_open_symbols(
+    *,
+    broker_name: str,
+    get_open_positions: Callable[[], list[dict[str, Any]]] | None,
+    get_open_positions_for_broker: Callable[[str], list[dict[str, Any]]] | None,
+) -> set[str]:
+    if get_open_positions_for_broker is not None:
+        positions = get_open_positions_for_broker(broker_name) or []
+    elif get_open_positions is not None:
+        positions = get_open_positions() or []
+    else:
+        positions = []
+    return {str(position.get("symbol", "")).strip().upper() for position in positions if str(position.get("symbol", "")).strip()}
+
+
 
 def execute_sync_paper_trades(
     *,
@@ -51,6 +66,7 @@ def execute_sync_paper_trades(
     results: list[dict[str, Any]] = []
     synced_count = 0
     skipped_count = 0
+    cached_open_symbols_by_broker: dict[str, set[str]] = {}
 
     for open_row in open_rows:
         parent_order_id = str(open_row.get("broker_parent_order_id", "")).strip()
@@ -95,6 +111,49 @@ def execute_sync_paper_trades(
             continue
 
         exit_event = str(sync_result.get("exit_event", "")).strip().upper()
+        stale_reconciled = False
+        if not exit_event and broker_name == "IBKR":
+            sync_status = str(sync_result.get("status", "")).strip().lower()
+            parent_status = str(sync_result.get("parent_status", "")).strip().lower()
+            is_unknown_parent = sync_status == "unknown" or parent_status == "unknown"
+            if is_unknown_parent:
+                try:
+                    if broker_name not in cached_open_symbols_by_broker:
+                        cached_open_symbols_by_broker[broker_name] = _read_broker_open_symbols(
+                            broker_name=broker_name,
+                            get_open_positions=get_open_positions,
+                            get_open_positions_for_broker=get_open_positions_for_broker,
+                        )
+                    broker_open_symbols = cached_open_symbols_by_broker[broker_name]
+                except Exception as e:
+                    log_exception(
+                        "IBKR open position read failed during stale reconciliation",
+                        e,
+                        component="sync_service",
+                        operation="execute_sync_paper_trades",
+                        symbol=symbol,
+                        parent_order_id=parent_order_id,
+                    )
+                    broker_open_symbols = {symbol}
+
+                if symbol not in broker_open_symbols:
+                    sync_result = {
+                        **sync_result,
+                        "exit_event": "MANUAL_CLOSE",
+                        "exit_reason": str(sync_result.get("exit_reason", "") or "STALE_OPEN_RECONCILED"),
+                        "exit_status": str(sync_result.get("exit_status", "") or "reconciled_closed"),
+                        "exit_order_id": str(sync_result.get("exit_order_id", "") or parent_order_id),
+                        "exit_filled_qty": str(sync_result.get("exit_filled_qty", "") or open_row.get("shares", "")),
+                        "exit_price": str(sync_result.get("exit_price", "") or open_row.get("entry_price", "")),
+                        "exit_filled_avg_price": str(
+                            sync_result.get("exit_filled_avg_price", "")
+                            or sync_result.get("exit_price", "")
+                            or open_row.get("entry_price", "")
+                        ),
+                    }
+                    exit_event = "MANUAL_CLOSE"
+                    stale_reconciled = True
+
         if not exit_event:
             results.append({
                 "symbol": symbol,
@@ -265,6 +324,7 @@ def execute_sync_paper_trades(
             "exit_order_id": sync_result.get("exit_order_id", ""),
             "parent_status": sync_result.get("parent_status", ""),
             "exit_status": sync_result.get("exit_status", sync_result.get("parent_status", "")),
+            "stale_reconciled": stale_reconciled,
         })
 
     auto_healed_positions: list[dict[str, Any]] = []

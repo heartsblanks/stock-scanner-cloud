@@ -64,6 +64,54 @@ class SyncServiceTests(unittest.TestCase):
         self.assertAlmostEqual(captured_lifecycle["realized_pnl"], -25.44, places=2)
         self.assertAlmostEqual(captured_lifecycle["realized_pnl_percent"], -0.428266, places=6)
 
+    def test_ibkr_unknown_parent_is_reconciled_closed_when_no_open_position(self):
+        captured_lifecycle = {}
+
+        def upsert_trade_lifecycle(**kwargs):
+            captured_lifecycle.update(kwargs)
+
+        result = execute_sync_paper_trades(
+            get_open_paper_trades=lambda: [
+                {
+                    "timestamp_utc": "2026-04-09T14:20:10+00:00",
+                    "symbol": "NIO",
+                    "name": "NIO Inc",
+                    "mode": "first-hour-breakout",
+                    "side": "BUY",
+                    "shares": "10",
+                    "entry_price": "5.00",
+                    "stop_price": "4.90",
+                    "target_price": "5.30",
+                    "broker_order_id": "10",
+                    "broker_parent_order_id": "10",
+                    "broker": "IBKR",
+                }
+            ],
+            sync_order_by_id_for_broker=lambda broker, parent_id: {
+                "status": "unknown",
+                "parent_status": "",
+            },
+            paper_trade_exit_already_logged=lambda parent_order_id, exit_event: False,
+            append_trade_log=lambda row: None,
+            safe_insert_trade_event=lambda **kwargs: None,
+            safe_insert_broker_order=lambda **kwargs: None,
+            upsert_trade_lifecycle=upsert_trade_lifecycle,
+            parse_iso_utc=parse_iso_utc,
+            to_float_or_none=to_float_or_none,
+            get_open_positions_for_broker=lambda broker: [],
+            close_position_for_broker=lambda broker, symbol: {"ok": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["synced_count"], 1)
+        self.assertEqual(result["results"][0]["broker"], "IBKR")
+        self.assertTrue(result["results"][0]["stale_reconciled"])
+        self.assertEqual(result["results"][0]["exit_event"], "MANUAL_CLOSE")
+        self.assertEqual(captured_lifecycle["symbol"], "NIO")
+        self.assertEqual(captured_lifecycle["broker"], "IBKR")
+        self.assertEqual(captured_lifecycle["status"], "CLOSED")
+        self.assertEqual(captured_lifecycle["exit_reason"], "STALE_OPEN_RECONCILED")
+
 
 if __name__ == "__main__":
     unittest.main()
