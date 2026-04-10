@@ -72,11 +72,26 @@ function getInitialView() {
   return knownViews.some((item) => item.id === view) ? view : "overview";
 }
 
+function getInitialAdvancedViews() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const advancedParam = String(params.get("advanced") || "").trim().toLowerCase();
+  const viewParam = String(params.get("view") || "").trim().toLowerCase();
+  if (advancedParam === "1" || advancedParam === "true" || viewParam === "broker") {
+    return true;
+  }
+
+  return false;
+}
+
 export default function DashboardPage() {
   const [activeView, setActiveView] = useState(getInitialView);
   const [drilldown, setDrilldown] = useState({ symbol: "", mode: "", hourUtc: "" });
   const [tradeBrokerView, setTradeBrokerView] = useState("all");
-  const [showAdvancedViews, setShowAdvancedViews] = useState(false);
+  const [showAdvancedViews, setShowAdvancedViews] = useState(getInitialAdvancedViews);
   const [theme, setTheme] = useState(() => {
     if (typeof window === "undefined") {
       return "light";
@@ -249,9 +264,14 @@ export default function DashboardPage() {
     if (typeof window !== "undefined") {
       const url = new URL(window.location.href);
       url.searchParams.set("view", activeView);
+      if (showAdvancedViews) {
+        url.searchParams.set("advanced", "1");
+      } else {
+        url.searchParams.delete("advanced");
+      }
       window.history.replaceState({}, "", url);
     }
-  }, [activeView]);
+  }, [activeView, showAdvancedViews]);
 
   useEffect(() => {
     if (!showAdvancedViews && activeView === "broker") {
