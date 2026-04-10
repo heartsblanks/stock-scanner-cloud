@@ -631,7 +631,7 @@ class IbkrGatewayClient:
                 "reason": "no_open_position",
             }
 
-        MarketOrder, Stock = self._load_order_classes()
+        _LimitOrder, MarketOrder, _StopOrder, Stock = self._load_order_classes()
         contract = getattr(target_position, "contract", None)
         if contract is None:
             contract = Stock(normalized_symbol, "SMART", "USD")
