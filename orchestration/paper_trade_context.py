@@ -145,12 +145,23 @@ def get_open_paper_trades() -> list[dict]:
     return normalized_rows
 
 
-def get_managed_open_paper_trades_for_eod_close() -> list[dict]:
-    open_rows = get_open_paper_trades()
+def get_open_paper_trades_for_broker(broker_name: str) -> list[dict]:
+    normalized_broker = str(broker_name or "").strip().upper()
+    if not normalized_broker:
+        return get_open_paper_trades()
+    return [
+        row for row in get_open_paper_trades()
+        if str(row.get("broker", "") or "").strip().upper() == normalized_broker
+    ]
+
+
+def get_managed_open_paper_trades_for_eod_close(broker=None) -> list[dict]:
+    target_broker = broker or PAPER_BROKER
+    open_rows = get_open_paper_trades_for_broker(getattr(target_broker, "name", ""))
 
     try:
-        positions = get_open_positions()
-        open_orders = get_open_orders()
+        positions = target_broker.get_open_positions()
+        open_orders = target_broker.get_open_orders()
     except Exception as exc:
         log_exception("Broker validation for open paper trades failed", exc, component="paper_trade_context", operation="get_managed_open_paper_trades_for_eod_close")
         return open_rows

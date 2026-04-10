@@ -85,7 +85,19 @@ def get_trade_event_by_order_id(order_id: str) -> Optional[dict]:
     return fetch_one("SELECT * FROM trade_events WHERE order_id = %(order_id)s ORDER BY event_time DESC, id DESC LIMIT 1", {"order_id": order_id})
 
 
-def get_recent_trade_event_rows(limit: int = 100) -> list[dict]:
+def get_recent_trade_event_rows(limit: int = 100, broker: Optional[str] = None) -> list[dict]:
+    normalized_broker = normalize_text(broker).upper() if broker else ""
+    if normalized_broker:
+        return fetch_all(
+            """
+            SELECT *
+            FROM trade_events
+            WHERE UPPER(COALESCE(broker, '')) = %(broker)s
+            ORDER BY event_time DESC, id DESC
+            LIMIT %(limit)s
+            """,
+            {"limit": limit, "broker": normalized_broker},
+        )
     return fetch_all("SELECT * FROM trade_events ORDER BY event_time DESC, id DESC LIMIT %(limit)s", {"limit": limit})
 
 
@@ -114,26 +126,46 @@ def get_trade_event_counts_by_type() -> list[dict]:
     )
 
 
-def get_open_trade_events(limit: int = 100) -> list[dict]:
+def get_open_trade_events(limit: int = 100, broker: Optional[str] = None) -> list[dict]:
+    broker_filter = ""
+    params: dict[str, Any] = {"limit": limit}
+    if broker:
+        broker_filter = "AND UPPER(COALESCE(te.broker, '')) = %(broker)s"
+        params["broker"] = normalize_text(broker).upper()
     return fetch_all(
-        """
+        f"""
         WITH ranked AS (
             SELECT te.*, ROW_NUMBER() OVER (
                 PARTITION BY COALESCE(NULLIF(parent_order_id, ''), NULLIF(order_id, ''), symbol)
                 ORDER BY event_time DESC, id DESC
             ) AS rn
             FROM trade_events te
+            WHERE 1 = 1
+              {broker_filter}
         )
         SELECT * FROM ranked
         WHERE rn = 1 AND UPPER(COALESCE(status, '')) = 'OPEN'
         ORDER BY event_time DESC, id DESC
         LIMIT %(limit)s
         """,
-        {"limit": limit},
+        params,
     )
 
 
-def get_closed_trade_events(limit: int = 100) -> list[dict]:
+def get_closed_trade_events(limit: int = 100, broker: Optional[str] = None) -> list[dict]:
+    normalized_broker = normalize_text(broker).upper() if broker else ""
+    if normalized_broker:
+        return fetch_all(
+            """
+            SELECT *
+            FROM trade_events
+            WHERE UPPER(COALESCE(status, '')) = 'CLOSED'
+              AND UPPER(COALESCE(broker, '')) = %(broker)s
+            ORDER BY event_time DESC, id DESC
+            LIMIT %(limit)s
+            """,
+            {"limit": limit, "broker": normalized_broker},
+        )
     return fetch_all(
         "SELECT * FROM trade_events WHERE UPPER(COALESCE(status, '')) = 'CLOSED' ORDER BY event_time DESC, id DESC LIMIT %(limit)s",
         {"limit": limit},
@@ -233,7 +265,20 @@ def upsert_trade_lifecycle(
     )
 
 
-def get_trade_lifecycles(limit: int = 100, status: Optional[str] = None) -> list[dict]:
+def get_trade_lifecycles(limit: int = 100, status: Optional[str] = None, broker: Optional[str] = None) -> list[dict]:
+    normalized_broker = normalize_text(broker).upper() if broker else ""
+    if status and normalized_broker:
+        return fetch_all(
+            """
+            SELECT *
+            FROM trade_lifecycles
+            WHERE UPPER(COALESCE(status, '')) = %(status)s
+              AND UPPER(COALESCE(broker, '')) = %(broker)s
+            ORDER BY COALESCE(entry_time, created_at) DESC, id DESC
+            LIMIT %(limit)s
+            """,
+            {"status": normalize_text(status).upper(), "broker": normalized_broker, "limit": limit},
+        )
     if status:
         return fetch_all(
             """
@@ -244,6 +289,17 @@ def get_trade_lifecycles(limit: int = 100, status: Optional[str] = None) -> list
             LIMIT %(limit)s
             """,
             {"status": normalize_text(status).upper(), "limit": limit},
+        )
+    if normalized_broker:
+        return fetch_all(
+            """
+            SELECT *
+            FROM trade_lifecycles
+            WHERE UPPER(COALESCE(broker, '')) = %(broker)s
+            ORDER BY COALESCE(entry_time, created_at) DESC, id DESC
+            LIMIT %(limit)s
+            """,
+            {"broker": normalized_broker, "limit": limit},
         )
     return fetch_all(
         "SELECT * FROM trade_lifecycles ORDER BY COALESCE(entry_time, created_at) DESC, id DESC LIMIT %(limit)s",
@@ -299,8 +355,8 @@ def get_latest_open_trade_lifecycle(symbol: str, *, parent_order_id: Optional[st
     )
 
 
-def get_trade_lifecycle_summary_from_table(limit: int = 1000) -> dict:
-    rows = get_trade_lifecycles(limit=limit)
+def get_trade_lifecycle_summary_from_table(limit: int = 1000, broker: Optional[str] = None) -> dict:
+    rows = get_trade_lifecycles(limit=limit, broker=broker)
     closed_rows = [row for row in rows if str(row.get("status", "")).strip().upper() == "CLOSED"]
     pnl_values = [to_optional_float(row.get("realized_pnl")) for row in closed_rows if to_optional_float(row.get("realized_pnl")) is not None]
     wins = [value for value in pnl_values if value > 0]

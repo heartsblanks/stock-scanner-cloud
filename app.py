@@ -566,6 +566,10 @@ def get_managed_open_paper_trades_for_eod_close() -> list[dict]:
     return context_get_managed_open_paper_trades_for_eod_close()
 
 
+def get_managed_open_paper_trades_for_eod_close_for_broker(broker) -> list[dict]:
+    return context_get_managed_open_paper_trades_for_eod_close(broker=broker)
+
+
 def get_current_open_position_state() -> tuple[int, float]:
     return context_get_current_open_position_state()
 
@@ -788,14 +792,14 @@ def run_scheduled_paper_scan_wrapper(payload):
 
 
 
-def close_all_paper_positions():
+def _close_all_paper_positions_for_broker(broker) -> dict[str, Any] | tuple[dict[str, Any], int]:
     return run_close_all_paper_positions(
         execute_close_all_paper_positions=execute_close_all_paper_positions,
-        get_open_positions=get_open_positions,
-        get_managed_open_paper_trades_for_eod_close=get_managed_open_paper_trades_for_eod_close,
-        cancel_open_orders_for_symbol=cancel_open_orders_for_symbol,
-        close_position=close_position,
-        get_order_by_id=get_order_by_id,
+        get_open_positions=broker.get_open_positions,
+        get_managed_open_paper_trades_for_eod_close=lambda: get_managed_open_paper_trades_for_eod_close_for_broker(broker),
+        cancel_open_orders_for_symbol=broker.cancel_open_orders_for_symbol,
+        close_position=broker.close_position,
+        get_order_by_id=broker.get_order_by_id,
         safe_insert_broker_order=safe_insert_broker_order,
         append_trade_log=append_trade_log,
         safe_insert_trade_event=safe_insert_trade_event,
@@ -803,6 +807,30 @@ def close_all_paper_positions():
         to_float_or_none=to_float_or_none,
         parse_iso_utc=parse_iso_utc,
     )
+
+
+def close_all_paper_positions():
+    alpaca_result = _close_all_paper_positions_for_broker(ALPACA_PAPER_BROKER)
+
+    if not PAPER_BROKER_CONFIG.shadow_mode_enabled or not ibkr_bridge_enabled():
+        return alpaca_result
+
+    ibkr_result = _close_all_paper_positions_for_broker(IBKR_PAPER_BROKER)
+
+    if isinstance(alpaca_result, tuple):
+        return alpaca_result
+
+    if isinstance(ibkr_result, tuple):
+        alpaca_result["shadow_ibkr_close"] = ibkr_result[0]
+        alpaca_result["shadow_ibkr_close_status_code"] = ibkr_result[1]
+        return alpaca_result
+
+    aggregated = dict(alpaca_result or {})
+    aggregated["shadow_ibkr_close"] = ibkr_result
+    aggregated["combined_position_count"] = int(alpaca_result.get("position_count", 0) or 0) + int(ibkr_result.get("position_count", 0) or 0)
+    aggregated["combined_closed_count"] = int(alpaca_result.get("closed_count", 0) or 0) + int(ibkr_result.get("closed_count", 0) or 0)
+    aggregated["combined_skipped_count"] = int(alpaca_result.get("skipped_count", 0) or 0) + int(ibkr_result.get("skipped_count", 0) or 0)
+    return aggregated
 
 
 
