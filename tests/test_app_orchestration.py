@@ -34,13 +34,15 @@ class AppOrchestrationTests(unittest.TestCase):
             evaluate_symbol=lambda *args, **kwargs: {},
             get_latest_open_paper_trade_for_symbol=lambda symbol: None,
             is_symbol_in_paper_cooldown=lambda symbol, ts: (False, ""),
-            place_paper_bracket_order_from_trade=lambda trade: {},
+            place_paper_orders_from_trade=lambda trade: [],
             append_trade_log=lambda row: None,
             safe_insert_trade_event=lambda **kwargs: None,
             safe_insert_broker_order=lambda **kwargs: None,
             to_float_or_none=lambda value: float(value) if value not in (None, "") else None,
             min_confidence=70,
             upsert_trade_lifecycle=lambda **kwargs: None,
+            resolve_account_size=lambda payload: 100000.0,
+            active_broker="ALPACA",
         )
 
         self.assertEqual(result, {"ok": True})

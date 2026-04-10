@@ -5,9 +5,9 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
+from brokers import get_paper_broker
 from core.logging_utils import log_exception
 from core.paper_trade_config import get_paper_trade_limits
-from alpaca.paper import get_open_orders, get_open_positions
 from orchestration.scan_context import NY_TZ, parse_iso_utc, to_float_or_none
 from storage import (
     get_daily_realized_pnl,
@@ -25,6 +25,9 @@ PAPER_TARGET_COOLDOWN_MINUTES = int(os.getenv("PAPER_TARGET_COOLDOWN_MINUTES", "
 PAPER_MANUAL_CLOSE_COOLDOWN_MINUTES = int(os.getenv("PAPER_MANUAL_CLOSE_COOLDOWN_MINUTES", "0"))
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY")
 TWELVEDATA_BASE_URL = "https://api.twelvedata.com/time_series"
+PAPER_BROKER = get_paper_broker()
+get_open_orders = PAPER_BROKER.get_open_orders
+get_open_positions = PAPER_BROKER.get_open_positions
 
 
 def read_trade_rows_for_date(target_date: str) -> list[dict]:
@@ -36,13 +39,16 @@ def read_trade_rows_for_date(target_date: str) -> list[dict]:
         price = str(row.get("price", "") or "").strip()
         broker_order_id = str(row.get("broker_order_id", "") or "").strip()
         broker_parent_order_id = str(row.get("broker_parent_order_id", "") or "").strip()
+        broker = str(row.get("broker", "") or "").strip().upper()
+        trade_source = f"{broker}_PAPER" if broker else ("ALPACA_PAPER" if (broker_order_id or broker_parent_order_id) else "MANUAL")
 
         normalized_rows.append({
             "timestamp_utc": row.get("timestamp_utc", ""),
             "event_type": event_type,
             "symbol": row.get("symbol", ""),
             "mode": row.get("mode", ""),
-            "trade_source": "ALPACA_PAPER" if (broker_order_id or broker_parent_order_id) else "MANUAL",
+            "trade_source": trade_source,
+            "broker": broker,
             "shares": row.get("shares", ""),
             "entry_price": price if event_type == "OPEN" else "",
             "exit_price": price if event_type != "OPEN" else "",
@@ -123,7 +129,8 @@ def get_open_paper_trades() -> list[dict]:
                 "target_price": row.get("target_price", ""),
                 "status": row.get("status") or "OPEN",
                 "exit_reason": row.get("exit_reason") or "",
-                "trade_source": "ALPACA_PAPER",
+                "trade_source": f"{str(row.get('broker', '') or 'ALPACA').strip().upper()}_PAPER",
+                "broker": str(row.get("broker", "") or "ALPACA").strip().upper(),
                 "broker_order_id": order_id,
                 "broker_parent_order_id": parent_order_id,
                 "linked_signal_timestamp_utc": row.get("signal_timestamp") or "",
@@ -138,12 +145,23 @@ def get_open_paper_trades() -> list[dict]:
     return normalized_rows
 
 
-def get_managed_open_paper_trades_for_eod_close() -> list[dict]:
-    open_rows = get_open_paper_trades()
+def get_open_paper_trades_for_broker(broker_name: str) -> list[dict]:
+    normalized_broker = str(broker_name or "").strip().upper()
+    if not normalized_broker:
+        return get_open_paper_trades()
+    return [
+        row for row in get_open_paper_trades()
+        if str(row.get("broker", "") or "").strip().upper() == normalized_broker
+    ]
+
+
+def get_managed_open_paper_trades_for_eod_close(broker=None) -> list[dict]:
+    target_broker = broker or PAPER_BROKER
+    open_rows = get_open_paper_trades_for_broker(getattr(target_broker, "name", ""))
 
     try:
-        positions = get_open_positions()
-        open_orders = get_open_orders()
+        positions = target_broker.get_open_positions()
+        open_orders = target_broker.get_open_orders()
     except Exception as exc:
         log_exception("Broker validation for open paper trades failed", exc, component="paper_trade_context", operation="get_managed_open_paper_trades_for_eod_close")
         return open_rows
@@ -303,12 +321,18 @@ def read_all_signal_rows() -> list[dict]:
     return normalized_rows
 
 
-def get_latest_open_paper_trade_for_symbol(symbol: str) -> dict | None:
+def get_latest_open_paper_trade_for_symbol(symbol: str, broker: str | None = None) -> dict | None:
     normalized_symbol = str(symbol).strip().upper()
+    normalized_broker = str(broker or "").strip().upper()
     if not normalized_symbol:
         return None
 
-    matching_rows = [row for row in get_open_paper_trades() if str(row.get("symbol", "")).strip().upper() == normalized_symbol]
+    matching_rows = [
+        row
+        for row in get_open_paper_trades()
+        if str(row.get("symbol", "")).strip().upper() == normalized_symbol
+        and (not normalized_broker or str(row.get("broker", "") or "ALPACA").strip().upper() == normalized_broker)
+    ]
     if not matching_rows:
         return None
 
@@ -417,7 +441,7 @@ def find_latest_open_trade(symbol: str, trade_source: str | None = None, broker_
     if not normalized_symbol:
         return None
 
-    if normalized_trade_source == "ALPACA_PAPER":
+    if normalized_trade_source.endswith("_PAPER"):
         open_rows = get_open_paper_trades()
         if normalized_parent_order_id:
             for row in reversed(open_rows):

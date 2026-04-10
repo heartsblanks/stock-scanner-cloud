@@ -286,6 +286,7 @@ def insert_paper_trade_attempt(
     loss_multiplier: Optional[float] = None,
     final_multiplier: Optional[float] = None,
     placed: Optional[bool] = None,
+    broker: Optional[str] = None,
     broker_order_id: Optional[str] = None,
     broker_parent_order_id: Optional[str] = None,
     broker_rejection_reason: Optional[str] = None,
@@ -298,7 +299,7 @@ def insert_paper_trade_attempt(
             current_open_positions, current_open_exposure, remaining_slots, effective_remaining_slots,
             remaining_allocatable_capital, per_trade_notional, adjusted_per_trade_notional, shares,
             cash_affordable_shares, notional_capped_shares, confidence_multiplier, loss_multiplier,
-            final_multiplier, placed, broker_order_id, broker_parent_order_id, broker_rejection_reason
+            final_multiplier, placed, broker, broker_order_id, broker_parent_order_id, broker_rejection_reason
         )
         VALUES (
             %(timestamp_utc)s, %(scan_id)s, %(mode)s, %(scan_source)s, %(market_phase)s, %(symbol)s, %(decision_stage)s,
@@ -306,7 +307,7 @@ def insert_paper_trade_attempt(
             %(current_open_positions)s, %(current_open_exposure)s, %(remaining_slots)s, %(effective_remaining_slots)s,
             %(remaining_allocatable_capital)s, %(per_trade_notional)s, %(adjusted_per_trade_notional)s, %(shares)s,
             %(cash_affordable_shares)s, %(notional_capped_shares)s, %(confidence_multiplier)s, %(loss_multiplier)s,
-            %(final_multiplier)s, %(placed)s, %(broker_order_id)s, %(broker_parent_order_id)s, %(broker_rejection_reason)s
+            %(final_multiplier)s, %(placed)s, %(broker)s, %(broker_order_id)s, %(broker_parent_order_id)s, %(broker_rejection_reason)s
         )
         """,
         {
@@ -338,6 +339,7 @@ def insert_paper_trade_attempt(
             "loss_multiplier": loss_multiplier,
             "final_multiplier": final_multiplier,
             "placed": placed,
+            "broker": normalize_text(broker).upper() or None,
             "broker_order_id": normalize_text(broker_order_id) or None,
             "broker_parent_order_id": normalize_text(broker_parent_order_id) or None,
             "broker_rejection_reason": normalize_text(broker_rejection_reason) or None,
@@ -368,7 +370,28 @@ def get_signal_log_rows(limit: int = 5000) -> list[dict]:
     )
 
 
-def get_recent_paper_trade_attempts(limit: int = 100, decision_stage: Optional[str] = None) -> list[dict]:
+def get_recent_paper_trade_attempts(
+    limit: int = 100,
+    decision_stage: Optional[str] = None,
+    broker: Optional[str] = None,
+) -> list[dict]:
+    normalized_broker = normalize_text(broker).upper()
+    if decision_stage and normalized_broker:
+        return fetch_all(
+            """
+            SELECT *
+            FROM paper_trade_attempts
+            WHERE UPPER(COALESCE(decision_stage, '')) = %(decision_stage)s
+              AND UPPER(COALESCE(broker, '')) = %(broker)s
+            ORDER BY timestamp_utc DESC, id DESC
+            LIMIT %(limit)s
+            """,
+            {
+                "decision_stage": normalize_text(decision_stage).upper(),
+                "broker": normalized_broker,
+                "limit": limit,
+            },
+        )
     if decision_stage:
         return fetch_all(
             """
@@ -380,10 +403,34 @@ def get_recent_paper_trade_attempts(limit: int = 100, decision_stage: Optional[s
             """,
             {"decision_stage": normalize_text(decision_stage).upper(), "limit": limit},
         )
+    if normalized_broker:
+        return fetch_all(
+            """
+            SELECT *
+            FROM paper_trade_attempts
+            WHERE UPPER(COALESCE(broker, '')) = %(broker)s
+            ORDER BY timestamp_utc DESC, id DESC
+            LIMIT %(limit)s
+            """,
+            {"broker": normalized_broker, "limit": limit},
+        )
     return fetch_all("SELECT * FROM paper_trade_attempts ORDER BY timestamp_utc DESC, id DESC LIMIT %(limit)s", {"limit": limit})
 
 
-def get_recent_paper_trade_rejections(limit: int = 100) -> list[dict]:
+def get_recent_paper_trade_rejections(limit: int = 100, broker: Optional[str] = None) -> list[dict]:
+    normalized_broker = normalize_text(broker).upper()
+    if normalized_broker:
+        return fetch_all(
+            """
+            SELECT *
+            FROM paper_trade_attempts
+            WHERE UPPER(COALESCE(decision_stage, '')) IN ('SCAN_REJECTED', 'REFRESH_REJECTED', 'PLACEMENT_SKIPPED', 'PLACEMENT_REJECTED')
+              AND UPPER(COALESCE(broker, '')) = %(broker)s
+            ORDER BY timestamp_utc DESC, id DESC
+            LIMIT %(limit)s
+            """,
+            {"broker": normalized_broker, "limit": limit},
+        )
     return fetch_all(
         """
         SELECT *
@@ -424,7 +471,20 @@ def get_paper_trade_attempt_reason_counts(limit_days: int = 7, limit: int = 10) 
     )
 
 
-def get_paper_trade_attempt_daily_summary(limit_days: int = 7) -> list[dict]:
+def get_paper_trade_attempt_daily_summary(limit_days: int = 7, broker: Optional[str] = None) -> list[dict]:
+    normalized_broker = normalize_text(broker).upper()
+    if normalized_broker:
+        return fetch_all(
+            """
+            SELECT timestamp_utc::date AS trade_date, COALESCE(decision_stage, '') AS decision_stage, COUNT(*)::INT AS count
+            FROM paper_trade_attempts
+            WHERE timestamp_utc >= NOW() - (%(limit_days)s::text || ' days')::interval
+              AND UPPER(COALESCE(broker, '')) = %(broker)s
+            GROUP BY timestamp_utc::date, COALESCE(decision_stage, '')
+            ORDER BY trade_date DESC, decision_stage ASC
+            """,
+            {"limit_days": max(1, limit_days), "broker": normalized_broker},
+        )
     return fetch_all(
         """
         SELECT timestamp_utc::date AS trade_date, COALESCE(decision_stage, '') AS decision_stage, COUNT(*)::INT AS count
@@ -437,9 +497,15 @@ def get_paper_trade_attempt_daily_summary(limit_days: int = 7) -> list[dict]:
     )
 
 
-def get_paper_trade_attempt_hourly_summary(limit_days: int = 7) -> list[dict]:
+def get_paper_trade_attempt_hourly_summary(limit_days: int = 7, broker: Optional[str] = None) -> list[dict]:
+    normalized_broker = normalize_text(broker).upper()
+    broker_filter = ""
+    params: dict[str, int | str] = {"limit_days": max(1, limit_days)}
+    if normalized_broker:
+        broker_filter = " AND UPPER(COALESCE(broker, '')) = %(broker)s"
+        params["broker"] = normalized_broker
     return fetch_all(
-        """
+        f"""
         WITH base AS (
             SELECT
                 EXTRACT(HOUR FROM (timestamp_utc AT TIME ZONE 'America/New_York'))::INT AS hour_ny,
@@ -447,6 +513,7 @@ def get_paper_trade_attempt_hourly_summary(limit_days: int = 7) -> list[dict]:
                 COALESCE(final_reason, '') AS final_reason
             FROM paper_trade_attempts
             WHERE timestamp_utc >= NOW() - (%(limit_days)s::text || ' days')::interval
+            {broker_filter}
         ),
         reason_ranked AS (
             SELECT
@@ -507,7 +574,7 @@ def get_paper_trade_attempt_hourly_summary(limit_days: int = 7) -> list[dict]:
         GROUP BY base.hour_ny, reason_ranked.final_reason, reason_ranked.reason_count
         ORDER BY base.hour_ny ASC
         """,
-        {"limit_days": max(1, limit_days)},
+        params,
     )
 
 

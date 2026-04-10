@@ -5,3 +5,4 @@ gunicorn==23.0.0
 google-cloud-storage
 psycopg[binary]
 flask-cors
+ib-insync==0.9.86

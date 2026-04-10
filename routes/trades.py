@@ -399,10 +399,12 @@ def register_trade_routes(
     def open_trades():
         try:
             limit = int(request.args.get("limit", 100))
-            rows = get_trade_lifecycles(limit=limit, status="OPEN")
+            broker = request.args.get("broker")
+            rows = get_trade_lifecycles(limit=limit, status="OPEN", broker=broker)
             return jsonify({
                 "ok": True,
                 "count": len(rows),
+                "broker_filter": broker,
                 "rows": rows,
             })
         except Exception as e:
@@ -414,10 +416,12 @@ def register_trade_routes(
     def closed_trades():
         try:
             limit = int(request.args.get("limit", 100))
-            rows = get_trade_lifecycles(limit=limit, status="CLOSED")
+            broker = request.args.get("broker")
+            rows = get_trade_lifecycles(limit=limit, status="CLOSED", broker=broker)
             return jsonify({
                 "ok": True,
                 "count": len(rows),
+                "broker_filter": broker,
                 "rows": rows,
             })
         except Exception as e:
@@ -429,10 +433,12 @@ def register_trade_routes(
     def recent_trades():
         try:
             limit = int(request.args.get("limit", 100))
-            rows = get_recent_trade_event_rows(limit=limit)
+            broker = request.args.get("broker")
+            rows = get_recent_trade_event_rows(limit=limit, broker=broker)
             return jsonify({
                 "ok": True,
                 "count": len(rows),
+                "broker_filter": broker,
                 "rows": rows,
             })
         except Exception as e:
@@ -458,19 +464,21 @@ def register_trade_routes(
         try:
             limit_raw = request.args.get("limit", "100")
             status = request.args.get("status")
+            broker = request.args.get("broker")
 
             try:
                 limit = max(1, min(1000, int(limit_raw)))
             except Exception:
                 return jsonify({"ok": False, "error": "limit must be an integer"}), 400
 
-            rows = get_trade_lifecycles(limit=limit, status=status)
+            rows = get_trade_lifecycles(limit=limit, status=status, broker=broker)
 
             return jsonify({
                 "ok": True,
                 "count": len(rows),
                 "limit": limit,
                 "status_filter": status,
+                "broker_filter": broker,
                 "rows": rows,
             })
         except Exception as e:
@@ -482,17 +490,19 @@ def register_trade_routes(
     def trade_lifecycle_summary():
         try:
             limit_raw = request.args.get("limit", "1000")
+            broker = request.args.get("broker")
 
             try:
                 limit = max(1, min(5000, int(limit_raw)))
             except Exception:
                 return jsonify({"ok": False, "error": "limit must be an integer"}), 400
 
-            summary = get_trade_lifecycle_summary_from_table(limit=limit)
+            summary = get_trade_lifecycle_summary_from_table(limit=limit, broker=broker)
 
             return jsonify({
                 "ok": True,
                 "limit": limit,
+                "broker_filter": broker,
                 **summary,
             })
         except Exception as e:

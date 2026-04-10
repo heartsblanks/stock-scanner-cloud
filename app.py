@@ -1,14 +1,19 @@
 import os
 from datetime import datetime
+from typing import Any
 
 from flask import Flask
 from flask_cors import CORS
+import requests
 from core.logging_utils import log_exception
-from alpaca.paper import place_paper_bracket_order_from_trade, get_open_positions, close_position, cancel_open_orders_for_symbol
-from alpaca.sync import sync_order_by_id, get_order_by_id
+from core.logging_utils import log_info
 from alpaca.reconcile import run_reconciliation, upload_file_to_gcs
 from analytics.trade_analysis import run_trade_analysis, upload_file_to_gcs as upload_analysis_file_to_gcs
 from analytics.signal_analysis import run_signal_analysis, upload_file_to_gcs as upload_signal_analysis_file_to_gcs
+from brokers import get_paper_broker, get_paper_broker_config
+from brokers.alpaca_adapter import AlpacaPaperBroker
+from brokers.ibkr_adapter import IbkrPaperBroker
+from brokers.ibkr_bridge_client import ibkr_bridge_enabled, ibkr_bridge_get
 from core.db import healthcheck as db_healthcheck
 from storage import (
     insert_scan_run,
@@ -64,6 +69,7 @@ from orchestration.paper_trade_context import (
 )
 from orchestration.scan_context import (
     NY_TZ,
+    SCHEDULED_ROUND_ROBIN_MODES,
     build_scan_id,
     build_scheduled_scan_payload,
     debug_to_dict,
@@ -83,6 +89,7 @@ from orchestration.app_orchestration import (
 )
 from orchestration.scheduler_ops import (
     execute_maintenance_ops as build_execute_maintenance_ops,
+    execute_ibkr_vm_control as build_execute_ibkr_vm_control,
     execute_market_ops as build_execute_market_ops,
     execute_post_close_ops as build_execute_post_close_ops,
 )
@@ -93,6 +100,7 @@ from services.scan_service import execute_full_scan
 from services.trade_service import execute_close_all_paper_positions
 
 from analytics.trade_scan import (
+    holiday_and_early_close_status,
     run_scan,
     evaluate_symbol,
     market_time_check,
@@ -100,10 +108,307 @@ from analytics.trade_scan import (
 )
 from analytics.instruments import INSTRUMENT_GROUPS
 PAPER_TRADE_MIN_CONFIDENCE = 70
+IBKR_PAPER_TRADE_MIN_CONFIDENCE = int(os.getenv("IBKR_PAPER_TRADE_MIN_CONFIDENCE", "40"))
 
 
 app = Flask(__name__)
 CORS(app)
+PAPER_BROKER = get_paper_broker()
+PAPER_BROKER_CONFIG = get_paper_broker_config()
+ALPACA_PAPER_BROKER = AlpacaPaperBroker()
+IBKR_PAPER_BROKER = IbkrPaperBroker()
+
+place_paper_bracket_order_from_trade = PAPER_BROKER.place_paper_bracket_order_from_trade
+get_open_positions = PAPER_BROKER.get_open_positions
+close_position = PAPER_BROKER.close_position
+cancel_open_orders_for_symbol = PAPER_BROKER.cancel_open_orders_for_symbol
+sync_order_by_id = PAPER_BROKER.sync_order_by_id
+get_order_by_id = PAPER_BROKER.get_order_by_id
+
+
+def place_paper_orders_from_trade(trade: dict[str, Any], max_notional: float | None = None) -> list[dict]:
+    results: list[dict] = []
+
+    primary_result = ALPACA_PAPER_BROKER.place_paper_bracket_order_from_trade(trade, max_notional=max_notional)
+    if isinstance(primary_result, dict):
+        primary_result.setdefault("broker", "ALPACA")
+        results.append(primary_result)
+
+    if PAPER_BROKER_CONFIG.shadow_mode_enabled and ibkr_bridge_enabled():
+        try:
+            ibkr_result = IBKR_PAPER_BROKER.place_paper_bracket_order_from_trade(trade, max_notional=max_notional)
+        except Exception as exc:
+            ibkr_result = {
+                "attempted": True,
+                "placed": False,
+                "broker": "IBKR",
+                "reason": "ibkr_shadow_exception",
+                "details": str(exc),
+            }
+        if isinstance(ibkr_result, dict):
+            ibkr_result.setdefault("broker", "IBKR")
+            results.append(ibkr_result)
+
+    return results
+
+
+def place_alpaca_paper_orders_from_trade(trade: dict[str, Any], max_notional: float | None = None) -> list[dict]:
+    result = ALPACA_PAPER_BROKER.place_paper_bracket_order_from_trade(trade, max_notional=max_notional)
+    if isinstance(result, dict):
+        result.setdefault("broker", "ALPACA")
+        return [result]
+    return []
+
+
+def place_ibkr_paper_orders_from_trade(trade: dict[str, Any], max_notional: float | None = None) -> list[dict]:
+    try:
+        result = IBKR_PAPER_BROKER.place_paper_bracket_order_from_trade(trade, max_notional=max_notional)
+    except Exception as exc:
+        result = {
+            "attempted": True,
+            "placed": False,
+            "broker": "IBKR",
+            "reason": "ibkr_shadow_exception",
+            "details": str(exc),
+        }
+    if isinstance(result, dict):
+        result.setdefault("broker", "IBKR")
+        return [result]
+    return []
+
+
+def _account_equity_from_broker_account(account: dict[str, Any] | None) -> float:
+    if not isinstance(account, dict):
+        return 0.0
+    try:
+        return float(account.get("equity") or 0.0)
+    except Exception:
+        return 0.0
+
+
+def resolve_alpaca_account_size(payload: dict[str, Any]) -> float:
+    account = ALPACA_PAPER_BROKER.get_account()
+    equity = _account_equity_from_broker_account(account)
+    if equity > 0:
+        return equity
+    raise ValueError("Unable to resolve Alpaca account equity")
+
+
+def resolve_ibkr_account_size(payload: dict[str, Any]) -> float:
+    fallback = to_float_or_none(
+        payload.get("ibkr_account_size")
+        or payload.get("shadow_account_size")
+        or os.getenv("IBKR_SHADOW_ACCOUNT_SIZE_FALLBACK")
+        or "1000000"
+    )
+    try:
+        account = IBKR_PAPER_BROKER.get_account()
+        equity = _account_equity_from_broker_account(account)
+        if equity > 0:
+            return equity
+    except Exception as exc:
+        log_exception(
+            "Failed to resolve IBKR account equity; using fallback",
+            exc,
+            component="app",
+            operation="resolve_ibkr_account_size",
+        )
+    if fallback is not None and fallback > 0:
+        return float(fallback)
+    raise ValueError("Unable to resolve IBKR account equity")
+
+
+def resolve_ibkr_shadow_account_size(payload: dict[str, Any]) -> float:
+    fallback = to_float_or_none(
+        payload.get("ibkr_account_size")
+        or payload.get("shadow_account_size")
+        or os.getenv("IBKR_SHADOW_ACCOUNT_SIZE_FALLBACK")
+        or "1000000"
+    )
+    if fallback is not None and fallback > 0:
+        return float(fallback)
+    return 1000000.0
+
+
+def get_ibkr_operational_status() -> dict[str, Any]:
+    status: dict[str, Any] = {
+        "ok": True,
+        "enabled": ibkr_bridge_enabled(),
+        "state": "DISABLED",
+        "bridge_health_ok": False,
+        "account_ok": False,
+        "market_data_ok": False,
+        "login_required": False,
+        "message": "",
+        "bridge": None,
+        "account_id": "",
+        "equity": None,
+        "market_data_symbol": os.getenv("IBKR_READINESS_SYMBOL", "SPY").strip().upper() or "SPY",
+        "market_data_count": 0,
+        "errors": [],
+    }
+
+    if not status["enabled"]:
+        status["message"] = "IBKR bridge is not configured."
+        return status
+
+    bridge_timeout = int(os.getenv("IBKR_BRIDGE_HEALTH_TIMEOUT_SECONDS", "4"))
+    account_timeout = int(os.getenv("IBKR_BRIDGE_ACCOUNT_TIMEOUT_SECONDS", "5"))
+    market_timeout = int(os.getenv("IBKR_BRIDGE_STATUS_MARKET_DATA_TIMEOUT_SECONDS", "8"))
+
+    try:
+        bridge_payload = ibkr_bridge_get("/health", timeout=bridge_timeout) or {}
+        status["bridge_health_ok"] = bool(bridge_payload.get("ok"))
+        status["bridge"] = bridge_payload.get("ibkr")
+    except Exception as exc:
+        status["errors"].append(f"bridge_health: {exc}")
+        status["state"] = "UNAVAILABLE"
+        status["message"] = "IBKR bridge is not reachable."
+        return status
+
+    try:
+        account_payload = ibkr_bridge_get("/account", timeout=account_timeout) or {}
+        equity = _account_equity_from_broker_account(account_payload)
+        status["account_ok"] = bool(account_payload.get("account_id"))
+        status["account_id"] = str(account_payload.get("account_id", "") or "")
+        status["equity"] = equity if equity > 0 else None
+    except Exception as exc:
+        status["errors"].append(f"account: {exc}")
+
+    try:
+        candles = ibkr_bridge_get(
+            "/market-data/intraday",
+            params={"symbol": status["market_data_symbol"], "interval": "1min", "outputsize": 5},
+            timeout=market_timeout,
+        ) or []
+        status["market_data_count"] = len(candles)
+        status["market_data_ok"] = len(candles) > 0
+    except Exception as exc:
+        status["errors"].append(f"market_data: {exc}")
+
+    if status["bridge_health_ok"] and status["account_ok"] and status["market_data_ok"]:
+        status["state"] = "READY"
+        status["message"] = "IBKR bridge, account, and market data checks passed."
+        return status
+
+    status["login_required"] = True
+    if status["bridge_health_ok"] and not status["account_ok"]:
+        status["state"] = "LOGIN_REQUIRED"
+        status["message"] = "IBKR bridge is up, but the account session is not ready."
+    elif status["bridge_health_ok"] and status["account_ok"] and not status["market_data_ok"]:
+        status["state"] = "MARKET_DATA_UNAVAILABLE"
+        status["message"] = "IBKR account is up, but market data is not ready."
+    else:
+        status["state"] = "DEGRADED"
+        status["message"] = "IBKR bridge is partially available but not ready for scans."
+    return status
+
+
+def get_current_open_position_state_for_broker(broker) -> tuple[int, float]:
+    try:
+        positions = broker.get_open_positions() or []
+    except Exception:
+        return 0, 0.0
+
+    open_count = 0
+    open_exposure = 0.0
+    for position in positions:
+        symbol = str(position.get("symbol", "")).strip().upper()
+        if not symbol:
+            continue
+        open_count += 1
+        market_value = to_float_or_none(position.get("market_value"))
+        if market_value is not None:
+            open_exposure += abs(market_value)
+            continue
+        qty = to_float_or_none(position.get("qty"))
+        current_price = to_float_or_none(position.get("current_price"))
+        if qty is not None and current_price is not None:
+            open_exposure += abs(qty * current_price)
+    return open_count, open_exposure
+
+
+def get_risk_exposure_summary_for_broker(broker) -> dict[str, Any]:
+    account_size = 0.0
+    try:
+        account_size = _account_equity_from_broker_account(broker.get_account())
+    except Exception as exc:
+        log_exception(
+            "Failed to resolve broker account for risk summary",
+            exc,
+            component="app",
+            operation="get_risk_exposure_summary_for_broker",
+        )
+    open_count, open_exposure = get_current_open_position_state_for_broker(broker)
+    return {
+        "account_size": account_size,
+        "open_position_count": open_count,
+        "total_open_exposure": open_exposure,
+        "daily_realized_pnl": 0.0,
+        "daily_unrealized_pnl": 0.0,
+    }
+
+
+def get_ibkr_shadow_risk_exposure_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    open_count, open_exposure = get_current_open_position_state_for_broker(IBKR_PAPER_BROKER)
+    return {
+        "account_size": resolve_ibkr_shadow_account_size(payload),
+        "open_position_count": open_count,
+        "total_open_exposure": open_exposure,
+        "daily_realized_pnl": 0.0,
+        "daily_unrealized_pnl": 0.0,
+    }
+
+
+def get_latest_open_paper_trade_for_symbol_for_broker(symbol: str, broker_name: str) -> dict | None:
+    return context_get_latest_open_paper_trade_for_symbol(symbol, broker=broker_name)
+
+
+def fetch_ibkr_intraday(symbol: str, interval: str = "1min", outputsize: int | None = None) -> list[dict]:
+    params: dict[str, Any] = {"symbol": symbol, "interval": interval}
+    if outputsize is not None:
+        params["outputsize"] = int(outputsize)
+    timeout_seconds = int(os.getenv("IBKR_BRIDGE_MARKET_DATA_TIMEOUT_SECONDS", "12"))
+    log_info(
+        "IBKR intraday fetch requested",
+        component="app",
+        operation="fetch_ibkr_intraday",
+        broker="IBKR",
+        symbol=symbol,
+        interval=interval,
+        outputsize=outputsize,
+        timeout=timeout_seconds,
+    )
+    try:
+        candles = ibkr_bridge_get(
+            "/market-data/intraday",
+            params=params,
+            timeout=timeout_seconds,
+        ) or []
+        log_info(
+            "IBKR intraday fetch completed",
+            component="app",
+            operation="fetch_ibkr_intraday",
+            broker="IBKR",
+            symbol=symbol,
+            interval=interval,
+            outputsize=outputsize,
+            candle_count=len(candles),
+        )
+        return candles
+    except Exception as exc:
+        log_exception(
+            "IBKR intraday fetch failed",
+            exc,
+            component="app",
+            operation="fetch_ibkr_intraday",
+            broker="IBKR",
+            symbol=symbol,
+            interval=interval,
+            outputsize=outputsize,
+            timeout=timeout_seconds,
+        )
+        raise
 
 
 def env_flag(name: str, default: str = "true") -> bool:
@@ -194,8 +499,8 @@ TRADE_ANALYSIS_PAIRED_OBJECT = os.getenv("TRADE_ANALYSIS_PAIRED_OBJECT", "report
 SIGNAL_ANALYSIS_BUCKET = os.getenv("SIGNAL_ANALYSIS_BUCKET", "stock-scanner-490821-logs")
 SIGNAL_ANALYSIS_SUMMARY_OBJECT = os.getenv("SIGNAL_ANALYSIS_SUMMARY_OBJECT", "reports/signal_analysis_summary.csv")
 SIGNAL_ANALYSIS_ROWS_OBJECT = os.getenv("SIGNAL_ANALYSIS_ROWS_OBJECT", "reports/signal_analysis_rows.csv")
-def paper_candidate_from_evaluation(eval_result: dict) -> dict | None:
-    return build_paper_candidate_from_evaluation(eval_result, PAPER_TRADE_MIN_CONFIDENCE)
+def paper_candidate_from_evaluation(eval_result: dict, min_confidence: float = PAPER_TRADE_MIN_CONFIDENCE) -> dict | None:
+    return build_paper_candidate_from_evaluation(eval_result, min_confidence)
 
 
 def append_signal_log(row: dict) -> None:
@@ -261,6 +566,10 @@ def get_managed_open_paper_trades_for_eod_close() -> list[dict]:
     return context_get_managed_open_paper_trades_for_eod_close()
 
 
+def get_managed_open_paper_trades_for_eod_close_for_broker(broker) -> list[dict]:
+    return context_get_managed_open_paper_trades_for_eod_close(broker=broker)
+
+
 def get_current_open_position_state() -> tuple[int, float]:
     return context_get_current_open_position_state()
 
@@ -294,6 +603,130 @@ def infer_first_level_hit(open_row: dict, close_timestamp_utc: str) -> dict:
     return context_infer_first_level_hit(open_row, close_timestamp_utc)
 
 
+def execute_scan_pipeline(
+    payload: dict[str, Any],
+    *,
+    broker_name: str,
+    run_scan_fn,
+    resolve_account_size_fn,
+    get_current_open_position_state_fn,
+    get_risk_exposure_summary_fn,
+    get_latest_open_trade_fn,
+    place_paper_orders_fn,
+    paper_trade_min_confidence: float = PAPER_TRADE_MIN_CONFIDENCE,
+):
+    return run_handle_scan_request(
+        payload,
+        get_current_open_position_state=get_current_open_position_state_fn,
+        get_risk_exposure_summary=get_risk_exposure_summary_fn,
+        execute_full_scan=execute_full_scan,
+        market_time_check=market_time_check,
+        build_scan_id=build_scan_id,
+        market_phase_from_timestamp=market_phase_from_timestamp,
+        append_signal_log=append_signal_log,
+        safe_insert_paper_trade_attempt=safe_insert_paper_trade_attempt,
+        safe_insert_scan_run=safe_insert_scan_run,
+        parse_iso_utc=parse_iso_utc,
+        run_scan=run_scan_fn,
+        trade_to_dict=trade_to_dict,
+        debug_to_dict=debug_to_dict,
+        paper_candidate_from_evaluation=lambda eval_result: paper_candidate_from_evaluation(
+            eval_result,
+            min_confidence=paper_trade_min_confidence,
+        ),
+        evaluate_symbol=evaluate_symbol,
+        get_latest_open_paper_trade_for_symbol=get_latest_open_trade_fn,
+        is_symbol_in_paper_cooldown=is_symbol_in_paper_cooldown,
+        place_paper_orders_from_trade=place_paper_orders_fn,
+        append_trade_log=append_trade_log,
+        safe_insert_trade_event=safe_insert_trade_event,
+        safe_insert_broker_order=safe_insert_broker_order,
+        to_float_or_none=to_float_or_none,
+        min_confidence=MIN_CONFIDENCE,
+        upsert_trade_lifecycle=upsert_trade_lifecycle,
+        resolve_account_size=resolve_account_size_fn,
+        active_broker=broker_name,
+    )
+
+
+def _run_ibkr_shadow_scan(payload: dict[str, Any]) -> dict[str, Any]:
+    ibkr_payload = dict(payload)
+    try:
+        return execute_scan_pipeline(
+            ibkr_payload,
+            broker_name="IBKR",
+            run_scan_fn=lambda account_size, mode, current_open_positions=0, current_open_exposure=0.0: run_scan(
+                account_size,
+                mode,
+                current_open_positions=current_open_positions,
+                current_open_exposure=current_open_exposure,
+                fetch_intraday_fn=fetch_ibkr_intraday,
+                source_label=f"IBKR_{mode.upper()}",
+            ),
+            resolve_account_size_fn=resolve_ibkr_shadow_account_size,
+            get_current_open_position_state_fn=lambda: get_current_open_position_state_for_broker(IBKR_PAPER_BROKER),
+            get_risk_exposure_summary_fn=lambda: get_ibkr_shadow_risk_exposure_summary(ibkr_payload),
+            get_latest_open_trade_fn=lambda symbol: get_latest_open_paper_trade_for_symbol_for_broker(symbol, "IBKR"),
+            place_paper_orders_fn=place_ibkr_paper_orders_from_trade,
+            paper_trade_min_confidence=IBKR_PAPER_TRADE_MIN_CONFIDENCE,
+        )
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": "ibkr_shadow_failed",
+            "details": str(exc),
+            "mode": ibkr_payload.get("mode"),
+        }
+
+
+def _run_ibkr_shadow_scans(payload: dict[str, Any]) -> dict[str, Any]:
+    scan_source = str((payload or {}).get("scan_source", "") or "").strip().upper()
+    scheduled_shadow = scan_source == "SCHEDULED"
+    modes = list(SCHEDULED_ROUND_ROBIN_MODES) if scheduled_shadow else [str(payload.get("mode", "primary")).strip().lower()]
+
+    per_mode_results: list[dict[str, Any]] = []
+    total_candidates = 0
+    total_placed = 0
+    total_skipped = 0
+
+    for mode in modes:
+        mode_payload = dict(payload)
+        mode_payload["mode"] = mode
+        mode_response = _run_ibkr_shadow_scan(mode_payload)
+        mode_result = mode_response if isinstance(mode_response, dict) else {"ok": False, "error": "invalid_ibkr_shadow_response", "mode": mode}
+        mode_result.setdefault("mode", mode)
+        per_mode_results.append(mode_result)
+
+        total_candidates += int(float(mode_result.get("candidate_count", 0) or 0))
+        total_placed += int(float(mode_result.get("placed_count", 0) or 0))
+        total_skipped += int(float(mode_result.get("skipped_count", 0) or 0))
+
+        log_info(
+            "IBKR shadow scan completed",
+            component="app",
+            operation="handle_scan_request",
+            broker="IBKR",
+            ok=bool(mode_result.get("ok", False)),
+            mode=mode,
+            error=mode_result.get("error"),
+            candidate_count=mode_result.get("candidate_count"),
+            placed_count=mode_result.get("placed_count"),
+            skipped_count=mode_result.get("skipped_count"),
+            scan_id=mode_result.get("scan_id"),
+        )
+
+    return {
+        "ok": all(bool(result.get("ok", False)) for result in per_mode_results),
+        "scheduled_all_modes": scheduled_shadow,
+        "mode_count": len(modes),
+        "modes": modes,
+        "candidate_count": total_candidates,
+        "placed_count": total_placed,
+        "skipped_count": total_skipped,
+        "per_mode_results": per_mode_results,
+    }
+
+
 
 
 def handle_sync_paper_trades():
@@ -313,33 +746,32 @@ def handle_sync_paper_trades():
     )
 
 def handle_scan_request(payload):
-    return run_handle_scan_request(
+    alpaca_response = execute_scan_pipeline(
         payload,
-        get_current_open_position_state=get_current_open_position_state,
-        get_risk_exposure_summary=get_risk_exposure_summary,
-        execute_full_scan=execute_full_scan,
-        market_time_check=market_time_check,
-        build_scan_id=build_scan_id,
-        market_phase_from_timestamp=market_phase_from_timestamp,
-        append_signal_log=append_signal_log,
-        safe_insert_paper_trade_attempt=safe_insert_paper_trade_attempt,
-        safe_insert_scan_run=safe_insert_scan_run,
-        parse_iso_utc=parse_iso_utc,
-        run_scan=run_scan,
-        trade_to_dict=trade_to_dict,
-        debug_to_dict=debug_to_dict,
-        paper_candidate_from_evaluation=paper_candidate_from_evaluation,
-        evaluate_symbol=evaluate_symbol,
-        get_latest_open_paper_trade_for_symbol=get_latest_open_paper_trade_for_symbol,
-        is_symbol_in_paper_cooldown=is_symbol_in_paper_cooldown,
-        place_paper_bracket_order_from_trade=place_paper_bracket_order_from_trade,
-        append_trade_log=append_trade_log,
-        safe_insert_trade_event=safe_insert_trade_event,
-        safe_insert_broker_order=safe_insert_broker_order,
-        to_float_or_none=to_float_or_none,
-        min_confidence=MIN_CONFIDENCE,
-        upsert_trade_lifecycle=upsert_trade_lifecycle,
+        broker_name="ALPACA",
+        run_scan_fn=run_scan,
+        resolve_account_size_fn=resolve_alpaca_account_size,
+        get_current_open_position_state_fn=lambda: get_current_open_position_state_for_broker(ALPACA_PAPER_BROKER),
+        get_risk_exposure_summary_fn=lambda: get_risk_exposure_summary_for_broker(ALPACA_PAPER_BROKER),
+        get_latest_open_trade_fn=lambda symbol: get_latest_open_paper_trade_for_symbol_for_broker(symbol, "ALPACA"),
+        place_paper_orders_fn=place_alpaca_paper_orders_from_trade,
     )
+
+    if not (isinstance(payload, dict) and payload.get("paper_trade") and PAPER_BROKER_CONFIG.shadow_mode_enabled and ibkr_bridge_enabled()):
+        return alpaca_response
+
+    ibkr_response = _run_ibkr_shadow_scans(payload)
+
+    if isinstance(alpaca_response, tuple) or isinstance(ibkr_response, tuple):
+        return alpaca_response
+
+    if isinstance(alpaca_response, dict):
+        alpaca_response["parallel_runs"] = {
+            "alpaca": {"ok": bool(alpaca_response.get("ok", False))},
+            "ibkr": {"ok": bool(ibkr_response.get("ok", False)) if isinstance(ibkr_response, dict) else False},
+        }
+        alpaca_response["shadow_ibkr"] = ibkr_response
+    return alpaca_response
 
 
 def run_scan_wrapper(payload):
@@ -360,14 +792,14 @@ def run_scheduled_paper_scan_wrapper(payload):
 
 
 
-def close_all_paper_positions():
+def _close_all_paper_positions_for_broker(broker) -> dict[str, Any] | tuple[dict[str, Any], int]:
     return run_close_all_paper_positions(
         execute_close_all_paper_positions=execute_close_all_paper_positions,
-        get_open_positions=get_open_positions,
-        get_managed_open_paper_trades_for_eod_close=get_managed_open_paper_trades_for_eod_close,
-        cancel_open_orders_for_symbol=cancel_open_orders_for_symbol,
-        close_position=close_position,
-        get_order_by_id=get_order_by_id,
+        get_open_positions=broker.get_open_positions,
+        get_managed_open_paper_trades_for_eod_close=lambda: get_managed_open_paper_trades_for_eod_close_for_broker(broker),
+        cancel_open_orders_for_symbol=broker.cancel_open_orders_for_symbol,
+        close_position=broker.close_position,
+        get_order_by_id=broker.get_order_by_id,
         safe_insert_broker_order=safe_insert_broker_order,
         append_trade_log=append_trade_log,
         safe_insert_trade_event=safe_insert_trade_event,
@@ -375,6 +807,30 @@ def close_all_paper_positions():
         to_float_or_none=to_float_or_none,
         parse_iso_utc=parse_iso_utc,
     )
+
+
+def close_all_paper_positions():
+    alpaca_result = _close_all_paper_positions_for_broker(ALPACA_PAPER_BROKER)
+
+    if not PAPER_BROKER_CONFIG.shadow_mode_enabled or not ibkr_bridge_enabled():
+        return alpaca_result
+
+    ibkr_result = _close_all_paper_positions_for_broker(IBKR_PAPER_BROKER)
+
+    if isinstance(alpaca_result, tuple):
+        return alpaca_result
+
+    if isinstance(ibkr_result, tuple):
+        alpaca_result["shadow_ibkr_close"] = ibkr_result[0]
+        alpaca_result["shadow_ibkr_close_status_code"] = ibkr_result[1]
+        return alpaca_result
+
+    aggregated = dict(alpaca_result or {})
+    aggregated["shadow_ibkr_close"] = ibkr_result
+    aggregated["combined_position_count"] = int(alpaca_result.get("position_count", 0) or 0) + int(ibkr_result.get("position_count", 0) or 0)
+    aggregated["combined_closed_count"] = int(alpaca_result.get("closed_count", 0) or 0) + int(ibkr_result.get("closed_count", 0) or 0)
+    aggregated["combined_skipped_count"] = int(alpaca_result.get("skipped_count", 0) or 0) + int(ibkr_result.get("skipped_count", 0) or 0)
+    return aggregated
 
 
 
@@ -412,6 +868,82 @@ def run_maintenance_scheduler(*, now_ny: datetime, retention_days: int = 30):
     )
 
 
+def _metadata_access_token() -> str:
+    response = requests.get(
+        "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+        headers={"Metadata-Flavor": "Google"},
+        timeout=10,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    token = str(payload.get("access_token", "")).strip()
+    if not token:
+        raise RuntimeError("Could not resolve GCP access token from metadata server.")
+    return token
+
+
+def _ibkr_vm_settings() -> tuple[str, str, str]:
+    project = (
+        str(os.getenv("IBKR_VM_PROJECT", "")).strip()
+        or str(os.getenv("GOOGLE_CLOUD_PROJECT", "")).strip()
+        or str(os.getenv("GCP_PROJECT", "")).strip()
+        or "stock-scanner-490821"
+    )
+    zone = str(os.getenv("IBKR_VM_ZONE", "europe-west1-b")).strip() or "europe-west1-b"
+    instance = str(os.getenv("IBKR_VM_INSTANCE_NAME", "ibkr-bridge-vm")).strip() or "ibkr-bridge-vm"
+    return project, zone, instance
+
+
+def _ibkr_vm_compute_api_request(method: str, suffix: str) -> dict:
+    access_token = _metadata_access_token()
+    project, zone, instance = _ibkr_vm_settings()
+    url = (
+        "https://compute.googleapis.com/compute/v1/projects/"
+        f"{project}/zones/{zone}/instances/{instance}{suffix}"
+    )
+    response = requests.request(
+        method,
+        url,
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=20,
+    )
+    response.raise_for_status()
+    if not response.content:
+        return {}
+    return response.json()
+
+
+def _get_ibkr_vm_status() -> str | None:
+    payload = _ibkr_vm_compute_api_request("GET", "")
+    return str(payload.get("status", "")).strip().upper() or None
+
+
+def _start_ibkr_vm() -> dict:
+    payload = _ibkr_vm_compute_api_request("POST", "/start")
+    log_info("requested ibkr vm start", component="scheduler", operation="ibkr-vm-control")
+    return payload
+
+
+def _stop_ibkr_vm() -> dict:
+    payload = _ibkr_vm_compute_api_request("POST", "/stop")
+    log_info("requested ibkr vm stop", component="scheduler", operation="ibkr-vm-control")
+    return payload
+
+
+def run_ibkr_vm_control_scheduler(*, now_ny: datetime, action: str, force: bool = False):
+    is_trading_day, _is_early_close, _market_open_ny, _market_close_ny, holiday_message = holiday_and_early_close_status(now_ny)
+    return build_execute_ibkr_vm_control(
+        now_ny=now_ny,
+        action=action,
+        force=force,
+        is_trading_day=is_trading_day,
+        holiday_message=holiday_message,
+        get_instance_status=_get_ibkr_vm_status,
+        start_instance=_start_ibkr_vm,
+        stop_instance=_stop_ibkr_vm,
+    )
+
+
 register_health_routes(
     app,
     db_healthcheck=db_healthcheck,
@@ -423,6 +955,7 @@ register_health_routes(
     get_recent_paper_trade_rejections=get_recent_paper_trade_rejections,
     get_paper_trade_attempt_daily_summary=get_paper_trade_attempt_daily_summary,
     get_paper_trade_attempt_hourly_summary=get_paper_trade_attempt_hourly_summary,
+    get_ibkr_operational_status=get_ibkr_operational_status,
     prune_alpaca_api_logs=prune_alpaca_api_logs,
 )
 register_export_routes(app, run_daily_snapshot=run_daily_snapshot)
@@ -497,6 +1030,7 @@ register_scheduler_routes(
     execute_market_ops=run_market_ops_scheduler,
     execute_post_close_ops=run_daily_post_close_scheduler,
     execute_maintenance_ops=run_maintenance_scheduler,
+    execute_ibkr_vm_control=run_ibkr_vm_control_scheduler,
 )
 register_legacy_reconcile_routes(
     app,

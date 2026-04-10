@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS paper_trade_attempts (
     loss_multiplier NUMERIC,
     final_multiplier NUMERIC,
     placed BOOLEAN,
+    broker TEXT,
     broker_order_id TEXT,
     broker_parent_order_id TEXT,
     broker_rejection_reason TEXT,
@@ -100,6 +101,7 @@ CREATE TABLE IF NOT EXISTS trade_events (
     shares NUMERIC,
     price NUMERIC,
     mode TEXT,
+    broker TEXT,
     order_id TEXT,
     parent_order_id TEXT,
     status TEXT,
@@ -110,6 +112,7 @@ CREATE TABLE IF NOT EXISTS trade_events (
 CREATE TABLE IF NOT EXISTS broker_orders (
     id SERIAL PRIMARY KEY,
     order_id TEXT NOT NULL,
+    broker TEXT,
     symbol TEXT,
     side TEXT,
     order_type TEXT,
@@ -227,6 +230,7 @@ CREATE TABLE IF NOT EXISTS trade_lifecycles (
     signal_confidence NUMERIC,
 
     -- Broker linkage
+    broker TEXT,
     order_id TEXT,
     parent_order_id TEXT,
     exit_order_id TEXT,
@@ -247,6 +251,11 @@ CREATE INDEX IF NOT EXISTS idx_trade_lifecycles_trade_key ON trade_lifecycles(tr
 CREATE UNIQUE INDEX IF NOT EXISTS uq_trade_lifecycles_trade_key ON trade_lifecycles(trade_key);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_broker_orders_order_id ON broker_orders(order_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_scan_runs_scan_time_mode_source ON scan_runs(scan_time, mode, scan_source);
+
+ALTER TABLE paper_trade_attempts ADD COLUMN IF NOT EXISTS broker TEXT;
+ALTER TABLE trade_events ADD COLUMN IF NOT EXISTS broker TEXT;
+ALTER TABLE broker_orders ADD COLUMN IF NOT EXISTS broker TEXT;
+ALTER TABLE trade_lifecycles ADD COLUMN IF NOT EXISTS broker TEXT;
 
 DO $$
 BEGIN

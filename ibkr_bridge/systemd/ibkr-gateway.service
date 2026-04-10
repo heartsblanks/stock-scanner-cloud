@@ -1,0 +1,17 @@
+[Unit]
+Description=IBKR Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ibkr
+Group=ibkr
+WorkingDirectory=/home/ibkr
+EnvironmentFile=/etc/ibkr-gateway.env
+ExecStart=/opt/stock-scanner-cloud/ibkr_bridge/scripts/start_ibkr_gateway.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

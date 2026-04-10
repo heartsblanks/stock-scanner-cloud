@@ -109,6 +109,7 @@ def execute_close_all_paper_positions(
         close_filled_avg_price = ""
         close_filled_qty = qty
         close_filled = False
+        broker_name = str(position.get("broker", "") or (open_row or {}).get("broker", "") or "ALPACA").strip().upper() or "ALPACA"
 
         if close_order_id:
             try:
@@ -133,6 +134,7 @@ def execute_close_all_paper_positions(
         timestamp_utc = datetime.now(timezone.utc).isoformat()
         safe_insert_broker_order(
             order_id=close_order_id or f"close-request-{symbol}-{timestamp_utc}",
+            broker=broker_name,
             symbol=symbol,
             side="buy" if side == "short" else "sell",
             order_type="market",
@@ -154,7 +156,7 @@ def execute_close_all_paper_positions(
             exit_price = close_filled_avg_price
             exit_reason = "EOD_CLOSE"
             mode = str(open_row.get("mode", "")).strip()
-            trade_source = str(open_row.get("trade_source", "ALPACA_PAPER")).strip().upper() or "ALPACA_PAPER"
+            trade_source = str(open_row.get("trade_source", f"{broker_name}_PAPER")).strip().upper() or f"{broker_name}_PAPER"
             broker_order_id = str(open_row.get("broker_order_id", "")).strip()
             broker_parent_order_id = str(open_row.get("broker_parent_order_id", "")).strip()
             linked_signal_timestamp_utc = str(open_row.get("linked_signal_timestamp_utc", "")).strip()
@@ -175,7 +177,7 @@ def execute_close_all_paper_positions(
                 "name": open_row.get("name", symbol),
                 "mode": mode,
                 "trade_source": trade_source,
-                "broker": "ALPACA",
+                "broker": broker_name,
                 "broker_order_id": broker_order_id,
                 "broker_parent_order_id": broker_parent_order_id,
                 "broker_status": close_order_status,
@@ -210,6 +212,7 @@ def execute_close_all_paper_positions(
                 shares=to_float_or_none(shares_value),
                 price=to_float_or_none(exit_price),
                 mode=mode,
+                broker=broker_name,
                 order_id=close_order_id,
                 parent_order_id=broker_parent_order_id,
                 status="CLOSED",
@@ -238,6 +241,7 @@ def execute_close_all_paper_positions(
                 signal_stop=to_float_or_none(linked_signal_stop),
                 signal_target=to_float_or_none(linked_signal_target),
                 signal_confidence=to_float_or_none(linked_signal_confidence),
+                broker=broker_name,
                 order_id=broker_order_id,
                 parent_order_id=broker_parent_order_id,
                 exit_order_id=close_order_id,
@@ -255,6 +259,7 @@ def execute_close_all_paper_positions(
                 shares=to_float_or_none(close_filled_qty or qty),
                 price=to_float_or_none(close_filled_avg_price or current_price),
                 mode="orphan",
+                broker=broker_name,
                 order_id=close_order_id,
                 parent_order_id=close_order_id,
                 status="CLOSED",
@@ -283,6 +288,7 @@ def execute_close_all_paper_positions(
                 signal_stop=None,
                 signal_target=None,
                 signal_confidence=None,
+                broker=broker_name,
                 order_id=close_order_id,
                 parent_order_id=close_order_id,
                 exit_order_id=close_order_id,

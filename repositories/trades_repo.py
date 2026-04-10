@@ -15,6 +15,7 @@ def insert_trade_event(
     shares: Optional[float] = None,
     price: Optional[float] = None,
     mode: Optional[str] = None,
+    broker: Optional[str] = None,
     order_id: Optional[str] = None,
     parent_order_id: Optional[str] = None,
     status: Optional[str] = None,
@@ -30,6 +31,7 @@ def insert_trade_event(
           AND COALESCE(shares, -1) = %(shares_match)s
           AND COALESCE(price, -1) = %(price_match)s
           AND COALESCE(mode, '') = %(mode)s
+          AND COALESCE(broker, '') = %(broker)s
           AND COALESCE(order_id, '') = %(order_id)s
           AND COALESCE(parent_order_id, '') = %(parent_order_id)s
           AND COALESCE(status, '') = %(status)s
@@ -43,6 +45,7 @@ def insert_trade_event(
             "shares_match": shares if shares is not None else -1,
             "price_match": price if price is not None else -1,
             "mode": normalize_text(mode),
+            "broker": normalize_text(broker),
             "order_id": normalize_text(order_id),
             "parent_order_id": normalize_text(parent_order_id),
             "status": normalize_text(status),
@@ -53,9 +56,9 @@ def insert_trade_event(
     execute(
         """
         INSERT INTO trade_events (
-            event_time, event_type, symbol, side, shares, price, mode, order_id, parent_order_id, status
+            event_time, event_type, symbol, side, shares, price, mode, broker, order_id, parent_order_id, status
         ) VALUES (
-            %(event_time)s, %(event_type)s, %(symbol)s, %(side)s, %(shares)s, %(price)s, %(mode)s, %(order_id)s, %(parent_order_id)s, %(status)s
+            %(event_time)s, %(event_type)s, %(symbol)s, %(side)s, %(shares)s, %(price)s, %(mode)s, %(broker)s, %(order_id)s, %(parent_order_id)s, %(status)s
         )
         """,
         {
@@ -66,6 +69,7 @@ def insert_trade_event(
             "shares": shares,
             "price": price,
             "mode": mode,
+            "broker": broker,
             "order_id": order_id,
             "parent_order_id": parent_order_id,
             "status": status,
@@ -81,7 +85,19 @@ def get_trade_event_by_order_id(order_id: str) -> Optional[dict]:
     return fetch_one("SELECT * FROM trade_events WHERE order_id = %(order_id)s ORDER BY event_time DESC, id DESC LIMIT 1", {"order_id": order_id})
 
 
-def get_recent_trade_event_rows(limit: int = 100) -> list[dict]:
+def get_recent_trade_event_rows(limit: int = 100, broker: Optional[str] = None) -> list[dict]:
+    normalized_broker = normalize_text(broker).upper() if broker else ""
+    if normalized_broker:
+        return fetch_all(
+            """
+            SELECT *
+            FROM trade_events
+            WHERE UPPER(COALESCE(broker, '')) = %(broker)s
+            ORDER BY event_time DESC, id DESC
+            LIMIT %(limit)s
+            """,
+            {"limit": limit, "broker": normalized_broker},
+        )
     return fetch_all("SELECT * FROM trade_events ORDER BY event_time DESC, id DESC LIMIT %(limit)s", {"limit": limit})
 
 
@@ -90,6 +106,7 @@ def get_trade_event_rows_for_date(target_date: str, limit: int = 1000) -> list[d
         """
         SELECT
             event_time AS timestamp_utc, event_type, symbol, mode, COALESCE(side, '') AS side,
+            COALESCE(broker, '') AS broker,
             COALESCE(shares::text, '') AS shares, COALESCE(price::text, '') AS price,
             COALESCE(order_id, '') AS broker_order_id, COALESCE(parent_order_id, '') AS broker_parent_order_id,
             COALESCE(status, '') AS status
@@ -109,26 +126,46 @@ def get_trade_event_counts_by_type() -> list[dict]:
     )
 
 
-def get_open_trade_events(limit: int = 100) -> list[dict]:
+def get_open_trade_events(limit: int = 100, broker: Optional[str] = None) -> list[dict]:
+    broker_filter = ""
+    params: dict[str, Any] = {"limit": limit}
+    if broker:
+        broker_filter = "AND UPPER(COALESCE(te.broker, '')) = %(broker)s"
+        params["broker"] = normalize_text(broker).upper()
     return fetch_all(
-        """
+        f"""
         WITH ranked AS (
             SELECT te.*, ROW_NUMBER() OVER (
                 PARTITION BY COALESCE(NULLIF(parent_order_id, ''), NULLIF(order_id, ''), symbol)
                 ORDER BY event_time DESC, id DESC
             ) AS rn
             FROM trade_events te
+            WHERE 1 = 1
+              {broker_filter}
         )
         SELECT * FROM ranked
         WHERE rn = 1 AND UPPER(COALESCE(status, '')) = 'OPEN'
         ORDER BY event_time DESC, id DESC
         LIMIT %(limit)s
         """,
-        {"limit": limit},
+        params,
     )
 
 
-def get_closed_trade_events(limit: int = 100) -> list[dict]:
+def get_closed_trade_events(limit: int = 100, broker: Optional[str] = None) -> list[dict]:
+    normalized_broker = normalize_text(broker).upper() if broker else ""
+    if normalized_broker:
+        return fetch_all(
+            """
+            SELECT *
+            FROM trade_events
+            WHERE UPPER(COALESCE(status, '')) = 'CLOSED'
+              AND UPPER(COALESCE(broker, '')) = %(broker)s
+            ORDER BY event_time DESC, id DESC
+            LIMIT %(limit)s
+            """,
+            {"limit": limit, "broker": normalized_broker},
+        )
     return fetch_all(
         "SELECT * FROM trade_events WHERE UPPER(COALESCE(status, '')) = 'CLOSED' ORDER BY event_time DESC, id DESC LIMIT %(limit)s",
         {"limit": limit},
@@ -158,6 +195,7 @@ def upsert_trade_lifecycle(
     signal_stop: Optional[float] = None,
     signal_target: Optional[float] = None,
     signal_confidence: Optional[float] = None,
+    broker: Optional[str] = None,
     order_id: Optional[str] = None,
     parent_order_id: Optional[str] = None,
     exit_order_id: Optional[str] = None,
@@ -189,6 +227,7 @@ def upsert_trade_lifecycle(
         "signal_stop": signal_stop,
         "signal_target": signal_target,
         "signal_confidence": signal_confidence,
+        "broker": broker,
         "order_id": order_id,
         "parent_order_id": parent_order_id,
         "exit_order_id": exit_order_id,
@@ -203,7 +242,7 @@ def upsert_trade_lifecycle(
                 stop_price = %(stop_price)s, target_price = %(target_price)s, exit_reason = %(exit_reason)s, shares = %(shares)s,
                 realized_pnl = %(realized_pnl)s, realized_pnl_percent = %(realized_pnl_percent)s, duration_minutes = %(duration_minutes)s,
                 signal_timestamp = %(signal_timestamp)s, signal_entry = %(signal_entry)s, signal_stop = %(signal_stop)s,
-                signal_target = %(signal_target)s, signal_confidence = %(signal_confidence)s, order_id = %(order_id)s,
+                signal_target = %(signal_target)s, signal_confidence = %(signal_confidence)s, broker = COALESCE(NULLIF(%(broker)s, ''), broker), order_id = %(order_id)s,
                 parent_order_id = %(parent_order_id)s, exit_order_id = %(exit_order_id)s, updated_at = NOW()
             WHERE id = %(id)s
             """,
@@ -215,18 +254,31 @@ def upsert_trade_lifecycle(
         INSERT INTO trade_lifecycles (
             trade_key, symbol, mode, side, direction, status, entry_time, entry_price, exit_time, exit_price,
             stop_price, target_price, exit_reason, shares, realized_pnl, realized_pnl_percent, duration_minutes,
-            signal_timestamp, signal_entry, signal_stop, signal_target, signal_confidence, order_id, parent_order_id, exit_order_id
+            signal_timestamp, signal_entry, signal_stop, signal_target, signal_confidence, broker, order_id, parent_order_id, exit_order_id
         ) VALUES (
             %(trade_key)s, %(symbol)s, %(mode)s, %(side)s, %(direction)s, %(status)s, %(entry_time)s, %(entry_price)s, %(exit_time)s, %(exit_price)s,
             %(stop_price)s, %(target_price)s, %(exit_reason)s, %(shares)s, %(realized_pnl)s, %(realized_pnl_percent)s, %(duration_minutes)s,
-            %(signal_timestamp)s, %(signal_entry)s, %(signal_stop)s, %(signal_target)s, %(signal_confidence)s, %(order_id)s, %(parent_order_id)s, %(exit_order_id)s
+            %(signal_timestamp)s, %(signal_entry)s, %(signal_stop)s, %(signal_target)s, %(signal_confidence)s, %(broker)s, %(order_id)s, %(parent_order_id)s, %(exit_order_id)s
         )
         """,
         params,
     )
 
 
-def get_trade_lifecycles(limit: int = 100, status: Optional[str] = None) -> list[dict]:
+def get_trade_lifecycles(limit: int = 100, status: Optional[str] = None, broker: Optional[str] = None) -> list[dict]:
+    normalized_broker = normalize_text(broker).upper() if broker else ""
+    if status and normalized_broker:
+        return fetch_all(
+            """
+            SELECT *
+            FROM trade_lifecycles
+            WHERE UPPER(COALESCE(status, '')) = %(status)s
+              AND UPPER(COALESCE(broker, '')) = %(broker)s
+            ORDER BY COALESCE(entry_time, created_at) DESC, id DESC
+            LIMIT %(limit)s
+            """,
+            {"status": normalize_text(status).upper(), "broker": normalized_broker, "limit": limit},
+        )
     if status:
         return fetch_all(
             """
@@ -237,6 +289,17 @@ def get_trade_lifecycles(limit: int = 100, status: Optional[str] = None) -> list
             LIMIT %(limit)s
             """,
             {"status": normalize_text(status).upper(), "limit": limit},
+        )
+    if normalized_broker:
+        return fetch_all(
+            """
+            SELECT *
+            FROM trade_lifecycles
+            WHERE UPPER(COALESCE(broker, '')) = %(broker)s
+            ORDER BY COALESCE(entry_time, created_at) DESC, id DESC
+            LIMIT %(limit)s
+            """,
+            {"broker": normalized_broker, "limit": limit},
         )
     return fetch_all(
         "SELECT * FROM trade_lifecycles ORDER BY COALESCE(entry_time, created_at) DESC, id DESC LIMIT %(limit)s",
@@ -292,8 +355,8 @@ def get_latest_open_trade_lifecycle(symbol: str, *, parent_order_id: Optional[st
     )
 
 
-def get_trade_lifecycle_summary_from_table(limit: int = 1000) -> dict:
-    rows = get_trade_lifecycles(limit=limit)
+def get_trade_lifecycle_summary_from_table(limit: int = 1000, broker: Optional[str] = None) -> dict:
+    rows = get_trade_lifecycles(limit=limit, broker=broker)
     closed_rows = [row for row in rows if str(row.get("status", "")).strip().upper() == "CLOSED"]
     pnl_values = [to_optional_float(row.get("realized_pnl")) for row in closed_rows if to_optional_float(row.get("realized_pnl")) is not None]
     wins = [value for value in pnl_values if value > 0]

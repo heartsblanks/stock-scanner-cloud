@@ -145,3 +145,79 @@ def execute_maintenance_ops(
             }
         },
     }
+
+
+def execute_ibkr_vm_control(
+    *,
+    now_ny: datetime,
+    action: str,
+    is_trading_day: bool,
+    holiday_message: str | None,
+    get_instance_status: Callable[[], str | None],
+    start_instance: Callable[[], Any],
+    stop_instance: Callable[[], Any],
+    force: bool = False,
+) -> dict[str, Any]:
+    normalized_action = str(action or "").strip().lower()
+    if normalized_action not in {"start", "stop"}:
+        raise ValueError("action must be 'start' or 'stop'")
+
+    instance_status = get_instance_status() or "UNKNOWN"
+
+    if normalized_action == "start" and not force and not is_trading_day:
+        return {
+            "ok": True,
+            "scheduler": "ibkr-vm-control",
+            "current_new_york_time": now_ny.strftime("%Y-%m-%d %H:%M"),
+            "action": normalized_action,
+            "results": {},
+            "instance_status_before": instance_status,
+            "instance_status_after": instance_status,
+            "noop": True,
+            "skipped": True,
+            "reason": holiday_message or "NYSE market is closed today.",
+        }
+
+    if normalized_action == "start" and instance_status == "RUNNING":
+        return {
+            "ok": True,
+            "scheduler": "ibkr-vm-control",
+            "current_new_york_time": now_ny.strftime("%Y-%m-%d %H:%M"),
+            "action": normalized_action,
+            "results": {},
+            "instance_status_before": instance_status,
+            "instance_status_after": instance_status,
+            "noop": True,
+            "skipped": False,
+            "reason": "IBKR VM is already running.",
+        }
+
+    if normalized_action == "stop" and instance_status in {"TERMINATED", "STOPPED"}:
+        return {
+            "ok": True,
+            "scheduler": "ibkr-vm-control",
+            "current_new_york_time": now_ny.strftime("%Y-%m-%d %H:%M"),
+            "action": normalized_action,
+            "results": {},
+            "instance_status_before": instance_status,
+            "instance_status_after": instance_status,
+            "noop": True,
+            "skipped": False,
+            "reason": "IBKR VM is already stopped.",
+        }
+
+    operation_result = start_instance() if normalized_action == "start" else stop_instance()
+    normalized_result = _normalize_handler_result(operation_result)
+
+    return {
+        "ok": normalized_result.get("ok", False),
+        "scheduler": "ibkr-vm-control",
+        "current_new_york_time": now_ny.strftime("%Y-%m-%d %H:%M"),
+        "action": normalized_action,
+        "results": {normalized_action: normalized_result},
+        "instance_status_before": instance_status,
+        "instance_status_after": "STARTING" if normalized_action == "start" else "STOPPING",
+        "noop": False,
+        "skipped": False,
+        "force": force,
+    }

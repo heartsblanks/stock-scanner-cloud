@@ -1,0 +1,19 @@
+[Unit]
+Description=IBKR Bridge API
+After=network-online.target ibkr-gateway.service
+Wants=network-online.target ibkr-gateway.service
+
+[Service]
+Type=simple
+User=ibkr
+Group=ibkr
+WorkingDirectory=/opt/stock-scanner-cloud
+EnvironmentFile=/etc/ibkr-bridge.env
+EnvironmentFile=-/etc/ibkr-gateway.env
+ExecStartPre=/usr/bin/python3 /opt/stock-scanner-cloud/ibkr_bridge/scripts/wait_for_ibkr_gateway.py
+ExecStart=/usr/bin/python3 -m ibkr_bridge.app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

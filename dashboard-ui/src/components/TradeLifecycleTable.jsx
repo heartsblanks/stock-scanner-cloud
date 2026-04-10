@@ -28,6 +28,17 @@ function directionBadge(direction) {
   return "dashboard-badge dashboard-badge-neutral";
 }
 
+function brokerBadge(broker) {
+  const normalized = String(broker || "").trim().toUpperCase();
+  if (normalized === "ALPACA") {
+    return "dashboard-badge dashboard-badge-info";
+  }
+  if (normalized === "IBKR") {
+    return "dashboard-badge dashboard-badge-warn";
+  }
+  return "dashboard-badge dashboard-badge-neutral";
+}
+
 export default function TradeLifecycleTable({ rows }) {
   if (!rows || rows.length === 0) {
     return <div className="dashboard-empty">No trade lifecycle data.</div>;
@@ -41,6 +52,7 @@ export default function TradeLifecycleTable({ rows }) {
         <thead>
           <tr>
             <th>Symbol</th>
+            <th>Broker</th>
             <th>Mode</th>
             <th>Status</th>
             <th>Direction</th>
@@ -72,6 +84,9 @@ export default function TradeLifecycleTable({ rows }) {
             return (
               <tr key={`${row.trade_key || row.symbol || "lifecycle"}-${index}`} className={rowTone}>
                 <td data-label="Symbol" className="dashboard-cell-strong">{formatValue(row.symbol)}</td>
+                <td data-label="Broker">
+                  <span className={brokerBadge(row.broker)}>{formatValue(row.broker)}</span>
+                </td>
                 <td data-label="Mode">{formatValue(row.mode)}</td>
                 <td data-label="Status">
                   <span className={statusBadge(row.status)}>{formatValue(row.status)}</span>

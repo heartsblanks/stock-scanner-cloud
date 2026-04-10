@@ -56,13 +56,15 @@ def handle_scan_request(
     evaluate_symbol: Callable[..., Any],
     get_latest_open_paper_trade_for_symbol: Callable[[str], dict[str, Any] | None],
     is_symbol_in_paper_cooldown: Callable[[str, str], tuple[bool, str]],
-    place_paper_bracket_order_from_trade: Callable[..., Any],
+    place_paper_orders_from_trade: Callable[..., Any],
     append_trade_log: Callable[[dict[str, Any]], None],
     safe_insert_trade_event: Callable[..., None],
     safe_insert_broker_order: Callable[..., None],
     to_float_or_none: Callable[[Any], float | None],
     min_confidence: float,
     upsert_trade_lifecycle: Callable[..., None],
+    resolve_account_size: Callable[[dict[str, Any]], float],
+    active_broker: str,
 ):
     scan_payload = dict(payload or {})
     if scan_payload.get("paper_trade"):
@@ -96,13 +98,15 @@ def handle_scan_request(
         evaluate_symbol=evaluate_symbol,
         get_latest_open_paper_trade_for_symbol=get_latest_open_paper_trade_for_symbol,
         is_symbol_in_paper_cooldown=is_symbol_in_paper_cooldown,
-        place_paper_bracket_order_from_trade=place_paper_bracket_order_from_trade,
+        place_paper_orders_from_trade=place_paper_orders_from_trade,
         append_trade_log=append_trade_log,
         safe_insert_trade_event=safe_insert_trade_event,
         safe_insert_broker_order=safe_insert_broker_order,
         to_float_or_none=to_float_or_none,
         MIN_CONFIDENCE=min_confidence,
         upsert_trade_lifecycle=upsert_trade_lifecycle,
+        resolve_account_size=resolve_account_size,
+        active_broker=active_broker,
     )
 
 

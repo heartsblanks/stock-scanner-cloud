@@ -208,6 +208,22 @@ code {
   font-size: 1.02rem;
 }
 
+.dashboard-hero-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 18px;
+}
+
+.dashboard-hero-status-label {
+  color: rgba(255, 246, 235, 0.72);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
 .dashboard-hero-meta {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

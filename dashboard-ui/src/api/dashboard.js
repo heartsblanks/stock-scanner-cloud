@@ -20,33 +20,51 @@ export async function fetchDashboardSummary(date) {
   };
 }
 
-export async function fetchOpenTrades(limit = 100) {
+export async function fetchOpenTrades(limit = 100, broker) {
+  const params = { limit };
+  if (broker) {
+    params.broker = broker;
+  }
+
   const response = await apiClient.get("/open-trades", {
-    params: { limit },
+    params,
   });
   return response.data;
 }
 
-export async function fetchClosedTrades(limit = 100) {
+export async function fetchClosedTrades(limit = 100, broker) {
+  const params = { limit };
+  if (broker) {
+    params.broker = broker;
+  }
+
   const response = await apiClient.get("/closed-trades", {
-    params: { limit },
+    params,
   });
   return response.data;
 }
 
-export async function fetchTradeLifecycle(limit = 100, status) {
+export async function fetchTradeLifecycle(limit = 100, status, broker) {
   const params = { limit };
   if (status) {
     params.status = status;
+  }
+  if (broker) {
+    params.broker = broker;
   }
 
   const response = await apiClient.get("/trade-lifecycle", { params });
   return response.data;
 }
 
-export async function fetchTradeLifecycleSummary(limit = 1000) {
+export async function fetchTradeLifecycleSummary(limit = 1000, broker) {
+  const params = { limit };
+  if (broker) {
+    params.broker = broker;
+  }
+
   const response = await apiClient.get("/trade-lifecycle-summary", {
-    params: { limit },
+    params,
   });
   return response.data;
 }
@@ -54,6 +72,31 @@ export async function fetchTradeLifecycleSummary(limit = 1000) {
 export async function fetchOpsSummary() {
   const response = await apiClient.get("/ops-summary");
   return response.data;
+}
+
+export async function fetchIbkrStatus() {
+  const response = await apiClient.get("/ibkr-status");
+  return response.data || {};
+}
+
+export async function fetchPaperTradeAttemptRecent(limit = 25, broker, decisionStage) {
+  const params = { limit };
+  if (broker) {
+    params.broker = broker;
+  }
+  if (decisionStage) {
+    params.decision_stage = decisionStage;
+  }
+
+  const response = await apiClient.get("/paper-trade-attempts/recent", { params });
+  const data = response.data || {};
+  return {
+    ...data,
+    rows: Array.isArray(data?.rows) ? data.rows : [],
+    count: data?.count ?? (Array.isArray(data?.rows) ? data.rows.length : 0),
+    limit: data?.limit || limit,
+    broker: data?.broker || broker || null,
+  };
 }
 
 export async function fetchPaperTradeAttemptRejections(limit = 25) {

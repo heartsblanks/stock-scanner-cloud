@@ -159,6 +159,77 @@ Current strategy status:
 - pending observation: review whether the `Price is above OR high and above VWAP.` breakout rule is too blunt after a few more live sessions
 - pending observation: monitor whether `No meaningful allocatable capital remains.` mostly disappears now that the oversized-order sizing bug is fixed
 
+Market data migration strategy:
+- current recommendation: stay on Twelve Data for now while strategy quality and symbol-universe quality continue to improve
+- why: live comparisons against recent real trades showed that Twelve Data and Alpaca were close on actual entry-minute prices, so provider mismatch did not look like the main driver of recent losing trades
+- why not Alpaca free `IEX`: live comparisons also showed that Alpaca free `IEX` bars are often sparser in the opening-range window, especially on thinner symbols, which can make opening-range and VWAP logic less reliable than the current setup
+- future implementation 1: migrate trading/account/order integration to `alpaca-py` first, without changing the scanner's market-data source
+- future implementation 2: only evaluate Alpaca as the primary market-data source through a side-by-side validation phase, ideally on paid `SIP` rather than free `IEX`
+- upgrade triggers for paid market data: repeated evidence that entry timing is meaningfully late despite otherwise stable strategy behavior, repeated chart-review cases where missed/late entries trace back to candle timing, or enough strategy stability that data quality becomes the next obvious bottleneck
+- if migration happens later, the intended order is:
+- `1.` keep Twelve Data live while adding Alpaca market-data adapters in parallel
+- `2.` compare OR completeness, VWAP, benchmark direction, and entry timing side by side for multiple sessions
+- `3.` cut over only after the higher-quality feed clearly improves scan quality
+
+Parallel IBKR evaluation strategy:
+- implementation approach: keep the current Alpaca paper-trading path stable while building IBKR support in parallel for comparison only
+- branch strategy: do IBKR work on a dedicated branch so broker-abstraction and bridge changes do not destabilize the current production path
+- hosting approach: use a GCP VM for the IBKR sidecar stack because Cloud Run is not a good fit for a persistent IB Gateway session
+- current implementation status: the first broker-abstraction layer is now in place, with Alpaca wired behind a generic paper-broker adapter and the IBKR side now upgraded from a placeholder to a bridge-based contract that expects a VM-hosted HTTP service
+- current implementation status: a minimal `ibkr_bridge/` Flask service scaffold now exists in the repo so the GCP VM side has a concrete starting point and endpoint contract
+- current implementation status: VM deployment scaffolding now exists under `ibkr_bridge/systemd/` with a service unit, env template, and bridge runbook for the GCP VM path
+- current implementation status: the first real IBKR bridge read-path is now implemented for account, positions, and open-order reads; write-path endpoints remain intentionally deferred until IB Gateway connectivity is verified on the VM
+- cost-control plan: the IBKR VM should not run 24/7; it should be started and stopped by dedicated Cloud Scheduler jobs around the trading window, while IB Gateway login remains a manual daily step for now
+- current implementation status: the bridge now also supports the first operational write-path actions for cancel-by-symbol and market close-position flows; paper bracket placement remains deferred
+- current implementation status: holiday-aware VM control is now implemented in the main Cloud Run app through `POST /scheduler/ibkr-vm-control`, which reuses the NYSE calendar before starting the VM on trading days
+- current implementation status: the persistence model is being extended to tag paper-trading rows by broker so Alpaca and IBKR orders, trade events, lifecycles, and attempts can be compared cleanly from the database
+- current implementation status: the scan flow is now being split into two true parallel tracks instead of one shared candidate set, so Alpaca continues to evaluate from Twelve Data while IBKR evaluates from IBKR market data before placing to its own paper account
+- target architecture:
+- `1.` Cloud Run remains the main app, dashboard, scheduler, and Neon-backed API
+- `2.` a GCP VM runs IB Gateway plus a small authenticated IBKR bridge service
+- `3.` Cloud Run reaches the VM over an internal path using a Serverless VPC Access connector plus the VM internal IP, rather than a public bridge URL
+- `4.` the main app talks to the bridge service rather than directly to IB Gateway
+- scan-path split:
+- `1.` Alpaca paper flow uses Twelve Data candles plus Alpaca paper placement
+- `2.` IBKR paper flow uses IBKR market data plus IBKR paper placement
+- `3.` both flows run from the same scheduler invocation and persist separately with broker-tagged records for later comparison
+- VM operating window:
+- `1.` start the VM at `9:15 AM ET`
+- `2.` keep it available through the close and immediate post-close comparison window
+- `3.` stop the VM at `5:00 PM ET`
+- `4.` keep a manual IB Gateway login fallback for now, but auto-start the VM, IB Gateway process, and bridge so operator intervention is only needed when readiness fails
+- `5.` keep a static public VM IP for operator access so phone/laptop RDP does not change across stop/start cycles
+- holiday handling note:
+- `1.` plain Cloud Scheduler cron can handle weekdays and timezone shifts but not exchange holidays
+- `2.` the current design now uses a calendar-aware Cloud Run controller at `POST /scheduler/ibkr-vm-control`
+- `3.` start requests skip cleanly on NYSE holidays and weekends; stop requests remain safe idempotent calls for cost control
+- operator flow note:
+- `1.` Cloud Run and scheduler automation should bring the VM-side stack up automatically
+- `2.` the readiness check is the gate for "usable broker session" rather than simple process uptime
+- `3.` only if readiness fails should the operator log into IB Gateway, which can be done from a laptop or phone over RDP
+- expected bridge contract:
+- `GET /account`
+- `GET /positions`
+- `GET /orders/open`
+- `GET /orders/{order_id}`
+- `GET /orders/{order_id}/sync`
+- `POST /orders/paper-bracket`
+- `POST /orders/cancel-by-symbol`
+- `POST /positions/close`
+- implementation order:
+- `1.` add a broker interface/abstraction layer in the app
+- `2.` refactor the existing Alpaca path to implement that interface without changing behavior
+- `3.` build the IBKR bridge on the VM for paper trading only
+- `4.` add an IBKR adapter in the app for account, orders, positions, cancel, close, sync, and reconcile operations
+- `5.` keep Alpaca as the primary paper broker while IBKR runs in shadow mode
+- `6.` log broker-side comparisons for market data, order acceptance, fill behavior, and lifecycle outcomes
+- comparison goals:
+- `1.` compare market-data completeness and opening-range reliability
+- `2.` compare paper fill behavior and rejection patterns
+- `3.` compare operational overhead, stability, and cost
+- `4.` compare broker-tagged DB records directly so dashboard and SQL analysis can distinguish Alpaca vs IBKR behavior without code-specific heuristics
+- decision point: only consider changing direction after enough parallel sessions show a clear advantage in data quality or execution quality
+
 ### 5.5 Operational checklist
 
 Daily:
@@ -242,6 +313,10 @@ Target direction:
 - `routes/dashboard.py`
 
 ### Broker integration
+- `brokers/`
+  - `base.py`
+  - `alpaca_adapter.py`
+  - `ibkr_adapter.py`
 - `alpaca/`
   - `alpaca_http.py`
   - `alpaca_client.py`

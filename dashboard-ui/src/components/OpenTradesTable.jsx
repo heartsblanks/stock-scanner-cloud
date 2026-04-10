@@ -10,6 +10,17 @@ function getStatusBadge(status) {
   return "dashboard-badge dashboard-badge-neutral";
 }
 
+function getBrokerBadge(broker) {
+  const normalized = String(broker || "").trim().toUpperCase();
+  if (normalized === "ALPACA") {
+    return "dashboard-badge dashboard-badge-info";
+  }
+  if (normalized === "IBKR") {
+    return "dashboard-badge dashboard-badge-warn";
+  }
+  return "dashboard-badge dashboard-badge-neutral";
+}
+
 export default function OpenTradesTable({ trades }) {
   if (!trades || trades.length === 0) {
     return <div className="dashboard-empty">No open trades.</div>;
@@ -23,6 +34,7 @@ export default function OpenTradesTable({ trades }) {
         <thead>
           <tr>
             <th>Symbol</th>
+            <th>Broker</th>
             <th>Mode</th>
             <th>Status</th>
             <th>Shares</th>
@@ -39,6 +51,9 @@ export default function OpenTradesTable({ trades }) {
           {sortedTrades.map((trade, index) => (
             <tr key={`${trade.trade_key || trade.symbol || "trade"}-${index}`}>
               <td data-label="Symbol" className="dashboard-cell-strong">{formatValue(trade.symbol)}</td>
+              <td data-label="Broker">
+                <span className={getBrokerBadge(trade.broker)}>{formatValue(trade.broker)}</span>
+              </td>
               <td data-label="Mode">{formatValue(trade.mode)}</td>
               <td data-label="Status">
                 <span className={getStatusBadge(trade.status)}>{formatValue(trade.status)}</span>

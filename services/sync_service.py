@@ -120,6 +120,8 @@ def execute_sync_paper_trades(
             exit_price = sync_result.get("exit_price", "")
             direction = infer_direction(entry_price, exit_price, stop_price, target_price, open_row.get("side", ""))
             lifecycle_side = resolve_lifecycle_side(open_row, direction)
+            broker_name = str(open_row.get("broker", "") or "ALPACA").strip().upper() or "ALPACA"
+            trade_source = str(open_row.get("trade_source", f"{broker_name}_PAPER")).strip().upper() or f"{broker_name}_PAPER"
 
             append_trade_log({
                 "timestamp_utc": exit_timestamp_utc,
@@ -127,8 +129,8 @@ def execute_sync_paper_trades(
                 "symbol": symbol,
                 "name": open_row.get("name", ""),
                 "mode": open_row.get("mode", ""),
-                "trade_source": "ALPACA_PAPER",
-                "broker": "ALPACA",
+                "trade_source": trade_source,
+                "broker": broker_name,
                 "broker_order_id": parent_order_id,
                 "broker_parent_order_id": parent_order_id,
                 "broker_status": sync_result.get("exit_status", sync_result.get("parent_status", "")),
@@ -162,12 +164,14 @@ def execute_sync_paper_trades(
                 shares=to_float_or_none(open_row.get("shares", "")),
                 price=to_float_or_none(sync_result.get("exit_price", "")),
                 mode=str(open_row.get("mode", "") or ""),
+                broker=broker_name,
                 order_id=str(sync_result.get("exit_order_id", "") or parent_order_id),
                 parent_order_id=parent_order_id,
                 status="CLOSED",
             )
             safe_insert_broker_order(
                 order_id=str(sync_result.get("exit_order_id", "") or parent_order_id),
+                broker=broker_name,
                 symbol=symbol,
                 side=lifecycle_side,
                 order_type="exit",
@@ -213,6 +217,7 @@ def execute_sync_paper_trades(
                 signal_stop=to_float_or_none(open_row.get("linked_signal_stop", "")),
                 signal_target=to_float_or_none(open_row.get("linked_signal_target", "")),
                 signal_confidence=to_float_or_none(open_row.get("linked_signal_confidence", "")),
+                broker=broker_name,
                 order_id=broker_order_id,
                 parent_order_id=broker_parent_order_id,
                 exit_order_id=str(sync_result.get("exit_order_id", "") or parent_order_id),
