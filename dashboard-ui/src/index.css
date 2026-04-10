@@ -1,40 +1,40 @@
 :root {
-  --bg: #f3efe5;
-  --bg-accent: #e9e1d1;
-  --surface: rgba(255, 252, 246, 0.9);
-  --surface-strong: #fffdf8;
-  --surface-muted: #f5efe3;
-  --surface-dark: #17312c;
-  --border: rgba(58, 44, 20, 0.14);
-  --border-strong: rgba(24, 41, 36, 0.18);
-  --text: #483d2c;
-  --text-strong: #1f1a14;
-  --text-muted: #7b705f;
-  --accent: #bb5a2a;
-  --accent-strong: #8a3a17;
-  --accent-soft: rgba(187, 90, 42, 0.12);
-  --signal: #0f766e;
-  --signal-soft: rgba(15, 118, 110, 0.14);
-  --success: #167a4b;
-  --warning: #b7791f;
-  --danger: #b4412f;
-  --info: #315bb6;
-  --shadow-soft: 0 18px 40px rgba(52, 38, 18, 0.08);
-  --shadow-panel: 0 24px 60px rgba(32, 27, 18, 0.1);
+  --bg: #040706;
+  --bg-accent: #08110e;
+  --surface: rgba(8, 16, 13, 0.92);
+  --surface-strong: rgba(10, 20, 16, 0.96);
+  --surface-muted: rgba(11, 23, 18, 0.92);
+  --surface-dark: #020504;
+  --border: rgba(100, 255, 174, 0.16);
+  --border-strong: rgba(100, 255, 174, 0.24);
+  --text: #8ff1b6;
+  --text-strong: #d9ffe9;
+  --text-muted: #4dad76;
+  --accent: #38f58f;
+  --accent-strong: #12ce69;
+  --accent-soft: rgba(56, 245, 143, 0.14);
+  --signal: #1fd8a4;
+  --signal-soft: rgba(31, 216, 164, 0.14);
+  --success: #22de84;
+  --warning: #d8ca4d;
+  --danger: #ff6b8a;
+  --info: #58d3ff;
+  --shadow-soft: 0 14px 32px rgba(0, 0, 0, 0.34);
+  --shadow-panel: 0 24px 56px rgba(0, 0, 0, 0.48);
   --radius-xl: 28px;
   --radius-lg: 22px;
   --radius-md: 16px;
   --radius-sm: 12px;
-  --sans: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
-  --heading: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
-  --mono: "SFMono-Regular", "IBM Plex Mono", Consolas, monospace;
+  --sans: "IBM Plex Mono", "JetBrains Mono", "SFMono-Regular", "Fira Code", monospace;
+  --heading: "IBM Plex Mono", "JetBrains Mono", "SFMono-Regular", monospace;
+  --mono: "IBM Plex Mono", "JetBrains Mono", "SFMono-Regular", monospace;
   font: 16px/1.5 var(--sans);
   letter-spacing: 0.01em;
   color: var(--text);
   background:
-    radial-gradient(circle at top left, rgba(187, 90, 42, 0.1), transparent 28%),
-    radial-gradient(circle at top right, rgba(15, 118, 110, 0.1), transparent 22%),
-    linear-gradient(180deg, #fbf6ea 0%, #efe8d8 100%);
+    radial-gradient(circle at top left, rgba(56, 245, 143, 0.12), transparent 30%),
+    radial-gradient(circle at top right, rgba(88, 211, 255, 0.08), transparent 24%),
+    linear-gradient(180deg, #050a08 0%, #020403 100%);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -42,32 +42,32 @@
 }
 
 :root[data-theme="dark"] {
-  --bg: #0f1716;
-  --bg-accent: #182422;
-  --surface: rgba(20, 31, 29, 0.88);
-  --surface-strong: #14211f;
-  --surface-muted: #1a2926;
-  --surface-dark: #08100f;
-  --border: rgba(222, 205, 176, 0.12);
-  --border-strong: rgba(230, 217, 191, 0.16);
-  --text: #d6cab5;
-  --text-strong: #f7f1e3;
-  --text-muted: #9f947f;
-  --accent: #e18c50;
-  --accent-strong: #f0a672;
-  --accent-soft: rgba(225, 140, 80, 0.14);
-  --signal: #42a59b;
-  --signal-soft: rgba(66, 165, 155, 0.16);
-  --success: #57c18b;
-  --warning: #e3af52;
-  --danger: #ef7f6b;
-  --info: #78a7ff;
-  --shadow-soft: 0 18px 40px rgba(0, 0, 0, 0.24);
-  --shadow-panel: 0 24px 60px rgba(0, 0, 0, 0.3);
+  --bg: #030606;
+  --bg-accent: #09110e;
+  --surface: rgba(9, 17, 14, 0.92);
+  --surface-strong: rgba(11, 22, 17, 0.96);
+  --surface-muted: rgba(10, 20, 16, 0.92);
+  --surface-dark: #020504;
+  --border: rgba(102, 255, 176, 0.2);
+  --border-strong: rgba(102, 255, 176, 0.28);
+  --text: #95f0bc;
+  --text-strong: #e0ffed;
+  --text-muted: #54b67f;
+  --accent: #40ff98;
+  --accent-strong: #1bdb74;
+  --accent-soft: rgba(64, 255, 152, 0.18);
+  --signal: #28dfab;
+  --signal-soft: rgba(40, 223, 171, 0.18);
+  --success: #2ce58a;
+  --warning: #d8ca4d;
+  --danger: #ff7390;
+  --info: #61d8ff;
+  --shadow-soft: 0 16px 36px rgba(0, 0, 0, 0.4);
+  --shadow-panel: 0 26px 60px rgba(0, 0, 0, 0.52);
   background:
-    radial-gradient(circle at top left, rgba(225, 140, 80, 0.12), transparent 28%),
-    radial-gradient(circle at top right, rgba(66, 165, 155, 0.12), transparent 22%),
-    linear-gradient(180deg, #101918 0%, #0b1110 100%);
+    radial-gradient(circle at top left, rgba(64, 255, 152, 0.1), transparent 28%),
+    radial-gradient(circle at top right, rgba(97, 216, 255, 0.08), transparent 22%),
+    linear-gradient(180deg, #050a08 0%, #020403 100%);
 }
 
 * {
@@ -144,9 +144,9 @@ code {
   padding: 32px;
   border-radius: var(--radius-xl);
   background:
-    radial-gradient(circle at top left, rgba(255, 210, 163, 0.3), transparent 30%),
-    linear-gradient(135deg, #18352f 0%, #27453c 48%, #906245 100%);
-  color: #f7f3ec;
+    radial-gradient(circle at top left, rgba(64, 255, 152, 0.16), transparent 30%),
+    linear-gradient(135deg, #06110d 0%, #0d1f18 48%, #113026 100%);
+  color: #dcffe9;
   box-shadow: var(--shadow-panel);
 }
 
@@ -189,8 +189,8 @@ code {
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: #ffb66b;
-  box-shadow: 0 0 0 5px rgba(255, 182, 107, 0.16);
+  background: #40ff98;
+  box-shadow: 0 0 0 5px rgba(64, 255, 152, 0.18);
 }
 
 .dashboard-title {
@@ -338,15 +338,15 @@ code {
 }
 
 .dashboard-button-primary {
-  background: linear-gradient(135deg, var(--accent) 0%, #d27a42 100%);
-  color: #fff8f0;
-  box-shadow: 0 14px 26px rgba(187, 90, 42, 0.2);
+  background: linear-gradient(135deg, #1be678 0%, #13b861 100%);
+  color: #02250f;
+  box-shadow: 0 14px 26px rgba(27, 230, 120, 0.24);
 }
 
 .dashboard-button-secondary {
-  background: linear-gradient(135deg, #1d6f67 0%, #2c978b 100%);
-  color: #f6fffe;
-  box-shadow: 0 14px 26px rgba(15, 118, 110, 0.18);
+  background: linear-gradient(135deg, #1a5463 0%, #25758a 100%);
+  color: #dff8ff;
+  box-shadow: 0 14px 26px rgba(37, 117, 138, 0.2);
 }
 
 .dashboard-button-neutral {
@@ -1082,8 +1082,8 @@ code {
 
 :root[data-theme="dark"] .dashboard-hero {
   background:
-    radial-gradient(circle at top left, rgba(240, 166, 114, 0.18), transparent 30%),
-    linear-gradient(135deg, #081513 0%, #132523 52%, #6b4d37 100%);
+    radial-gradient(circle at top left, rgba(64, 255, 152, 0.18), transparent 30%),
+    linear-gradient(135deg, #040b08 0%, #0a1813 52%, #103026 100%);
 }
 
 :root[data-theme="dark"] .dashboard-button-neutral {

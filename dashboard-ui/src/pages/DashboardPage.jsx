@@ -5,7 +5,7 @@ import ExecutionInsightsSection from "../components/dashboard/ExecutionInsightsS
 import HealthOverviewSection from "../components/dashboard/HealthOverviewSection";
 import RefreshStatusPanel from "../components/dashboard/RefreshStatusPanel";
 import { useDashboardData } from "../hooks/useDashboardData";
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Component, Suspense, lazy, useEffect, useState } from "react";
 
 const OpenTradesTable = lazy(() => import("../components/OpenTradesTable"));
 const TradeLifecycleTable = lazy(() => import("../components/TradeLifecycleTable"));
@@ -59,6 +59,31 @@ function getEntryHourUtc(row) {
 
 function LazySection({ children }) {
   return <Suspense fallback={<div className="dashboard-empty">Loading section...</div>}>{children}</Suspense>;
+}
+
+class AnalyticsErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidUpdate(prevProps) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return <div className="dashboard-error">Analytics is temporarily unavailable. Refresh and try again.</div>;
+    }
+
+    return this.props.children;
+  }
 }
 
 function getInitialView() {
@@ -754,7 +779,7 @@ export default function DashboardPage() {
           )}
 
           {activeView === "analytics" && (
-            <>
+            <AnalyticsErrorBoundary resetKey={`${activeView}-${lastUpdated || "none"}`}>
               <section className="dashboard-section">
                 <div className="dashboard-panel dashboard-panel-strong">
                   <div className="dashboard-panel-body">
@@ -923,7 +948,7 @@ export default function DashboardPage() {
                   </div>
                 </div>
               </section>
-            </>
+            </AnalyticsErrorBoundary>
           )}
         </div>
       </div>

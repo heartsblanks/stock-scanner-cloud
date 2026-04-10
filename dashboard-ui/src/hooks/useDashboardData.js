@@ -87,7 +87,7 @@ export function useDashboardData(activeView = "overview") {
   const [error, setError] = useState(null);
   const [sectionLoading, setSectionLoading] = useState(() => getInitialSectionLoading(activeView));
   const [sectionErrors, setSectionErrors] = useState(INITIAL_SECTION_ERRORS);
-  const [filters, setFilters] = useState({ date: "", symbol: "" });
+  const [filters, setFilters] = useState({ date: "" });
   const [alpacaOpenCount, setAlpacaOpenCount] = useState(null);
   const [reconciliationSummary, setReconciliationSummary] = useState(null);
   const [reconciliationDetails, setReconciliationDetails] = useState([]);
@@ -145,32 +145,12 @@ export function useDashboardData(activeView = "overview") {
       const alpacaLifecycleRows = alpacaLifecycleRes?.rows || [];
       const ibkrLifecycleRows = ibkrLifecycleRes?.rows || [];
 
-      if (activeFilters?.symbol) {
-        const normalized = String(activeFilters.symbol).trim().toUpperCase();
-        setOpenTrades(openRows.filter((row) => String(row?.symbol || "").trim().toUpperCase() === normalized));
-        setLifecycle(
-          lifecycleRows.filter((row) => String(row?.symbol || "").trim().toUpperCase() === normalized)
-        );
-        setAlpacaOpenTrades(
-          alpacaOpenRows.filter((row) => String(row?.symbol || "").trim().toUpperCase() === normalized)
-        );
-        setIbkrOpenTrades(
-          ibkrOpenRows.filter((row) => String(row?.symbol || "").trim().toUpperCase() === normalized)
-        );
-        setAlpacaLifecycle(
-          alpacaLifecycleRows.filter((row) => String(row?.symbol || "").trim().toUpperCase() === normalized)
-        );
-        setIbkrLifecycle(
-          ibkrLifecycleRows.filter((row) => String(row?.symbol || "").trim().toUpperCase() === normalized)
-        );
-      } else {
-        setOpenTrades(openRows);
-        setLifecycle(lifecycleRows);
-        setAlpacaOpenTrades(alpacaOpenRows);
-        setIbkrOpenTrades(ibkrOpenRows);
-        setAlpacaLifecycle(alpacaLifecycleRows);
-        setIbkrLifecycle(ibkrLifecycleRows);
-      }
+      setOpenTrades(openRows);
+      setLifecycle(lifecycleRows);
+      setAlpacaOpenTrades(alpacaOpenRows);
+      setIbkrOpenTrades(ibkrOpenRows);
+      setAlpacaLifecycle(alpacaLifecycleRows);
+      setIbkrLifecycle(ibkrLifecycleRows);
 
       setSummary(summaryRes || null);
       setLatestScanSummary(latestScanRes || null);
@@ -501,7 +481,7 @@ export function useDashboardData(activeView = "overview") {
   }, [toast]);
 
   function handleApplyFilters(nextFilters) {
-    const appliedFilters = nextFilters || { date: "", symbol: "" };
+    const appliedFilters = nextFilters || { date: "" };
     setFilters(appliedFilters);
     loadData(appliedFilters);
     setReconciliationSymbolFilter("");

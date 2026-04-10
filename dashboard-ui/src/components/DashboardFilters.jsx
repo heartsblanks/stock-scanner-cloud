@@ -2,47 +2,42 @@ import { useState } from "react";
 
 export default function DashboardFilters({ onApply }) {
   const [date, setDate] = useState("");
-  const [symbol, setSymbol] = useState("");
 
   function handleApply() {
-    onApply?.({ date, symbol });
+    onApply?.({ date });
+  }
+
+  function handleClear() {
+    setDate("");
+    onApply?.({ date: "" });
   }
 
   return (
     <div className="dashboard-panel">
       <div className="dashboard-panel-body dashboard-filter-panel">
         <div>
-          <h2 className="dashboard-panel-title">Filters</h2>
+          <h2 className="dashboard-panel-title">Session Filter</h2>
           <p className="dashboard-panel-subtitle">
-            Narrow the dashboard to a specific date or symbol without leaving the main operating view.
+            Keep this compact: date scope only.
           </p>
         </div>
         <div className="dashboard-filter-row">
-          <div className="dashboard-field">
+          <div className="dashboard-field dashboard-field-compact">
             <label htmlFor="dashboard-filter-date">Date</label>
-        <input
-          id="dashboard-filter-date"
-          className="dashboard-input"
-          type="date"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-        />
-          </div>
-
-          <div className="dashboard-field">
-            <label htmlFor="dashboard-filter-symbol">Symbol</label>
-        <input
-          id="dashboard-filter-symbol"
-          className="dashboard-input"
-          type="text"
-          placeholder="e.g. NVDA"
-          value={symbol}
-          onChange={(e) => setSymbol(e.target.value)}
-        />
+            <input
+              id="dashboard-filter-date"
+              className="dashboard-input"
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
           </div>
 
           <button className="dashboard-button dashboard-button-primary" onClick={handleApply}>
-            Apply Filters
+            Apply
+          </button>
+          <button className="dashboard-button dashboard-button-neutral" onClick={handleClear}>
+            Clear
           </button>
         </div>
       </div>
