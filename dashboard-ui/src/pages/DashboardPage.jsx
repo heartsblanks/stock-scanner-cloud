@@ -163,6 +163,12 @@ export default function DashboardPage() {
           ? "dashboard-pill-info"
           : "dashboard-pill-danger";
   const hasDrilldown = Boolean(drilldown.symbol || drilldown.mode || drilldown.hourUtc);
+  const recentAlpacaPlacedCount = alpacaRecentAttempts.filter(
+    (row) => String(row?.decision_stage || "").toUpperCase() === "PLACED"
+  ).length;
+  const recentIbkrPlacedCount = ibkrRecentAttempts.filter(
+    (row) => String(row?.decision_stage || "").toUpperCase() === "PLACED"
+  ).length;
 
   const filteredOpenTrades = openTrades.filter((row) => {
     const symbolMatch = !drilldown.symbol || String(row?.symbol || "").trim().toUpperCase() === drilldown.symbol;
@@ -299,6 +305,12 @@ export default function DashboardPage() {
                   <div className="dashboard-hero-stat-label">Reconciliation Drift</div>
                   <div className="dashboard-hero-stat-value">
                     {mismatch !== null ? `${mismatch} ${mismatchLabel ? `(${mismatchLabel})` : ""}` : "-"}
+                  </div>
+                </div>
+                <div className="dashboard-hero-stat">
+                  <div className="dashboard-hero-stat-label">Recent Placed A / I</div>
+                  <div className="dashboard-hero-stat-value">
+                    {recentAlpacaPlacedCount} / {recentIbkrPlacedCount}
                   </div>
                 </div>
               </div>
