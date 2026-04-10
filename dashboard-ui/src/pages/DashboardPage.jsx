@@ -3,18 +3,18 @@ import DashboardFilters from "../components/DashboardFilters";
 import AttentionRequiredPanel from "../components/dashboard/AttentionRequiredPanel";
 import ExecutionInsightsSection from "../components/dashboard/ExecutionInsightsSection";
 import HealthOverviewSection from "../components/dashboard/HealthOverviewSection";
+import HourlyAttemptOutcomeChart from "../components/HourlyAttemptOutcomeChart";
+import HourlyOutcomeQualityTable from "../components/HourlyOutcomeQualityTable";
+import HourlyPerformanceChart from "../components/HourlyPerformanceChart";
+import ModePerformanceChart from "../components/ModePerformanceChart";
 import RefreshStatusPanel from "../components/dashboard/RefreshStatusPanel";
+import SymbolPerformanceChart from "../components/SymbolPerformanceChart";
 import { useDashboardData } from "../hooks/useDashboardData";
 import { Component, Suspense, lazy, useEffect, useState } from "react";
 
 const OpenTradesTable = lazy(() => import("../components/OpenTradesTable"));
 const TradeLifecycleTable = lazy(() => import("../components/TradeLifecycleTable"));
 const EquityCurveChart = lazy(() => import("../components/EquityCurveChart"));
-const HourlyPerformanceChart = lazy(() => import("../components/HourlyPerformanceChart"));
-const HourlyAttemptOutcomeChart = lazy(() => import("../components/HourlyAttemptOutcomeChart"));
-const HourlyOutcomeQualityTable = lazy(() => import("../components/HourlyOutcomeQualityTable"));
-const SymbolPerformanceChart = lazy(() => import("../components/SymbolPerformanceChart"));
-const ModePerformanceChart = lazy(() => import("../components/ModePerformanceChart"));
 const AlpacaApiLogsSection = lazy(() => import("../components/dashboard/AlpacaApiLogsSection"));
 const ReconciliationSection = lazy(() => import("../components/dashboard/ReconciliationSection"));
 
@@ -404,6 +404,8 @@ export default function DashboardPage() {
                 </div>
               </div>
 
+              <DashboardFilters onApply={handleApplyFilters} />
+
               <div className="dashboard-toolbar">
                 <button
                   onClick={refreshData}
@@ -433,8 +435,6 @@ export default function DashboardPage() {
         )}
 
         <div className="dashboard-grid">
-          <DashboardFilters onApply={handleApplyFilters} />
-
           <section className="dashboard-view-nav-panel">
             <div className="dashboard-toolbar" style={{ marginBottom: 8 }}>
               <button
