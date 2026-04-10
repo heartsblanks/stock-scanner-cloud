@@ -7,6 +7,7 @@ from flask_cors import CORS
 import requests
 from core.logging_utils import log_exception
 from core.logging_utils import log_info
+from core.logging_utils import log_warning
 from alpaca.reconcile import run_reconciliation, upload_file_to_gcs
 from analytics.trade_analysis import run_trade_analysis, upload_file_to_gcs as upload_analysis_file_to_gcs
 from analytics.signal_analysis import run_signal_analysis, upload_file_to_gcs as upload_signal_analysis_file_to_gcs
@@ -446,6 +447,21 @@ def fetch_ibkr_intraday(symbol: str, interval: str = "1min", outputsize: int | N
             params=params,
             timeout=timeout_seconds,
         ) or []
+        if not candles:
+            log_warning(
+                "IBKR intraday fetch returned no candles",
+                component="app",
+                operation="fetch_ibkr_intraday",
+                broker="IBKR",
+                symbol=symbol,
+                interval=interval,
+                outputsize=outputsize,
+                timeout=timeout_seconds,
+                duration="2 D",
+                bar_size=("1 min" if str(interval).strip().lower() == "1min" else "5 mins" if str(interval).strip().lower() == "5min" else None),
+                what_to_show="TRADES",
+                use_rth=True,
+            )
         log_info(
             "IBKR intraday fetch completed",
             component="app",
@@ -455,6 +471,7 @@ def fetch_ibkr_intraday(symbol: str, interval: str = "1min", outputsize: int | N
             interval=interval,
             outputsize=outputsize,
             candle_count=len(candles),
+            last_bar_datetime=(candles[-1].get("datetime") if candles else None),
         )
         return candles
     except Exception as exc:

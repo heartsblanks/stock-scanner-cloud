@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from core.logging_utils import log_exception, log_info
+from core.logging_utils import log_exception, log_info, log_warning
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -304,6 +304,23 @@ class IbkrGatewayClient:
                 "close": _to_float(getattr(bar, "close", 0.0)),
                 "volume": _to_float(getattr(bar, "volume", 0.0)),
             })
+        if not normalized:
+            log_warning(
+                "IBKR bridge intraday request returned no bars",
+                component="ibkr_bridge",
+                operation="get_intraday_candles",
+                symbol=normalized_symbol,
+                interval=interval,
+                outputsize=outputsize,
+                duration="2 D",
+                bar_size=bar_size,
+                what_to_show="TRADES",
+                use_rth=True,
+                con_id=getattr(contract, "conId", None),
+                exchange=getattr(contract, "exchange", None),
+                primary_exchange=getattr(contract, "primaryExchange", None),
+                timeout=self.config.timeout_seconds,
+            )
         log_info(
             "IBKR bridge intraday request completed",
             component="ibkr_bridge",
@@ -312,6 +329,11 @@ class IbkrGatewayClient:
             interval=interval,
             outputsize=outputsize,
             count=len(normalized),
+            duration="2 D",
+            bar_size=bar_size,
+            what_to_show="TRADES",
+            use_rth=True,
+            last_bar_datetime=(normalized[-1]["datetime"] if normalized else None),
         )
         self._disconnect()
         return normalized
