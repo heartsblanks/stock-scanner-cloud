@@ -322,7 +322,6 @@ export default function DashboardPage() {
                 <span className="dashboard-kicker-dot" />
                 Trading Operations Console
               </div>
-              <h1 className="dashboard-title">Open the page and know what needs attention.</h1>
               <div className="dashboard-hero-status-row">
                 <span className="dashboard-hero-status-label">Health Snapshot</span>
                 <span className={`dashboard-pill dashboard-pill-status ${backendHealthStatus === "OK" ? "dashboard-pill-ok" : backendHealthStatus === "WARNING" ? "dashboard-pill-warn" : "dashboard-pill-danger"}`}>
