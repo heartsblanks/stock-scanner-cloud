@@ -1,5 +1,4 @@
 import unittest
-from unittest.mock import Mock
 
 from orchestration.scan_context import parse_iso_utc, to_float_or_none
 from services.sync_service import execute_sync_paper_trades
