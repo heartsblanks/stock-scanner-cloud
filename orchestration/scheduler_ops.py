@@ -103,6 +103,7 @@ def execute_post_close_ops(
     run_trade_analysis: Callable[[], Any],
     run_signal_analysis: Callable[[], Any],
     run_snapshot_export: Callable[[], Any],
+    run_mode_ranking_refresh: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
     results = {
         "sync": _normalize_handler_result(run_sync()),
@@ -111,6 +112,8 @@ def execute_post_close_ops(
         "analyze_signals": _normalize_handler_result(run_signal_analysis()),
         "export_daily_snapshot": _normalize_handler_result(run_snapshot_export()),
     }
+    if run_mode_ranking_refresh is not None:
+        results["refresh_mode_rankings"] = _normalize_handler_result(run_mode_ranking_refresh())
     return {
         "ok": all(item.get("ok", False) for item in results.values()),
         "scheduler": "daily-post-close",

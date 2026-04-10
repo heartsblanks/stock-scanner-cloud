@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from services.scan_service import (
     _apply_hard_notional_cap,
+    _apply_low_price_notional_cap,
     _apply_confidence_loss_sizing,
     _apply_minimum_viable_position_sizing,
     execute_full_scan,
@@ -70,6 +71,20 @@ class ScanServiceSizingTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["per_trade_notional"], 9977.4, places=4)
         self.assertAlmostEqual(metrics["adjusted_per_trade_notional"], 9977.4, places=4)
         self.assertAlmostEqual(metrics["actual_position_cost"], 9977.4, places=4)
+
+    def test_low_price_notional_cap_tightens_exposure_for_cheap_symbols(self):
+        metrics = {
+            "entry": 9.75,
+            "risk_per_share": 0.1,
+            "per_trade_notional": 10000.0,
+            "adjusted_per_trade_notional": 10000.0,
+            "shares": 1025,
+        }
+
+        _apply_low_price_notional_cap(metrics)
+
+        self.assertLessEqual(metrics["per_trade_notional"], 5000.0)
+        self.assertEqual(metrics["shares"], int(metrics["per_trade_notional"] / 9.75))
 
     def test_live_account_equity_reads_from_alpaca_package_after_repo_move(self):
         original_import = __import__

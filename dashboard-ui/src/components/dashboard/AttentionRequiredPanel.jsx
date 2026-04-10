@@ -16,9 +16,6 @@ export default function AttentionRequiredPanel({ items = [] }) {
           <div className="dashboard-panel-heading">
             <div>
               <h2 className="dashboard-panel-title">Attention Required</h2>
-              <p className="dashboard-panel-subtitle">
-                The few things worth acting on right now, instead of hunting through every section for trouble.
-              </p>
             </div>
           </div>
 

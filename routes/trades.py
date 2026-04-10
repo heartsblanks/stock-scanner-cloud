@@ -12,6 +12,30 @@ from core.trade_math import (
 
 
 
+def _format_trade_log_time(timestamp_value) -> str:
+    if timestamp_value is None:
+        return ""
+
+    if isinstance(timestamp_value, datetime):
+        try:
+            return timestamp_value.astimezone(timezone.utc).strftime("%H:%M")
+        except Exception:
+            return timestamp_value.strftime("%H:%M")
+
+    text = str(timestamp_value).strip()
+    if not text:
+        return ""
+
+    if len(text) >= 16 and (text[10] == "T" or text[10] == " "):
+        return text[11:16]
+
+    try:
+        parsed = datetime.strptime(text, "%a, %d %b %Y %H:%M:%S GMT")
+        return parsed.strftime("%H:%M")
+    except Exception:
+        return text
+
+
 def register_trade_routes(
     app,
     *,
@@ -373,8 +397,7 @@ def register_trade_routes(
             formatted_lines.append("No trade events found.")
         else:
             for row in rows:
-                ts = row.get("timestamp_utc", "")
-                time_part = ts[11:16] if len(ts) >= 16 else ts
+                time_part = _format_trade_log_time(row.get("timestamp_utc", ""))
                 formatted_lines.append(
                     f"{time_part} UTC | "
                     f"{row.get('event_type', '')} | "

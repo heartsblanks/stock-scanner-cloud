@@ -6,6 +6,7 @@ import HealthOverviewSection from "../components/dashboard/HealthOverviewSection
 import HourlyAttemptOutcomeChart from "../components/HourlyAttemptOutcomeChart";
 import HourlyOutcomeQualityTable from "../components/HourlyOutcomeQualityTable";
 import HourlyPerformanceChart from "../components/HourlyPerformanceChart";
+import InsightCard from "../components/InsightCard";
 import ModePerformanceChart from "../components/ModePerformanceChart";
 import RefreshStatusPanel from "../components/dashboard/RefreshStatusPanel";
 import SymbolPerformanceChart from "../components/SymbolPerformanceChart";
@@ -18,22 +19,13 @@ const EquityCurveChart = lazy(() => import("../components/EquityCurveChart"));
 const AlpacaApiLogsSection = lazy(() => import("../components/dashboard/AlpacaApiLogsSection"));
 const ReconciliationSection = lazy(() => import("../components/dashboard/ReconciliationSection"));
 
-const CORE_DASHBOARD_VIEWS = [
-  { id: "overview", label: "Overview", description: "Best for the first look each session." },
-  { id: "trades", label: "Trades", description: "Open positions and lifecycle details." },
-  { id: "reconciliation", label: "Reconciliation", description: "Mismatch and repair workflow." },
-  { id: "analytics", label: "Analytics", description: "Charts and performance patterns." }
+const DASHBOARD_VIEWS = [
+  { id: "overview", label: "Overview" },
+  { id: "trades", label: "Trades" },
+  { id: "reconciliation", label: "Reconciliation" },
+  { id: "analytics", label: "Analytics" },
+  { id: "broker", label: "Broker Logs" },
 ];
-
-const ADVANCED_DASHBOARD_VIEWS = [
-  { id: "broker", label: "Broker Logs", description: "Alpaca call health and failures." }
-];
-
-function getDashboardViews(showAdvancedViews) {
-  return showAdvancedViews
-    ? [...CORE_DASHBOARD_VIEWS, ...ADVANCED_DASHBOARD_VIEWS]
-    : CORE_DASHBOARD_VIEWS;
-}
 
 function formatCurrency(value) {
   if (value === null || value === undefined || value === "") {
@@ -93,23 +85,7 @@ function getInitialView() {
 
   const params = new URLSearchParams(window.location.search);
   const view = String(params.get("view") || "").trim().toLowerCase();
-  const knownViews = [...CORE_DASHBOARD_VIEWS, ...ADVANCED_DASHBOARD_VIEWS];
-  return knownViews.some((item) => item.id === view) ? view : "overview";
-}
-
-function getInitialAdvancedViews() {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  const params = new URLSearchParams(window.location.search);
-  const advancedParam = String(params.get("advanced") || "").trim().toLowerCase();
-  const viewParam = String(params.get("view") || "").trim().toLowerCase();
-  if (advancedParam === "1" || advancedParam === "true" || viewParam === "broker") {
-    return true;
-  }
-
-  return false;
+  return DASHBOARD_VIEWS.some((item) => item.id === view) ? view : "overview";
 }
 
 function getInitialTradeBrokerView() {
@@ -130,7 +106,6 @@ export default function DashboardPage() {
   const [activeView, setActiveView] = useState(getInitialView);
   const [drilldown, setDrilldown] = useState({ symbol: "", mode: "", hourUtc: "" });
   const [tradeBrokerView, setTradeBrokerView] = useState(getInitialTradeBrokerView);
-  const [showAdvancedViews, setShowAdvancedViews] = useState(getInitialAdvancedViews);
   const [theme, setTheme] = useState(() => {
     if (typeof window === "undefined") {
       return "light";
@@ -294,20 +269,15 @@ export default function DashboardPage() {
     window.localStorage.setItem("dashboard-theme", theme);
   }, [theme]);
 
-  const visibleViews = getDashboardViews(showAdvancedViews);
+  const visibleViews = DASHBOARD_VIEWS;
 
   useEffect(() => {
-    const viewLabel = [...CORE_DASHBOARD_VIEWS, ...ADVANCED_DASHBOARD_VIEWS].find((view) => view.id === activeView)?.label || "Overview";
+    const viewLabel = DASHBOARD_VIEWS.find((view) => view.id === activeView)?.label || "Overview";
     document.title = `${viewLabel} | Stock Scanner Console`;
 
     if (typeof window !== "undefined") {
       const url = new URL(window.location.href);
       url.searchParams.set("view", activeView);
-      if (showAdvancedViews) {
-        url.searchParams.set("advanced", "1");
-      } else {
-        url.searchParams.delete("advanced");
-      }
       if (tradeBrokerView === "all") {
         url.searchParams.delete("trade_broker");
       } else {
@@ -315,13 +285,7 @@ export default function DashboardPage() {
       }
       window.history.replaceState({}, "", url);
     }
-  }, [activeView, showAdvancedViews, tradeBrokerView]);
-
-  useEffect(() => {
-    if (!showAdvancedViews && activeView === "broker") {
-      setActiveView("overview");
-    }
-  }, [showAdvancedViews, activeView]);
+  }, [activeView, tradeBrokerView]);
 
   if (error) {
     if (!lastUpdated && !summary && !reconciliationSummary) {
@@ -364,9 +328,6 @@ export default function DashboardPage() {
                   </span>
                 )}
               </div>
-              <p className="dashboard-subtitle">
-                Immediate status for health, reconciliation, and IBKR readiness.
-              </p>
               <div className="dashboard-hero-meta">
                 <div className="dashboard-hero-stat">
                   <div className="dashboard-hero-stat-label">Realized P&amp;L</div>
@@ -404,24 +365,22 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <DashboardFilters onApply={handleApplyFilters} />
-
-              <div className="dashboard-toolbar">
+              <div className="dashboard-hero-controls">
+                <DashboardFilters onApply={handleApplyFilters} />
                 <button
                   onClick={refreshData}
                   disabled={isRefreshing}
-                  className="dashboard-button dashboard-button-primary"
+                  className="dashboard-button dashboard-button-primary dashboard-button-compact"
                 >
-                  {isRefreshing ? "Refreshing..." : "Refresh View"}
+                  {isRefreshing ? "Refreshing..." : "Refresh"}
                 </button>
                 <button
                   onClick={() => setTheme((currentTheme) => (currentTheme === "dark" ? "light" : "dark"))}
-                  className="dashboard-button dashboard-button-theme"
+                  className="dashboard-button dashboard-button-theme dashboard-button-compact"
                 >
                   {theme === "dark" ? "Switch to Light" : "Switch to Dark"}
                 </button>
               </div>
-
             </div>
           </div>
         </section>
@@ -436,15 +395,6 @@ export default function DashboardPage() {
 
         <div className="dashboard-grid">
           <section className="dashboard-view-nav-panel">
-            <div className="dashboard-toolbar" style={{ marginBottom: 8 }}>
-              <button
-                type="button"
-                onClick={() => setShowAdvancedViews((current) => !current)}
-                className={`dashboard-button ${showAdvancedViews ? "dashboard-button-secondary" : "dashboard-button-neutral"}`}
-              >
-                {showAdvancedViews ? "Hide Advanced" : "Show Advanced"}
-              </button>
-            </div>
             <div className="dashboard-view-nav">
               {visibleViews.map((view) => (
                 <button
@@ -454,7 +404,6 @@ export default function DashboardPage() {
                   className={`dashboard-view-tab ${activeView === view.id ? "dashboard-view-tab-active" : ""}`}
                 >
                   <span className="dashboard-view-tab-label">{view.label}</span>
-                  <span className="dashboard-view-tab-copy">{view.description}</span>
                 </button>
               ))}
             </div>

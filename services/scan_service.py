@@ -74,6 +74,18 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+PAPER_CONSECUTIVE_LOSS_COOLDOWN_THRESHOLD = _to_int(os.getenv("PAPER_CONSECUTIVE_LOSS_COOLDOWN_THRESHOLD", 2), 2)
+PAPER_CONSECUTIVE_LOSS_COOLDOWN_MINUTES = _to_int(os.getenv("PAPER_CONSECUTIVE_LOSS_COOLDOWN_MINUTES", 60), 60)
+LOW_PRICE_NOTIONAL_CAP_ENABLED = str(os.getenv("LOW_PRICE_NOTIONAL_CAP_ENABLED", "true")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+LOW_PRICE_THRESHOLD = _to_float(os.getenv("LOW_PRICE_THRESHOLD", 20.0), 20.0)
+LOW_PRICE_MAX_NOTIONAL = _to_float(os.getenv("LOW_PRICE_MAX_NOTIONAL", 5000.0), 5000.0)
+
+
 def _paper_trade_broker_name(paper_trade_result: dict[str, Any]) -> str:
     broker = str(paper_trade_result.get("broker", "") or "").strip().upper()
     return broker or "ALPACA"
@@ -292,6 +304,44 @@ def _apply_hard_notional_cap(metrics: dict[str, Any]) -> None:
         metrics["shares"] = 0
         metrics["per_trade_notional"] = round(capped_notional, 4)
         metrics["adjusted_per_trade_notional"] = round(capped_notional, 4)
+        metrics["actual_position_cost"] = 0.0
+        metrics["actual_risk"] = 0.0
+        return
+
+    final_notional = capped_shares * entry_price
+    metrics["shares"] = capped_shares
+    metrics["per_trade_notional"] = round(final_notional, 4)
+    metrics["adjusted_per_trade_notional"] = round(final_notional, 4)
+    metrics["notional_capped_shares"] = capped_shares
+    metrics["actual_position_cost"] = round(final_notional, 4)
+    metrics["actual_risk"] = round(capped_shares * _to_float(metrics.get("risk_per_share"), 0.0), 4)
+
+
+def _apply_low_price_notional_cap(metrics: dict[str, Any]) -> None:
+    if not LOW_PRICE_NOTIONAL_CAP_ENABLED:
+        return
+
+    entry_price = _to_float(metrics.get("entry"), 0.0)
+    if entry_price <= 0 or entry_price > LOW_PRICE_THRESHOLD:
+        return
+
+    if LOW_PRICE_MAX_NOTIONAL <= 0:
+        return
+
+    current_notional = _to_float(metrics.get("per_trade_notional"), 0.0)
+    if current_notional <= 0:
+        return
+
+    capped_notional = min(current_notional, LOW_PRICE_MAX_NOTIONAL)
+    capped_shares = int(capped_notional / entry_price)
+
+    metrics["low_price_threshold"] = round(LOW_PRICE_THRESHOLD, 4)
+    metrics["low_price_max_notional"] = round(LOW_PRICE_MAX_NOTIONAL, 4)
+
+    if capped_shares <= 0:
+        metrics["shares"] = 0
+        metrics["per_trade_notional"] = 0.0
+        metrics["adjusted_per_trade_notional"] = 0.0
         metrics["actual_position_cost"] = 0.0
         metrics["actual_risk"] = 0.0
         return
@@ -661,8 +711,8 @@ def execute_full_scan(
                         break
 
                 # Cooldown rule
-                if consecutive_losses >= 2:
-                    cooldown_minutes = 60
+                if consecutive_losses >= PAPER_CONSECUTIVE_LOSS_COOLDOWN_THRESHOLD:
+                    cooldown_minutes = PAPER_CONSECUTIVE_LOSS_COOLDOWN_MINUTES
                     last_trade_time = recent_trades[0].get("exit_time") if recent_trades else None
                     if last_trade_time:
                         try:
@@ -712,6 +762,7 @@ def execute_full_scan(
                     final_multiplier=final_multiplier,
                 )
                 _apply_hard_notional_cap(paper_trade_candidate["metrics"])
+                _apply_low_price_notional_cap(paper_trade_candidate["metrics"])
                 # --- Expose multipliers at response level (latest candidate wins) ---
                 try:
                     response["confidence_multiplier"] = round(confidence_multiplier, 4)
@@ -772,6 +823,7 @@ def execute_full_scan(
                         final_multiplier=final_multiplier,
                     )
                     _apply_hard_notional_cap(paper_metrics)
+                    _apply_low_price_notional_cap(paper_metrics)
                     _apply_minimum_viable_position_sizing(paper_metrics)
 
                 if _to_int(paper_metrics.get("shares"), 0) <= 0:

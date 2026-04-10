@@ -1,9 +1,22 @@
 import unittest
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
-from orchestration.scan_context import paper_candidate_from_evaluation
+from orchestration.scan_context import build_scheduled_scan_payload, paper_candidate_from_evaluation
+
+
+NY_TZ = ZoneInfo("America/New_York")
 
 
 class ScanContextTests(unittest.TestCase):
+    def test_build_scheduled_scan_payload_uses_provided_mode_order(self):
+        now_ny = datetime(2026, 4, 1, 9, 50, tzinfo=NY_TZ)
+
+        payload = build_scheduled_scan_payload({}, now_ny=now_ny, mode_order=["core_three", "core_one"])
+
+        self.assertEqual(payload["mode"], "core_three")
+        self.assertEqual(payload["scheduled_mode_order"], ["core_three", "core_one"])
+
     def test_paper_candidate_requires_valid_decision(self):
         evaluation = {
             "name": "Apple",

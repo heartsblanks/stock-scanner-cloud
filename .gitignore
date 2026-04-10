@@ -26,3 +26,4 @@ dashboard-ui/.vite/
 logs/
 tmp/
 *.log
+.vercel

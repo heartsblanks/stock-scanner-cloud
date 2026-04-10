@@ -252,6 +252,30 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_trade_lifecycles_trade_key ON trade_lifecyc
 CREATE UNIQUE INDEX IF NOT EXISTS uq_broker_orders_order_id ON broker_orders(order_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_scan_runs_scan_time_mode_source ON scan_runs(scan_time, mode, scan_source);
 
+-- Mode rankings: rolling broker-specific ordering used by scheduled scans
+CREATE TABLE IF NOT EXISTS mode_rankings (
+    id SERIAL PRIMARY KEY,
+    ranking_date DATE NOT NULL,
+    broker TEXT NOT NULL,
+    window_days INT NOT NULL,
+    mode TEXT NOT NULL,
+    rank INT NOT NULL,
+    score NUMERIC,
+    trade_count INT NOT NULL DEFAULT 0,
+    closed_trade_count INT NOT NULL DEFAULT 0,
+    winning_trade_count INT NOT NULL DEFAULT 0,
+    losing_trade_count INT NOT NULL DEFAULT 0,
+    realized_pnl_total NUMERIC NOT NULL DEFAULT 0,
+    win_rate_percent NUMERIC,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_mode_rankings_broker_date ON mode_rankings(broker, ranking_date DESC);
+CREATE INDEX IF NOT EXISTS idx_mode_rankings_window ON mode_rankings(window_days, ranking_date DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mode_rankings_day_broker_window_mode
+    ON mode_rankings(ranking_date, broker, window_days, mode);
+
 ALTER TABLE paper_trade_attempts ADD COLUMN IF NOT EXISTS broker TEXT;
 ALTER TABLE trade_events ADD COLUMN IF NOT EXISTS broker TEXT;
 ALTER TABLE broker_orders ADD COLUMN IF NOT EXISTS broker TEXT;

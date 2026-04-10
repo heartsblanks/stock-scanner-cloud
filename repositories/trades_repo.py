@@ -437,9 +437,14 @@ def get_trade_lifecycle_summary_for_date(target_date: str, limit: int = 5000) ->
     }
 
 
-def get_symbol_performance(limit: int = 100) -> list[dict]:
+def get_symbol_performance(limit: int = 100, target_date: Optional[str] = None) -> list[dict]:
+    date_filter = ""
+    params: dict[str, Any] = {"limit": limit}
+    if target_date:
+        date_filter = "WHERE (entry_time::date = %(target_date)s::date OR exit_time::date = %(target_date)s::date)"
+        params["target_date"] = target_date
     return fetch_all(
-        """
+        f"""
         SELECT symbol, COUNT(*)::INT AS trade_count,
                COUNT(*) FILTER (WHERE UPPER(COALESCE(status, '')) = 'CLOSED')::INT AS closed_trade_count,
                COUNT(*) FILTER (WHERE COALESCE(realized_pnl, 0) > 0)::INT AS winning_trade_count,
@@ -448,17 +453,23 @@ def get_symbol_performance(limit: int = 100) -> list[dict]:
                ROUND(AVG(realized_pnl)::numeric, 6) AS average_realized_pnl,
                ROUND(AVG(duration_minutes)::numeric, 6) AS average_duration_minutes
         FROM trade_lifecycles
+        {date_filter}
         GROUP BY symbol
         ORDER BY realized_pnl_total DESC, symbol ASC
         LIMIT %(limit)s
         """,
-        {"limit": limit},
+        params,
     )
 
 
-def get_mode_performance(limit: int = 100) -> list[dict]:
+def get_mode_performance(limit: int = 100, target_date: Optional[str] = None) -> list[dict]:
+    date_filter = ""
+    params: dict[str, Any] = {"limit": limit}
+    if target_date:
+        date_filter = "WHERE (entry_time::date = %(target_date)s::date OR exit_time::date = %(target_date)s::date)"
+        params["target_date"] = target_date
     return fetch_all(
-        """
+        f"""
         SELECT COALESCE(mode, '') AS mode, COUNT(*)::INT AS trade_count,
                COUNT(*) FILTER (WHERE UPPER(COALESCE(status, '')) = 'CLOSED')::INT AS closed_trade_count,
                COUNT(*) FILTER (WHERE COALESCE(realized_pnl, 0) > 0)::INT AS winning_trade_count,
@@ -467,51 +478,69 @@ def get_mode_performance(limit: int = 100) -> list[dict]:
                ROUND(AVG(realized_pnl)::numeric, 6) AS average_realized_pnl,
                ROUND(AVG(duration_minutes)::numeric, 6) AS average_duration_minutes
         FROM trade_lifecycles
+        {date_filter}
         GROUP BY COALESCE(mode, '')
         ORDER BY realized_pnl_total DESC, mode ASC
         LIMIT %(limit)s
         """,
-        {"limit": limit},
+        params,
     )
 
 
-def get_exit_reason_breakdown(limit: int = 100) -> list[dict]:
+def get_exit_reason_breakdown(limit: int = 100, target_date: Optional[str] = None) -> list[dict]:
+    date_filter = ""
+    params: dict[str, Any] = {"limit": limit}
+    if target_date:
+        date_filter = "AND (entry_time::date = %(target_date)s::date OR exit_time::date = %(target_date)s::date)"
+        params["target_date"] = target_date
     return fetch_all(
-        """
+        f"""
         SELECT COALESCE(exit_reason, '') AS exit_reason,
                COUNT(*)::INT AS trade_count,
                ROUND(COALESCE(SUM(realized_pnl), 0)::numeric, 6) AS realized_pnl_total,
                ROUND(AVG(realized_pnl)::numeric, 6) AS average_realized_pnl
         FROM trade_lifecycles
         WHERE UPPER(COALESCE(status, '')) = 'CLOSED'
+          {date_filter}
         GROUP BY COALESCE(exit_reason, '')
         ORDER BY trade_count DESC, exit_reason ASC
         LIMIT %(limit)s
         """,
-        {"limit": limit},
+        params,
     )
 
 
-def get_external_exit_summary() -> dict | None:
+def get_external_exit_summary(target_date: Optional[str] = None) -> dict | None:
+    date_filter = ""
+    params: dict[str, Any] = {}
+    if target_date:
+        date_filter = "AND (entry_time::date = %(target_date)s::date OR exit_time::date = %(target_date)s::date)"
+        params["target_date"] = target_date
     row = fetch_one(
-        """
+        f"""
         SELECT COUNT(*)::INT AS trade_count,
                ROUND(COALESCE(SUM(realized_pnl), 0)::numeric, 6) AS realized_pnl_total,
                ROUND(AVG(realized_pnl)::numeric, 6) AS average_realized_pnl
         FROM trade_lifecycles
         WHERE UPPER(COALESCE(status, '')) = 'CLOSED'
           AND UPPER(COALESCE(exit_reason, '')) = 'EXTERNAL_EXIT'
+          {date_filter}
         """,
-        {},
+        params,
     )
     if not row or not row.get("trade_count"):
         return None
     return row
 
 
-def get_hourly_performance(limit: int = 100) -> list[dict]:
+def get_hourly_performance(limit: int = 100, target_date: Optional[str] = None) -> list[dict]:
+    date_filter = ""
+    params: dict[str, Any] = {"limit": limit}
+    if target_date:
+        date_filter = "AND (entry_time::date = %(target_date)s::date OR exit_time::date = %(target_date)s::date)"
+        params["target_date"] = target_date
     return fetch_all(
-        """
+        f"""
         SELECT EXTRACT(HOUR FROM entry_time)::INT AS entry_hour_utc,
                COUNT(*)::INT AS trade_count,
                COUNT(*) FILTER (WHERE UPPER(COALESCE(status, '')) = 'CLOSED')::INT AS closed_trade_count,
@@ -520,18 +549,29 @@ def get_hourly_performance(limit: int = 100) -> list[dict]:
                ROUND(AVG(duration_minutes)::numeric, 6) AS average_duration_minutes
         FROM trade_lifecycles
         WHERE entry_time IS NOT NULL
+          {date_filter}
         GROUP BY EXTRACT(HOUR FROM entry_time)
         ORDER BY entry_hour_utc ASC
         LIMIT %(limit)s
         """,
-        {"limit": limit},
+        params,
     )
 
 
-def get_hourly_outcome_quality(limit: int = 24, *, exclude_external_exit: bool = False) -> list[dict]:
+def get_hourly_outcome_quality(
+    limit: int = 24,
+    *,
+    exclude_external_exit: bool = False,
+    target_date: Optional[str] = None,
+) -> list[dict]:
     external_exit_filter = ""
     if exclude_external_exit:
         external_exit_filter = "AND UPPER(COALESCE(exit_reason, '')) <> 'EXTERNAL_EXIT'"
+    date_filter = ""
+    params: dict[str, Any] = {"limit": limit}
+    if target_date:
+        date_filter = "AND (entry_time::date = %(target_date)s::date OR exit_time::date = %(target_date)s::date)"
+        params["target_date"] = target_date
     return fetch_all(
         f"""
         SELECT EXTRACT(HOUR FROM (entry_time AT TIME ZONE 'America/New_York'))::INT AS entry_hour_ny,
@@ -554,24 +594,31 @@ def get_hourly_outcome_quality(limit: int = 24, *, exclude_external_exit: bool =
                END AS win_rate
         FROM trade_lifecycles
         WHERE entry_time IS NOT NULL
+          {date_filter}
           {external_exit_filter}
         GROUP BY EXTRACT(HOUR FROM (entry_time AT TIME ZONE 'America/New_York'))
         ORDER BY entry_hour_ny ASC
         LIMIT %(limit)s
         """,
-        {"limit": limit},
+        params,
     )
 
 
-def get_equity_curve(limit: int = 5000) -> list[dict]:
+def get_equity_curve(limit: int = 5000, target_date: Optional[str] = None) -> list[dict]:
+    date_filter = ""
+    params: dict[str, Any] = {"limit": limit}
+    if target_date:
+        date_filter = "WHERE COALESCE(exit_time, entry_time, created_at)::date = %(target_date)s::date"
+        params["target_date"] = target_date
     rows = fetch_all(
-        """
+        f"""
         SELECT COALESCE(exit_time, entry_time, created_at) AS timestamp, COALESCE(realized_pnl, 0) AS realized_pnl
         FROM trade_lifecycles
+        {date_filter}
         ORDER BY COALESCE(exit_time, entry_time, created_at) ASC, id ASC
         LIMIT %(limit)s
         """,
-        {"limit": limit},
+        params,
     )
     cumulative = 0.0
     curve = []
@@ -589,14 +636,14 @@ def get_equity_curve(limit: int = 5000) -> list[dict]:
 
 def get_dashboard_summary(target_date: Optional[str] = None) -> dict:
     base_summary = get_trade_lifecycle_summary_for_date(target_date=target_date, limit=5000) if target_date else get_trade_lifecycle_summary_from_table(limit=5000)
-    symbol_performance = get_symbol_performance(limit=10)
-    mode_performance = get_mode_performance(limit=10)
-    exit_reason_breakdown = get_exit_reason_breakdown(limit=20)
-    external_exit_summary = get_external_exit_summary()
-    hourly_performance = get_hourly_performance(limit=24)
-    hourly_outcome_quality = get_hourly_outcome_quality(limit=24)
-    strategy_hourly_outcome_quality = get_hourly_outcome_quality(limit=24, exclude_external_exit=True)
-    equity_curve = get_equity_curve(limit=5000)
+    symbol_performance = get_symbol_performance(limit=10, target_date=target_date)
+    mode_performance = get_mode_performance(limit=10, target_date=target_date)
+    exit_reason_breakdown = get_exit_reason_breakdown(limit=20, target_date=target_date)
+    external_exit_summary = get_external_exit_summary(target_date=target_date)
+    hourly_performance = get_hourly_performance(limit=24, target_date=target_date)
+    hourly_outcome_quality = get_hourly_outcome_quality(limit=24, target_date=target_date)
+    strategy_hourly_outcome_quality = get_hourly_outcome_quality(limit=24, exclude_external_exit=True, target_date=target_date)
+    equity_curve = get_equity_curve(limit=5000, target_date=target_date)
     return {
         "summary": base_summary,
         "top_symbols": symbol_performance,
@@ -615,3 +662,208 @@ def get_dashboard_summary(target_date: Optional[str] = None) -> dict:
             "external_exit_summary": external_exit_summary,
         },
     }
+
+
+def get_rolling_mode_performance(
+    *,
+    broker: str,
+    window_days: int = 5,
+    as_of_date: Optional[str] = None,
+    min_closed_trade_count: int = 1,
+) -> list[dict]:
+    normalized_broker = normalize_text(broker).upper()
+    if not normalized_broker:
+        raise ValueError("broker is required")
+
+    params: dict[str, Any] = {
+        "broker": normalized_broker,
+        "window_days": max(1, int(window_days)),
+        "min_closed_trade_count": max(1, int(min_closed_trade_count)),
+    }
+    as_of_filter = ""
+    if as_of_date:
+        as_of_filter = "AND exit_time::date <= %(as_of_date)s::date"
+        params["as_of_date"] = as_of_date
+
+    return fetch_all(
+        f"""
+        WITH trading_days AS (
+            SELECT DISTINCT exit_time::date AS trading_day
+            FROM trade_lifecycles
+            WHERE UPPER(COALESCE(status, '')) = 'CLOSED'
+              AND COALESCE(mode, '') <> ''
+              AND UPPER(COALESCE(broker, '')) = %(broker)s
+              AND exit_time IS NOT NULL
+              {as_of_filter}
+            ORDER BY trading_day DESC
+            LIMIT %(window_days)s
+        )
+        SELECT
+            COALESCE(mode, '') AS mode,
+            COUNT(*)::INT AS trade_count,
+            COUNT(*)::INT AS closed_trade_count,
+            COUNT(*) FILTER (WHERE COALESCE(realized_pnl, 0) > 0)::INT AS winning_trade_count,
+            COUNT(*) FILTER (WHERE COALESCE(realized_pnl, 0) < 0)::INT AS losing_trade_count,
+            ROUND(COALESCE(SUM(realized_pnl), 0)::numeric, 6) AS realized_pnl_total,
+            ROUND(AVG(realized_pnl)::numeric, 6) AS average_realized_pnl,
+            CASE
+                WHEN COUNT(*) > 0
+                THEN ROUND(
+                    (
+                        COUNT(*) FILTER (WHERE COALESCE(realized_pnl, 0) > 0)::NUMERIC
+                        / COUNT(*)::NUMERIC
+                    ) * 100,
+                    6
+                )
+                ELSE NULL
+            END AS win_rate_percent
+        FROM trade_lifecycles
+        WHERE UPPER(COALESCE(status, '')) = 'CLOSED'
+          AND COALESCE(mode, '') <> ''
+          AND UPPER(COALESCE(broker, '')) = %(broker)s
+          AND exit_time IS NOT NULL
+          AND exit_time::date IN (SELECT trading_day FROM trading_days)
+        GROUP BY COALESCE(mode, '')
+        HAVING COUNT(*) >= %(min_closed_trade_count)s
+        ORDER BY realized_pnl_total DESC, win_rate_percent DESC NULLS LAST, closed_trade_count DESC, mode ASC
+        """,
+        params,
+    )
+
+
+def refresh_mode_rankings(
+    *,
+    broker: str,
+    expected_modes: list[str],
+    window_days: int = 5,
+    as_of_date: Optional[str] = None,
+    min_closed_trade_count: int = 1,
+) -> dict[str, Any]:
+    normalized_broker = normalize_text(broker).upper()
+    if not normalized_broker:
+        raise ValueError("broker is required")
+
+    ranking_date = as_of_date or datetime.utcnow().date().isoformat()
+    normalized_expected_modes = [normalize_text(mode) for mode in expected_modes if normalize_text(mode)]
+    rolling_rows = get_rolling_mode_performance(
+        broker=normalized_broker,
+        window_days=window_days,
+        as_of_date=ranking_date,
+        min_closed_trade_count=min_closed_trade_count,
+    )
+
+    ranked_modes: list[str] = []
+    row_by_mode: dict[str, dict[str, Any]] = {}
+    for row in rolling_rows:
+        mode = normalize_text(row.get("mode"))
+        if not mode or mode in row_by_mode:
+            continue
+        if normalized_expected_modes and mode not in normalized_expected_modes:
+            continue
+        row_by_mode[mode] = row
+        ranked_modes.append(mode)
+
+    missing_modes = [mode for mode in normalized_expected_modes if mode not in row_by_mode]
+    ordered_modes = ranked_modes + missing_modes
+
+    execute(
+        """
+        DELETE FROM mode_rankings
+        WHERE ranking_date = %(ranking_date)s::date
+          AND broker = %(broker)s
+          AND window_days = %(window_days)s
+        """,
+        {
+            "ranking_date": ranking_date,
+            "broker": normalized_broker,
+            "window_days": max(1, int(window_days)),
+        },
+    )
+
+    for index, mode in enumerate(ordered_modes, start=1):
+        stats = row_by_mode.get(mode, {})
+        realized_pnl_total = to_optional_float(stats.get("realized_pnl_total")) or 0.0
+        win_rate_percent = to_optional_float(stats.get("win_rate_percent"))
+        execute(
+            """
+            INSERT INTO mode_rankings (
+                ranking_date, broker, window_days, mode, rank, score,
+                trade_count, closed_trade_count, winning_trade_count, losing_trade_count,
+                realized_pnl_total, win_rate_percent, updated_at
+            ) VALUES (
+                %(ranking_date)s::date, %(broker)s, %(window_days)s, %(mode)s, %(rank)s, %(score)s,
+                %(trade_count)s, %(closed_trade_count)s, %(winning_trade_count)s, %(losing_trade_count)s,
+                %(realized_pnl_total)s, %(win_rate_percent)s, NOW()
+            )
+            ON CONFLICT (ranking_date, broker, window_days, mode)
+            DO UPDATE SET
+                rank = EXCLUDED.rank,
+                score = EXCLUDED.score,
+                trade_count = EXCLUDED.trade_count,
+                closed_trade_count = EXCLUDED.closed_trade_count,
+                winning_trade_count = EXCLUDED.winning_trade_count,
+                losing_trade_count = EXCLUDED.losing_trade_count,
+                realized_pnl_total = EXCLUDED.realized_pnl_total,
+                win_rate_percent = EXCLUDED.win_rate_percent,
+                updated_at = NOW()
+            """,
+            {
+                "ranking_date": ranking_date,
+                "broker": normalized_broker,
+                "window_days": max(1, int(window_days)),
+                "mode": mode,
+                "rank": index,
+                "score": realized_pnl_total,
+                "trade_count": int(stats.get("trade_count") or 0),
+                "closed_trade_count": int(stats.get("closed_trade_count") or 0),
+                "winning_trade_count": int(stats.get("winning_trade_count") or 0),
+                "losing_trade_count": int(stats.get("losing_trade_count") or 0),
+                "realized_pnl_total": realized_pnl_total,
+                "win_rate_percent": win_rate_percent,
+            },
+        )
+
+    return {
+        "ranking_date": ranking_date,
+        "broker": normalized_broker,
+        "window_days": max(1, int(window_days)),
+        "mode_order": ordered_modes,
+        "ranked_mode_count": len(ranked_modes),
+        "total_mode_count": len(ordered_modes),
+        "min_closed_trade_count": max(1, int(min_closed_trade_count)),
+    }
+
+
+def get_latest_mode_ranking_rows(*, broker: str, window_days: int = 5) -> list[dict]:
+    normalized_broker = normalize_text(broker).upper()
+    if not normalized_broker:
+        raise ValueError("broker is required")
+    return fetch_all(
+        """
+        SELECT ranking_date, broker, window_days, mode, rank, score, trade_count, closed_trade_count,
+               winning_trade_count, losing_trade_count, realized_pnl_total, win_rate_percent
+        FROM mode_rankings
+        WHERE broker = %(broker)s
+          AND window_days = %(window_days)s
+          AND ranking_date = (
+              SELECT MAX(ranking_date)
+              FROM mode_rankings
+              WHERE broker = %(broker)s
+                AND window_days = %(window_days)s
+          )
+        ORDER BY rank ASC, mode ASC
+        """,
+        {"broker": normalized_broker, "window_days": max(1, int(window_days))},
+    )
+
+
+def get_latest_mode_ranking_order(*, broker: str, expected_modes: Optional[list[str]] = None, window_days: int = 5) -> list[str]:
+    rows = get_latest_mode_ranking_rows(broker=broker, window_days=window_days)
+    ranked_modes = [normalize_text(row.get("mode")) for row in rows if normalize_text(row.get("mode"))]
+    if not expected_modes:
+        return ranked_modes
+
+    normalized_expected_modes = [normalize_text(mode) for mode in expected_modes if normalize_text(mode)]
+    ordered_modes = [mode for mode in ranked_modes if mode in normalized_expected_modes]
+    ordered_modes.extend(mode for mode in normalized_expected_modes if mode not in ordered_modes)
+    return ordered_modes

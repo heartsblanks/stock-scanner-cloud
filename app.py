@@ -41,7 +41,9 @@ from storage import (
     get_trade_lifecycle_summary_from_table,
     upsert_trade_lifecycle,
     get_dashboard_summary,
+    get_latest_mode_ranking_order,
     prune_alpaca_api_logs,
+    refresh_mode_rankings,
 )
 from exports.export_daily_snapshot import run_daily_snapshot
 from routes.health import register_health_routes
@@ -68,8 +70,9 @@ from orchestration.paper_trade_context import (
     read_trade_rows_for_date as context_read_trade_rows_for_date,
 )
 from orchestration.scan_context import (
+    ALPACA_SCHEDULED_MODE_ORDER,
+    IBKR_SCHEDULED_MODE_ORDER,
     NY_TZ,
-    SCHEDULED_ROUND_ROBIN_MODES,
     build_scan_id,
     build_scheduled_scan_payload,
     debug_to_dict,
@@ -109,6 +112,8 @@ from analytics.trade_scan import (
 from analytics.instruments import INSTRUMENT_GROUPS
 PAPER_TRADE_MIN_CONFIDENCE = 70
 IBKR_PAPER_TRADE_MIN_CONFIDENCE = int(os.getenv("IBKR_PAPER_TRADE_MIN_CONFIDENCE", "40"))
+ALPACA_MODE_RANKING_WINDOW_DAYS = max(1, int(os.getenv("ALPACA_MODE_RANKING_WINDOW_DAYS", "5")))
+ALPACA_MODE_RANKING_MIN_CLOSED_TRADES = max(1, int(os.getenv("ALPACA_MODE_RANKING_MIN_CLOSED_TRADES", "2")))
 
 
 app = Flask(__name__)
@@ -228,6 +233,40 @@ def resolve_ibkr_shadow_account_size(payload: dict[str, Any]) -> float:
     if fallback is not None and fallback > 0:
         return float(fallback)
     return 1000000.0
+
+
+def resolve_alpaca_scheduled_mode_order() -> list[str]:
+    try:
+        ranked_modes = get_latest_mode_ranking_order(
+            broker="ALPACA",
+            expected_modes=ALPACA_SCHEDULED_MODE_ORDER,
+            window_days=ALPACA_MODE_RANKING_WINDOW_DAYS,
+        )
+        if ranked_modes:
+            return ranked_modes
+    except Exception as exc:
+        log_exception(
+            "Failed to resolve latest Alpaca mode ranking order; falling back to static order",
+            exc,
+            component="app",
+            operation="resolve_alpaca_scheduled_mode_order",
+        )
+    return list(ALPACA_SCHEDULED_MODE_ORDER)
+
+
+def refresh_alpaca_mode_rankings(*, ranking_date: str | None = None) -> dict[str, Any]:
+    result = refresh_mode_rankings(
+        broker="ALPACA",
+        expected_modes=ALPACA_SCHEDULED_MODE_ORDER,
+        window_days=ALPACA_MODE_RANKING_WINDOW_DAYS,
+        as_of_date=ranking_date,
+        min_closed_trade_count=ALPACA_MODE_RANKING_MIN_CLOSED_TRADES,
+    )
+    return {
+        "ok": True,
+        "message": "alpaca mode rankings refreshed",
+        **result,
+    }
 
 
 def get_ibkr_operational_status() -> dict[str, Any]:
@@ -682,7 +721,7 @@ def _run_ibkr_shadow_scan(payload: dict[str, Any]) -> dict[str, Any]:
 def _run_ibkr_shadow_scans(payload: dict[str, Any]) -> dict[str, Any]:
     scan_source = str((payload or {}).get("scan_source", "") or "").strip().upper()
     scheduled_shadow = scan_source == "SCHEDULED"
-    modes = list(SCHEDULED_ROUND_ROBIN_MODES) if scheduled_shadow else [str(payload.get("mode", "primary")).strip().lower()]
+    modes = list(IBKR_SCHEDULED_MODE_ORDER) if scheduled_shadow else [str(payload.get("mode", "primary")).strip().lower()]
 
     per_mode_results: list[dict[str, Any]] = []
     total_candidates = 0
@@ -780,10 +819,15 @@ def run_scan_wrapper(payload):
 
 def run_scheduled_paper_scan_wrapper(payload):
     now_ny = datetime.now(NY_TZ)
+    scheduled_mode_order = resolve_alpaca_scheduled_mode_order()
     return run_scheduled_scan_wrapper(
         payload,
         now_ny=now_ny,
-        build_scheduled_scan_payload=build_scheduled_scan_payload,
+        build_scheduled_scan_payload=lambda scan_payload, now_ny=None: build_scheduled_scan_payload(
+            scan_payload,
+            now_ny=now_ny,
+            mode_order=scheduled_mode_order,
+        ),
         handle_scan_request_fn=handle_scan_request,
     )
 
@@ -857,6 +901,7 @@ def run_daily_post_close_scheduler(*, now_ny: datetime):
         run_trade_analysis=run_trade_analysis,
         run_signal_analysis=run_signal_analysis,
         run_snapshot_export=run_daily_snapshot,
+        run_mode_ranking_refresh=lambda: refresh_alpaca_mode_rankings(ranking_date=now_ny.date().isoformat()),
     )
 
 
