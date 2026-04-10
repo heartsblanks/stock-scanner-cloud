@@ -79,6 +79,10 @@ export function useDashboardData(activeView = "overview") {
   const [summary, setSummary] = useState(null);
   const [openTrades, setOpenTrades] = useState([]);
   const [lifecycle, setLifecycle] = useState([]);
+  const [alpacaOpenTrades, setAlpacaOpenTrades] = useState([]);
+  const [ibkrOpenTrades, setIbkrOpenTrades] = useState([]);
+  const [alpacaLifecycle, setAlpacaLifecycle] = useState([]);
+  const [ibkrLifecycle, setIbkrLifecycle] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [sectionLoading, setSectionLoading] = useState(() => getInitialSectionLoading(activeView));
@@ -114,15 +118,32 @@ export function useDashboardData(activeView = "overview") {
   const loadOverviewSection = useCallback(async (activeFilters = filtersRef.current) => {
     try {
       setSectionLoading((prev) => ({ ...prev, overview: true, sizing: true }));
-      const [summaryRes, openRes, lifecycleRes, latestScanRes] = await Promise.all([
+      const [
+        summaryRes,
+        openRes,
+        lifecycleRes,
+        alpacaOpenRes,
+        ibkrOpenRes,
+        alpacaLifecycleRes,
+        ibkrLifecycleRes,
+        latestScanRes,
+      ] = await Promise.all([
         fetchDashboardSummary(activeFilters?.date || undefined),
         fetchOpenTrades(100),
         fetchTradeLifecycle(200),
+        fetchOpenTrades(100, "ALPACA"),
+        fetchOpenTrades(100, "IBKR"),
+        fetchTradeLifecycle(200, undefined, "ALPACA"),
+        fetchTradeLifecycle(200, undefined, "IBKR"),
         fetchLatestScanSummary(),
       ]);
 
       const openRows = openRes?.rows || [];
       const lifecycleRows = lifecycleRes?.rows || [];
+      const alpacaOpenRows = alpacaOpenRes?.rows || [];
+      const ibkrOpenRows = ibkrOpenRes?.rows || [];
+      const alpacaLifecycleRows = alpacaLifecycleRes?.rows || [];
+      const ibkrLifecycleRows = ibkrLifecycleRes?.rows || [];
 
       if (activeFilters?.symbol) {
         const normalized = String(activeFilters.symbol).trim().toUpperCase();
@@ -130,9 +151,25 @@ export function useDashboardData(activeView = "overview") {
         setLifecycle(
           lifecycleRows.filter((row) => String(row?.symbol || "").trim().toUpperCase() === normalized)
         );
+        setAlpacaOpenTrades(
+          alpacaOpenRows.filter((row) => String(row?.symbol || "").trim().toUpperCase() === normalized)
+        );
+        setIbkrOpenTrades(
+          ibkrOpenRows.filter((row) => String(row?.symbol || "").trim().toUpperCase() === normalized)
+        );
+        setAlpacaLifecycle(
+          alpacaLifecycleRows.filter((row) => String(row?.symbol || "").trim().toUpperCase() === normalized)
+        );
+        setIbkrLifecycle(
+          ibkrLifecycleRows.filter((row) => String(row?.symbol || "").trim().toUpperCase() === normalized)
+        );
       } else {
         setOpenTrades(openRows);
         setLifecycle(lifecycleRows);
+        setAlpacaOpenTrades(alpacaOpenRows);
+        setIbkrOpenTrades(ibkrOpenRows);
+        setAlpacaLifecycle(alpacaLifecycleRows);
+        setIbkrLifecycle(ibkrLifecycleRows);
       }
 
       setSummary(summaryRes || null);
@@ -670,6 +707,10 @@ export function useDashboardData(activeView = "overview") {
     summary,
     openTrades,
     lifecycle,
+    alpacaOpenTrades,
+    ibkrOpenTrades,
+    alpacaLifecycle,
+    ibkrLifecycle,
     loading,
     error,
     sectionLoading,

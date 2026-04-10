@@ -6,6 +6,7 @@ export default function HealthOverviewSection({
   sectionErrors,
   openTrades,
   alpacaOpenCount,
+  ibkrOpenCount,
   mismatch,
   mismatchLabel,
   backendHealthStatus,
@@ -73,6 +74,7 @@ export default function HealthOverviewSection({
           <div className="dashboard-metrics-grid">
           <InsightCard title="Open Trades (DB)" value={openTrades.length} />
           <InsightCard title="Open Positions (Alpaca)" value={alpacaOpenCount ?? "-"} />
+          <InsightCard title="Open Positions (IBKR)" value={ibkrOpenCount ?? "-"} />
           <InsightCard
             title="Mismatch"
             value={mismatch !== null ? `${mismatch} (${mismatchLabel})` : "-"}
@@ -130,7 +132,7 @@ export default function HealthOverviewSection({
         {mismatch !== null && (
             <div className="dashboard-inline-meta">
               <span className="dashboard-pill">
-              DB Open Trades: {openTrades.length} | Alpaca Open Positions: {alpacaOpenCount ?? "-"}
+              DB Open Trades: {openTrades.length} | Alpaca Open Positions: {alpacaOpenCount ?? "-"} | IBKR Open Positions: {ibkrOpenCount ?? "-"}
               </span>
             </div>
         )}

@@ -20,33 +20,51 @@ export async function fetchDashboardSummary(date) {
   };
 }
 
-export async function fetchOpenTrades(limit = 100) {
+export async function fetchOpenTrades(limit = 100, broker) {
+  const params = { limit };
+  if (broker) {
+    params.broker = broker;
+  }
+
   const response = await apiClient.get("/open-trades", {
-    params: { limit },
+    params,
   });
   return response.data;
 }
 
-export async function fetchClosedTrades(limit = 100) {
+export async function fetchClosedTrades(limit = 100, broker) {
+  const params = { limit };
+  if (broker) {
+    params.broker = broker;
+  }
+
   const response = await apiClient.get("/closed-trades", {
-    params: { limit },
+    params,
   });
   return response.data;
 }
 
-export async function fetchTradeLifecycle(limit = 100, status) {
+export async function fetchTradeLifecycle(limit = 100, status, broker) {
   const params = { limit };
   if (status) {
     params.status = status;
+  }
+  if (broker) {
+    params.broker = broker;
   }
 
   const response = await apiClient.get("/trade-lifecycle", { params });
   return response.data;
 }
 
-export async function fetchTradeLifecycleSummary(limit = 1000) {
+export async function fetchTradeLifecycleSummary(limit = 1000, broker) {
+  const params = { limit };
+  if (broker) {
+    params.broker = broker;
+  }
+
   const response = await apiClient.get("/trade-lifecycle-summary", {
-    params: { limit },
+    params,
   });
   return response.data;
 }

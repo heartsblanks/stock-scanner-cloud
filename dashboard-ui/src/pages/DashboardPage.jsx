@@ -66,6 +66,7 @@ function getInitialView() {
 export default function DashboardPage() {
   const [activeView, setActiveView] = useState(getInitialView);
   const [drilldown, setDrilldown] = useState({ symbol: "", mode: "", hourUtc: "" });
+  const [tradeBrokerView, setTradeBrokerView] = useState("all");
   const [theme, setTheme] = useState(() => {
     if (typeof window === "undefined") {
       return "light";
@@ -83,6 +84,10 @@ export default function DashboardPage() {
     summary,
     openTrades,
     lifecycle,
+    alpacaOpenTrades,
+    ibkrOpenTrades,
+    alpacaLifecycle,
+    ibkrLifecycle,
     loading,
     error,
     sectionLoading,
@@ -173,6 +178,34 @@ export default function DashboardPage() {
     return symbolMatch && modeMatch && hourMatch;
   });
 
+  const filteredAlpacaOpenTrades = alpacaOpenTrades.filter((row) => {
+    const symbolMatch = !drilldown.symbol || String(row?.symbol || "").trim().toUpperCase() === drilldown.symbol;
+    const modeMatch = !drilldown.mode || String(row?.mode || "").trim() === drilldown.mode;
+    const hourMatch = !drilldown.hourUtc || getEntryHourUtc(row) === drilldown.hourUtc;
+    return symbolMatch && modeMatch && hourMatch;
+  });
+
+  const filteredIbkrOpenTrades = ibkrOpenTrades.filter((row) => {
+    const symbolMatch = !drilldown.symbol || String(row?.symbol || "").trim().toUpperCase() === drilldown.symbol;
+    const modeMatch = !drilldown.mode || String(row?.mode || "").trim() === drilldown.mode;
+    const hourMatch = !drilldown.hourUtc || getEntryHourUtc(row) === drilldown.hourUtc;
+    return symbolMatch && modeMatch && hourMatch;
+  });
+
+  const filteredAlpacaLifecycle = alpacaLifecycle.filter((row) => {
+    const symbolMatch = !drilldown.symbol || String(row?.symbol || "").trim().toUpperCase() === drilldown.symbol;
+    const modeMatch = !drilldown.mode || String(row?.mode || "").trim() === drilldown.mode;
+    const hourMatch = !drilldown.hourUtc || getEntryHourUtc(row) === drilldown.hourUtc;
+    return symbolMatch && modeMatch && hourMatch;
+  });
+
+  const filteredIbkrLifecycle = ibkrLifecycle.filter((row) => {
+    const symbolMatch = !drilldown.symbol || String(row?.symbol || "").trim().toUpperCase() === drilldown.symbol;
+    const modeMatch = !drilldown.mode || String(row?.mode || "").trim() === drilldown.mode;
+    const hourMatch = !drilldown.hourUtc || getEntryHourUtc(row) === drilldown.hourUtc;
+    return symbolMatch && modeMatch && hourMatch;
+  });
+
   function applyDrilldown(nextDrilldown) {
     setDrilldown((current) => ({
       symbol: nextDrilldown.symbol ?? current.symbol,
@@ -257,9 +290,9 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 <div className="dashboard-hero-stat">
-                  <div className="dashboard-hero-stat-label">Open vs Alpaca</div>
+                  <div className="dashboard-hero-stat-label">Open / Alpaca / IBKR</div>
                   <div className="dashboard-hero-stat-value">
-                    {openTrades.length} / {alpacaOpenCount ?? "-"}
+                    {openTrades.length} / {alpacaOpenCount ?? "-"} / {ibkrOpenTrades.length}
                   </div>
                 </div>
                 <div className="dashboard-hero-stat">
@@ -381,6 +414,7 @@ export default function DashboardPage() {
                 sectionErrors={sectionErrors}
                 openTrades={openTrades}
                 alpacaOpenCount={alpacaOpenCount}
+                ibkrOpenCount={ibkrOpenTrades.length}
                 mismatch={mismatch}
                 mismatchLabel={mismatchLabel}
                 backendHealthStatus={backendHealthStatus}
@@ -457,6 +491,27 @@ export default function DashboardPage() {
                       </div>
                       <div className="dashboard-toolbar">
                         <button
+                          type="button"
+                          onClick={() => setTradeBrokerView("all")}
+                          className={`dashboard-button ${tradeBrokerView === "all" ? "dashboard-button-primary" : "dashboard-button-neutral"}`}
+                        >
+                          All Brokers
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTradeBrokerView("alpaca")}
+                          className={`dashboard-button ${tradeBrokerView === "alpaca" ? "dashboard-button-primary" : "dashboard-button-neutral"}`}
+                        >
+                          Alpaca Only
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTradeBrokerView("ibkr")}
+                          className={`dashboard-button ${tradeBrokerView === "ibkr" ? "dashboard-button-primary" : "dashboard-button-neutral"}`}
+                        >
+                          IBKR Only
+                        </button>
+                        <button
                           onClick={syncPaperTrades}
                           disabled={isRefreshing || isRunningSync}
                           className="dashboard-button dashboard-button-secondary"
@@ -469,41 +524,125 @@ export default function DashboardPage() {
                 </div>
               </section>
 
-              <section className="dashboard-section">
-                <div className="dashboard-panel">
-                  <div className="dashboard-panel-body">
-                    <div className="dashboard-panel-heading">
-                      <div>
-                        <h2 className="dashboard-panel-title">Open Trades</h2>
-                        <p className="dashboard-panel-subtitle">
-                          Live database positions with sizing and protective levels in one place.
-                        </p>
+              {tradeBrokerView === "all" && (
+                <>
+                  <section className="dashboard-section">
+                    <div className="dashboard-panel">
+                      <div className="dashboard-panel-body">
+                        <div className="dashboard-panel-heading">
+                          <div>
+                            <h2 className="dashboard-panel-title">Open Trades</h2>
+                            <p className="dashboard-panel-subtitle">
+                              Live database positions across both broker tracks.
+                            </p>
+                          </div>
+                        </div>
+                        <LazySection>
+                          <OpenTradesTable trades={filteredOpenTrades} />
+                        </LazySection>
                       </div>
                     </div>
-                    <LazySection>
-                      <OpenTradesTable trades={filteredOpenTrades} />
-                    </LazySection>
-                  </div>
-                </div>
-              </section>
+                  </section>
 
-              <section className="dashboard-section">
-                <div className="dashboard-panel">
-                  <div className="dashboard-panel-body">
-                    <div className="dashboard-panel-heading">
-                      <div>
-                        <h2 className="dashboard-panel-title">Trade Lifecycle</h2>
-                        <p className="dashboard-panel-subtitle">
-                          The canonical trade record for entries, exits, duration, and realized outcome.
-                        </p>
+                  <section className="dashboard-section">
+                    <div className="dashboard-panel">
+                      <div className="dashboard-panel-body">
+                        <div className="dashboard-panel-heading">
+                          <div>
+                            <h2 className="dashboard-panel-title">Trade Lifecycle</h2>
+                            <p className="dashboard-panel-subtitle">
+                              Canonical entry and exit records across Alpaca and IBKR.
+                            </p>
+                          </div>
+                        </div>
+                        <LazySection>
+                          <TradeLifecycleTable rows={filteredLifecycle} />
+                        </LazySection>
                       </div>
                     </div>
-                    <LazySection>
-                      <TradeLifecycleTable rows={filteredLifecycle} />
-                    </LazySection>
-                  </div>
-                </div>
-              </section>
+                  </section>
+                </>
+              )}
+
+              {tradeBrokerView === "alpaca" && (
+                <>
+                  <section className="dashboard-section">
+                    <div className="dashboard-panel">
+                      <div className="dashboard-panel-body">
+                        <div className="dashboard-panel-heading">
+                          <div>
+                            <h2 className="dashboard-panel-title">Alpaca Open Trades</h2>
+                            <p className="dashboard-panel-subtitle">
+                              Twelve Data driven positions currently open in Alpaca paper.
+                            </p>
+                          </div>
+                        </div>
+                        <LazySection>
+                          <OpenTradesTable trades={filteredAlpacaOpenTrades} />
+                        </LazySection>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="dashboard-section">
+                    <div className="dashboard-panel">
+                      <div className="dashboard-panel-body">
+                        <div className="dashboard-panel-heading">
+                          <div>
+                            <h2 className="dashboard-panel-title">Alpaca Lifecycle</h2>
+                            <p className="dashboard-panel-subtitle">
+                              Canonical Alpaca trade history for entries, exits, and realized outcome.
+                            </p>
+                          </div>
+                        </div>
+                        <LazySection>
+                          <TradeLifecycleTable rows={filteredAlpacaLifecycle} />
+                        </LazySection>
+                      </div>
+                    </div>
+                  </section>
+                </>
+              )}
+
+              {tradeBrokerView === "ibkr" && (
+                <>
+                  <section className="dashboard-section">
+                    <div className="dashboard-panel">
+                      <div className="dashboard-panel-body">
+                        <div className="dashboard-panel-heading">
+                          <div>
+                            <h2 className="dashboard-panel-title">IBKR Open Trades</h2>
+                            <p className="dashboard-panel-subtitle">
+                              IBKR market-data driven shadow positions currently open.
+                            </p>
+                          </div>
+                        </div>
+                        <LazySection>
+                          <OpenTradesTable trades={filteredIbkrOpenTrades} />
+                        </LazySection>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="dashboard-section">
+                    <div className="dashboard-panel">
+                      <div className="dashboard-panel-body">
+                        <div className="dashboard-panel-heading">
+                          <div>
+                            <h2 className="dashboard-panel-title">IBKR Lifecycle</h2>
+                            <p className="dashboard-panel-subtitle">
+                              Canonical IBKR trade history for entries, exits, and realized outcome.
+                            </p>
+                          </div>
+                        </div>
+                        <LazySection>
+                          <TradeLifecycleTable rows={filteredIbkrLifecycle} />
+                        </LazySection>
+                      </div>
+                    </div>
+                  </section>
+                </>
+              )}
             </>
           )}
 
