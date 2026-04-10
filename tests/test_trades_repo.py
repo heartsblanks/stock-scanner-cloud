@@ -98,6 +98,17 @@ class DashboardSummaryDateScopeTests(unittest.TestCase):
 
 
 class ModeRankingTests(unittest.TestCase):
+    @patch("repositories.trades_repo.fetch_all")
+    def test_get_rolling_mode_performance_treats_blank_broker_as_alpaca(self, mock_fetch_all):
+        from repositories.trades_repo import get_rolling_mode_performance
+
+        mock_fetch_all.return_value = []
+
+        get_rolling_mode_performance(broker="ALPACA", window_days=5, as_of_date="2026-04-10", min_closed_trade_count=2)
+
+        query = mock_fetch_all.call_args.args[0]
+        self.assertIn("COALESCE(NULLIF(broker, ''), 'ALPACA')", query)
+
     @patch("repositories.trades_repo.execute")
     @patch("repositories.trades_repo.get_rolling_mode_performance")
     def test_refresh_mode_rankings_appends_missing_expected_modes(self, mock_rolling, mock_execute):

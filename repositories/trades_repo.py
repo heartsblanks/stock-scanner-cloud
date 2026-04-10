@@ -7,6 +7,12 @@ from core.db import execute, fetch_all, fetch_one
 from repositories.common import normalize_text, to_optional_float
 
 
+def _broker_filter_sql(normalized_broker: str) -> str:
+    if normalized_broker == "ALPACA":
+        return "UPPER(COALESCE(NULLIF(broker, ''), 'ALPACA')) = %(broker)s"
+    return "UPPER(COALESCE(broker, '')) = %(broker)s"
+
+
 def insert_trade_event(
     event_time: datetime,
     event_type: str,
@@ -674,6 +680,7 @@ def get_rolling_mode_performance(
     normalized_broker = normalize_text(broker).upper()
     if not normalized_broker:
         raise ValueError("broker is required")
+    broker_filter_sql = _broker_filter_sql(normalized_broker)
 
     params: dict[str, Any] = {
         "broker": normalized_broker,
@@ -692,7 +699,7 @@ def get_rolling_mode_performance(
             FROM trade_lifecycles
             WHERE UPPER(COALESCE(status, '')) = 'CLOSED'
               AND COALESCE(mode, '') <> ''
-              AND UPPER(COALESCE(broker, '')) = %(broker)s
+              AND {broker_filter_sql}
               AND exit_time IS NOT NULL
               {as_of_filter}
             ORDER BY trading_day DESC
@@ -720,7 +727,7 @@ def get_rolling_mode_performance(
         FROM trade_lifecycles
         WHERE UPPER(COALESCE(status, '')) = 'CLOSED'
           AND COALESCE(mode, '') <> ''
-          AND UPPER(COALESCE(broker, '')) = %(broker)s
+          AND {broker_filter_sql}
           AND exit_time IS NOT NULL
           AND exit_time::date IN (SELECT trading_day FROM trading_days)
         GROUP BY COALESCE(mode, '')
