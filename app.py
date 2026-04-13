@@ -45,7 +45,6 @@ from routes.trades import register_trade_routes
 from routes.scans import register_scan_routes
 from routes.dashboard import register_dashboard_routes
 from orchestration.scan_context import (
-    ALPACA_SCHEDULED_MODE_ORDER,
     IBKR_SCHEDULED_MODE_ORDER,
     NY_TZ,
     build_scan_id,
@@ -98,10 +97,6 @@ from orchestration.persistence_context import (
     append_trade_log,
     find_best_signal_match,
     find_latest_open_trade,
-    get_current_open_position_state,
-    get_latest_open_paper_trade_for_symbol,
-    get_latest_paper_close_event_for_symbol,
-    get_managed_open_paper_trades_for_eod_close,
     get_managed_open_paper_trades_for_eod_close_for_broker,
     get_open_paper_trades,
     get_risk_exposure_summary,
@@ -117,12 +112,9 @@ from orchestration.persistence_context import (
     safe_insert_trade_event,
 )
 from orchestration.runtime_context import (
-    ALPACA_MODE_RANKING_MIN_CLOSED_TRADES,
-    ALPACA_MODE_RANKING_WINDOW_DAYS,
     ALPACA_PAPER_BROKER,
     IBKR_PAPER_BROKER,
     IBKR_PAPER_TRADE_MIN_CONFIDENCE,
-    PAPER_BROKER,
     PAPER_BROKER_CONFIG,
     PAPER_TRADE_MIN_CONFIDENCE,
     _account_equity_from_broker_account,
@@ -133,21 +125,16 @@ from orchestration.runtime_context import (
     get_latest_open_paper_trade_for_symbol_for_broker,
     get_open_positions,
     get_open_positions_for_broker_name,
-    get_order_by_id,
     get_risk_exposure_summary_for_broker,
     get_ibkr_shadow_risk_exposure_summary,
     place_alpaca_paper_orders_from_trade,
     place_ibkr_paper_orders_from_trade,
-    place_paper_bracket_order_from_trade,
-    place_paper_orders_from_trade,
     refresh_alpaca_mode_rankings,
     resolve_alpaca_account_size,
     resolve_alpaca_scheduled_mode_order,
-    resolve_ibkr_account_size,
     resolve_ibkr_shadow_account_size,
     sync_order_by_id,
     sync_order_by_id_for_broker,
-    cancel_open_orders_for_symbol,
 )
 
 from routes.sync import register_sync_routes

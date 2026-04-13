@@ -283,7 +283,7 @@ Target direction:
 - continue moving export, analytics, and integration modules into more explicit domain folders over time
 
 ### Backend root
-- `app.py` — application wiring and top-level service/route integration
+- `app.py` — Flask composition root that wires route modules, orchestration modules, and runtime helpers together
 - `storage.py` — thin compatibility facade over repository modules
 - `schema.sql` — database schema definition
 - root-level files should stay limited to active runtime entrypoints and cross-cutting foundations
@@ -299,7 +299,11 @@ Target direction:
   - `scan_context.py`
   - `paper_trade_context.py`
   - `app_orchestration.py`
+  - `app_runtime.py`
+  - `persistence_context.py`
+  - `runtime_context.py`
   - `scheduler_ops.py`
+  - `scheduler_runtime.py`
 
 ### Domain/service modules
 - `services/scan_service.py`
@@ -399,9 +403,9 @@ Responsibilities:
 - delegate implementation to service and storage layers
 
 Current code reality:
-- `app.py` is materially slimmer than the original monolith and now focuses on wiring, handler composition, and route registration
-- significant helper/orchestration logic has been extracted into `scan_context.py`, `paper_trade_context.py`, and `app_orchestration.py`
-- route modules are in active use, though some integration responsibility still lives in `app.py`
+- `app.py` is materially slimmer than the original monolith and now mostly handles wiring, configuration, and route registration
+- significant helper/orchestration logic has been extracted into `scan_context.py`, `paper_trade_context.py`, `app_orchestration.py`, `app_runtime.py`, `persistence_context.py`, `runtime_context.py`, and `scheduler_runtime.py`
+- route modules are in active use, and the remaining logic inside `app.py` is now primarily composition-root code rather than feature implementation
 
 Examples of endpoint groups:
 - scan endpoints
@@ -1186,7 +1190,7 @@ Reconciliation compares local trade data and broker-side order/exit data.
 3. monitor and refine the new operational-table retention policy, and decide whether snapshot/history retention needs a separate archival policy beyond GitHub snapshots
 4. improve dashboard operational visibility further, especially placement/skip reasons by hour and scheduler/job health indicators
 5. document runtime environment variables, scheduler jobs, deployment steps, and the alert/test-alert flow more clearly
-6. continue reducing remaining integration/orchestration complexity inside `app.py`
+6. keep `app.py` lightweight as a composition root and avoid letting feature logic drift back into it
 7. finalize teardown of any remaining legacy migration leftovers once the current stack has been stable long enough
 
 ---
