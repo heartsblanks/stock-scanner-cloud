@@ -108,6 +108,68 @@ gcloud run deploy stock-scanner \
 
 ---
 
+## 🔐 Runtime Environment
+
+Core backend variables:
+
+- `DATABASE_URL` or the socket-based `DB_*` variables
+- `APCA_API_KEY_ID`
+- `APCA_API_SECRET_KEY`
+- `APCA_BASE_URL` for Alpaca paper/live selection
+- `TWELVEDATA_API_KEY`
+- `ADMIN_API_TOKEN` for protected operational endpoints such as `/admin/test-alert`
+
+Paper-trading and scan controls:
+
+- `PAPER_TRADE_MIN_CONFIDENCE`
+- `IBKR_PAPER_TRADE_MIN_CONFIDENCE`
+- `ALPACA_MAX_NOTIONAL`
+- `MIN_NOTIONAL_TO_PLACE`
+- `SCHEDULED_PAPER_ACCOUNT_SIZE`
+- `PAPER_STOP_COOLDOWN_MINUTES`
+- `PAPER_TARGET_COOLDOWN_MINUTES`
+- `PAPER_MANUAL_CLOSE_COOLDOWN_MINUTES`
+- `PAPER_SYMBOL_GATING_ENABLED`
+- `PAPER_SYMBOL_GATING_LOOKBACK`
+- `PAPER_SYMBOL_GATING_MIN_TRADES`
+- `PAPER_SYMBOL_GATING_MAX_AVG_PNL_PCT`
+- `PAPER_CONSECUTIVE_LOSS_COOLDOWN_THRESHOLD`
+- `PAPER_CONSECUTIVE_LOSS_COOLDOWN_MINUTES`
+- `LOW_PRICE_NOTIONAL_CAP_ENABLED`
+- `LOW_PRICE_THRESHOLD`
+- `LOW_PRICE_MAX_NOTIONAL`
+- `ENABLE_LATE_SESSION_HARD_BLOCK`
+
+IBKR / VM orchestration variables:
+
+- `IBKR_BRIDGE_BASE_URL`
+- `IBKR_BRIDGE_TOKEN`
+- `IBKR_READINESS_SYMBOL`
+- `IBKR_BRIDGE_HEALTH_TIMEOUT_SECONDS`
+- `IBKR_BRIDGE_ACCOUNT_TIMEOUT_SECONDS`
+- `IBKR_BRIDGE_POSITIONS_TIMEOUT_SECONDS`
+- `IBKR_BRIDGE_STATUS_MARKET_DATA_TIMEOUT_SECONDS`
+- `IBKR_BRIDGE_MARKET_DATA_TIMEOUT_SECONDS`
+- `IBKR_SHADOW_ACCOUNT_SIZE_FALLBACK`
+- `IBKR_VM_PROJECT`
+- `IBKR_VM_ZONE`
+- `IBKR_VM_INSTANCE_NAME`
+
+Reporting / export variables:
+
+- `LOG_BUCKET`
+- `RECONCILIATION_BUCKET`
+- `RECONCILIATION_OBJECT`
+- `TRADE_ANALYSIS_BUCKET`
+- `TRADE_ANALYSIS_SUMMARY_OBJECT`
+- `TRADE_ANALYSIS_PAIRED_OBJECT`
+- `SIGNAL_ANALYSIS_BUCKET`
+- `SIGNAL_ANALYSIS_SUMMARY_OBJECT`
+- `SIGNAL_ANALYSIS_ROWS_OBJECT`
+- `LOG_LEVEL`
+
+---
+
 ## ⏱️ Scheduler Jobs
 
 Cloud Scheduler triggers:
@@ -154,6 +216,13 @@ Important note:
 
 - You need to create a Telegram bot once through `@BotFather`.
 - You need to send at least one message to that bot from the destination chat before alerts can be delivered there.
+
+Operational flow:
+
+- Cloud Scheduler calls `POST /scheduler/ibkr-login-alert`
+- Cloud Run checks `/ibkr-status`
+- If the bridge reports `LOGIN_REQUIRED`, the backend sends a deduplicated Telegram alert
+- The dashboard can also trigger a manual alert test through the Vercel proxy route `dashboard-ui/api/admin-test-alert.js`
 
 ## 📊 Dashboard
 
