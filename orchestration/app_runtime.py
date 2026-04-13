@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from typing import Any, Callable
 
 from core.logging_utils import log_info
@@ -194,22 +195,104 @@ def handle_scan_request(
     ibkr_bridge_enabled: bool,
     run_ibkr_shadow_scans: Callable[[dict[str, Any]], dict[str, Any]],
 ):
-    alpaca_response = run_alpaca_scan(payload)
+    def run_broker_scan(
+        broker_name: str,
+        broker_scan_fn: Callable[[dict[str, Any]], Any],
+    ) -> tuple[Any, dict[str, Any]]:
+        started_at = datetime.now(UTC)
+        response = broker_scan_fn(dict(payload))
+        finished_at = datetime.now(UTC)
+        timing = {
+            "started_at_utc": started_at.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            "finished_at_utc": finished_at.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            "duration_ms": int((finished_at - started_at).total_seconds() * 1000),
+        }
+        log_info(
+            "Broker scan completed",
+            component="app_runtime",
+            operation="handle_scan_request",
+            broker=broker_name,
+            ok=bool(response.get("ok", False)) if isinstance(response, dict) else False,
+            duration_ms=timing["duration_ms"],
+            started_at_utc=timing["started_at_utc"],
+            finished_at_utc=timing["finished_at_utc"],
+            scan_id=response.get("scan_id") if isinstance(response, dict) else None,
+        )
+        return response, timing
 
-    if not (isinstance(payload, dict) and payload.get("paper_trade") and shadow_mode_enabled and ibkr_bridge_enabled):
+    should_run_parallel_ibkr = bool(
+        isinstance(payload, dict)
+        and payload.get("paper_trade")
+        and shadow_mode_enabled
+        and ibkr_bridge_enabled
+    )
+
+    if should_run_parallel_ibkr:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            alpaca_future = executor.submit(run_broker_scan, "ALPACA", run_alpaca_scan)
+            ibkr_future = executor.submit(run_broker_scan, "IBKR", run_ibkr_shadow_scans)
+            alpaca_response, alpaca_timing = alpaca_future.result()
+            ibkr_response, ibkr_timing = ibkr_future.result()
+    else:
+        alpaca_response, alpaca_timing = run_broker_scan("ALPACA", run_alpaca_scan)
+        ibkr_response = None
+        ibkr_timing = None
+
+    if not should_run_parallel_ibkr:
         return alpaca_response
-
-    ibkr_response = run_ibkr_shadow_scans(payload)
 
     if isinstance(alpaca_response, tuple) or isinstance(ibkr_response, tuple):
         return alpaca_response
 
     if isinstance(alpaca_response, dict):
+        cross_broker_start_delta_ms = (
+            abs(
+                int(
+                    (
+                        datetime.fromisoformat(alpaca_timing["started_at_utc"].replace("Z", ""))
+                        - datetime.fromisoformat(ibkr_timing["started_at_utc"].replace("Z", ""))
+                    ).total_seconds()
+                    * 1000
+                )
+            )
+            if alpaca_timing and ibkr_timing
+            else None
+        )
+        cross_broker_finish_delta_ms = (
+            abs(
+                int(
+                    (
+                        datetime.fromisoformat(alpaca_timing["finished_at_utc"].replace("Z", ""))
+                        - datetime.fromisoformat(ibkr_timing["finished_at_utc"].replace("Z", ""))
+                    ).total_seconds()
+                    * 1000
+                )
+            )
+            if alpaca_timing and ibkr_timing
+            else None
+        )
         alpaca_response["parallel_runs"] = {
-            "alpaca": {"ok": bool(alpaca_response.get("ok", False))},
-            "ibkr": {"ok": bool(ibkr_response.get("ok", False)) if isinstance(ibkr_response, dict) else False},
+            "alpaca": {
+                "ok": bool(alpaca_response.get("ok", False)),
+                **alpaca_timing,
+            },
+            "ibkr": {
+                "ok": bool(ibkr_response.get("ok", False)) if isinstance(ibkr_response, dict) else False,
+                **(ibkr_timing or {}),
+            },
+            "cross_broker_start_delta_ms": cross_broker_start_delta_ms,
+            "cross_broker_finish_delta_ms": cross_broker_finish_delta_ms,
         }
         alpaca_response["shadow_ibkr"] = ibkr_response
+        log_info(
+            "Parallel broker scan timing recorded",
+            component="app_runtime",
+            operation="handle_scan_request",
+            cross_broker_start_delta_ms=cross_broker_start_delta_ms,
+            cross_broker_finish_delta_ms=cross_broker_finish_delta_ms,
+            alpaca_duration_ms=alpaca_timing["duration_ms"] if alpaca_timing else None,
+            ibkr_duration_ms=ibkr_timing["duration_ms"] if ibkr_timing else None,
+        )
     return alpaca_response
 
 
