@@ -57,6 +57,7 @@ from repositories.trades_repo import (
     get_recent_trade_events,
     get_rolling_mode_performance,
     get_symbol_performance,
+    get_stale_ibkr_closed_trade_lifecycles,
     get_trade_event_by_order_id,
     get_trade_event_counts_by_type,
     get_trade_event_rows_for_date,

@@ -99,6 +99,7 @@ def execute_post_close_ops(
     *,
     now_ny: datetime,
     run_sync: Callable[[], Any],
+    run_ibkr_stale_close_repair: Callable[[], Any] | None,
     run_reconcile: Callable[[], Any],
     run_trade_analysis: Callable[[], Any],
     run_signal_analysis: Callable[[], Any],
@@ -107,11 +108,13 @@ def execute_post_close_ops(
 ) -> dict[str, Any]:
     results = {
         "sync": _normalize_handler_result(run_sync()),
-        "reconcile": _normalize_handler_result(run_reconcile()),
-        "analyze_paper_trades": _normalize_handler_result(run_trade_analysis()),
-        "analyze_signals": _normalize_handler_result(run_signal_analysis()),
-        "export_daily_snapshot": _normalize_handler_result(run_snapshot_export()),
     }
+    if run_ibkr_stale_close_repair is not None:
+        results["repair_ibkr_stale_closes"] = _normalize_handler_result(run_ibkr_stale_close_repair())
+    results["reconcile"] = _normalize_handler_result(run_reconcile())
+    results["analyze_paper_trades"] = _normalize_handler_result(run_trade_analysis())
+    results["analyze_signals"] = _normalize_handler_result(run_signal_analysis())
+    results["export_daily_snapshot"] = _normalize_handler_result(run_snapshot_export())
     if run_mode_ranking_refresh is not None:
         results["refresh_mode_rankings"] = _normalize_handler_result(run_mode_ranking_refresh())
     return {

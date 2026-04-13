@@ -313,6 +313,27 @@ def get_trade_lifecycles(limit: int = 100, status: Optional[str] = None, broker:
     )
 
 
+def get_stale_ibkr_closed_trade_lifecycles(*, target_date: Optional[str] = None, limit: int = 100) -> list[dict]:
+    params: dict[str, Any] = {"limit": limit}
+    date_clause = ""
+    if target_date:
+        date_clause = "AND exit_time::date = %(target_date)s::date"
+        params["target_date"] = target_date
+    return fetch_all(
+        f"""
+        SELECT *
+        FROM trade_lifecycles
+        WHERE UPPER(COALESCE(broker, '')) = 'IBKR'
+          AND UPPER(COALESCE(status, '')) = 'CLOSED'
+          AND COALESCE(exit_reason, '') = 'STALE_OPEN_RECONCILED'
+          {date_clause}
+        ORDER BY COALESCE(exit_time, updated_at, created_at) DESC, id DESC
+        LIMIT %(limit)s
+        """,
+        params,
+    )
+
+
 def get_recent_closed_trade_lifecycle_for_symbol(symbol: str) -> Optional[dict]:
     normalized_symbol = normalize_text(symbol).upper()
     if not normalized_symbol:

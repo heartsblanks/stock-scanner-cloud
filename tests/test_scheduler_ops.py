@@ -53,6 +53,7 @@ class SchedulerOpsTests(unittest.TestCase):
         result = execute_post_close_ops(
             now_ny=now_ny,
             run_sync=lambda: {"ok": True, "task": "sync"},
+            run_ibkr_stale_close_repair=lambda: {"ok": True, "task": "repair"},
             run_reconcile=lambda: {"ok": True, "task": "reconcile"},
             run_trade_analysis=lambda: {"ok": True, "task": "trade_analysis"},
             run_signal_analysis=lambda: {"ok": True, "task": "signal_analysis"},
@@ -61,8 +62,9 @@ class SchedulerOpsTests(unittest.TestCase):
         )
 
         self.assertTrue(result["ok"])
-        self.assertEqual(result["action_count"], 6)
+        self.assertEqual(result["action_count"], 7)
         self.assertIn("sync", result["results"])
+        self.assertIn("repair_ibkr_stale_closes", result["results"])
         self.assertIn("reconcile", result["results"])
         self.assertIn("analyze_paper_trades", result["results"])
         self.assertIn("analyze_signals", result["results"])
@@ -74,6 +76,7 @@ class SchedulerOpsTests(unittest.TestCase):
         result = execute_post_close_ops(
             now_ny=now_ny,
             run_sync=lambda: {"ok": True, "task": "sync"},
+            run_ibkr_stale_close_repair=lambda: {"ok": True, "task": "repair"},
             run_reconcile=lambda: {"ok": True, "task": "reconcile"},
             run_trade_analysis=lambda: ([{"group_name": "mode"}], [{"symbol": "SNAP"}], []),
             run_signal_analysis=lambda: ([{"group_name": "skip_reason"}], [{"timestamp_utc": "2026-04-02T20:30:00Z"}]),
@@ -85,6 +88,22 @@ class SchedulerOpsTests(unittest.TestCase):
         self.assertEqual(result["results"]["analyze_paper_trades"]["status_code"], 200)
         self.assertEqual(result["results"]["analyze_signals"]["status_code"], 200)
         self.assertEqual(result["results"]["refresh_mode_rankings"]["status_code"], 200)
+
+    def test_post_close_ops_can_skip_ibkr_repair_hook(self):
+        now_ny = datetime(2026, 4, 2, 16, 30, tzinfo=NY_TZ)
+        result = execute_post_close_ops(
+            now_ny=now_ny,
+            run_sync=lambda: {"ok": True, "task": "sync"},
+            run_ibkr_stale_close_repair=None,
+            run_reconcile=lambda: {"ok": True, "task": "reconcile"},
+            run_trade_analysis=lambda: {"ok": True, "task": "trade_analysis"},
+            run_signal_analysis=lambda: {"ok": True, "task": "signal_analysis"},
+            run_snapshot_export=lambda: {"ok": True, "task": "snapshot"},
+            run_mode_ranking_refresh=None,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertNotIn("repair_ibkr_stale_closes", result["results"])
 
     def test_ibkr_vm_start_skips_on_holiday(self):
         now_ny = datetime(2026, 7, 4, 9, 15, tzinfo=NY_TZ)

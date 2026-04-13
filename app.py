@@ -40,6 +40,7 @@ from storage import (
     get_paper_trade_attempt_hourly_summary,
     get_trade_lifecycles,
     get_trade_lifecycle_summary_from_table,
+    get_stale_ibkr_closed_trade_lifecycles,
     upsert_trade_lifecycle,
     get_dashboard_summary,
     get_latest_mode_ranking_order,
@@ -100,6 +101,7 @@ from orchestration.scheduler_ops import (
 
 from routes.sync import register_sync_routes
 from services.sync_service import execute_sync_paper_trades
+from services.ibkr_repair_service import repair_ibkr_stale_closes
 from services.scan_service import execute_full_scan
 from services.trade_service import execute_close_all_paper_positions
 
@@ -948,6 +950,15 @@ def run_daily_post_close_scheduler(*, now_ny: datetime):
     return build_execute_post_close_ops(
         now_ny=now_ny,
         run_sync=handle_sync_paper_trades,
+        run_ibkr_stale_close_repair=lambda: repair_ibkr_stale_closes(
+            target_date=now_ny.date().isoformat(),
+            get_stale_ibkr_closed_trade_lifecycles=get_stale_ibkr_closed_trade_lifecycles,
+            sync_order_by_id_for_broker=sync_order_by_id_for_broker,
+            upsert_trade_lifecycle=upsert_trade_lifecycle,
+            safe_insert_broker_order=safe_insert_broker_order,
+            parse_iso_utc=parse_iso_utc,
+            to_float_or_none=to_float_or_none,
+        ),
         run_reconcile=lambda: build_reconcile_now_response(
             run_reconciliation=run_reconciliation,
             upload_file_to_gcs=upload_file_to_gcs,
