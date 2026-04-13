@@ -76,6 +76,15 @@ def _to_float(value: Any, default: float = 0.0) -> float:
 
 PAPER_CONSECUTIVE_LOSS_COOLDOWN_THRESHOLD = _to_int(os.getenv("PAPER_CONSECUTIVE_LOSS_COOLDOWN_THRESHOLD", 2), 2)
 PAPER_CONSECUTIVE_LOSS_COOLDOWN_MINUTES = _to_int(os.getenv("PAPER_CONSECUTIVE_LOSS_COOLDOWN_MINUTES", 60), 60)
+PAPER_SYMBOL_GATING_ENABLED = str(os.getenv("PAPER_SYMBOL_GATING_ENABLED", "true")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+PAPER_SYMBOL_GATING_LOOKBACK = _to_int(os.getenv("PAPER_SYMBOL_GATING_LOOKBACK", 5), 5)
+PAPER_SYMBOL_GATING_MIN_TRADES = _to_int(os.getenv("PAPER_SYMBOL_GATING_MIN_TRADES", 3), 3)
+PAPER_SYMBOL_GATING_MAX_AVG_PNL_PCT = _to_float(os.getenv("PAPER_SYMBOL_GATING_MAX_AVG_PNL_PCT", -0.5), -0.5)
 LOW_PRICE_NOTIONAL_CAP_ENABLED = str(os.getenv("LOW_PRICE_NOTIONAL_CAP_ENABLED", "true")).strip().lower() in {
     "1",
     "true",
@@ -122,6 +131,51 @@ def _paper_trade_order_status(paper_trade_result: dict[str, Any]) -> str:
         or paper_trade_result.get("alpaca_order_status")
         or ""
     ).strip()
+
+
+def evaluate_symbol_performance_gate(recent_trades: list[dict[str, Any]]) -> tuple[bool, str, dict[str, float | int]]:
+    normalized_trades = [trade for trade in (recent_trades or []) if isinstance(trade, dict)]
+    trade_count = len(normalized_trades)
+    diagnostics: dict[str, float | int] = {
+        "trade_count": trade_count,
+        "loss_count": 0,
+        "win_count": 0,
+        "avg_pnl_pct": 0.0,
+    }
+
+    if not PAPER_SYMBOL_GATING_ENABLED or trade_count < PAPER_SYMBOL_GATING_MIN_TRADES:
+        return False, "", diagnostics
+
+    pnl_pcts = []
+    loss_count = 0
+    win_count = 0
+    for trade in normalized_trades[:PAPER_SYMBOL_GATING_LOOKBACK]:
+        pnl_pct = _to_float(trade.get("realized_pnl_percent"), 0.0)
+        pnl_pcts.append(pnl_pct)
+        if pnl_pct < 0:
+            loss_count += 1
+        elif pnl_pct > 0:
+            win_count += 1
+
+    effective_trade_count = len(pnl_pcts)
+    avg_pnl_pct = (sum(pnl_pcts) / effective_trade_count) if effective_trade_count else 0.0
+    diagnostics.update({
+        "trade_count": effective_trade_count,
+        "loss_count": loss_count,
+        "win_count": win_count,
+        "avg_pnl_pct": round(avg_pnl_pct, 4),
+    })
+
+    should_block = (
+        effective_trade_count >= PAPER_SYMBOL_GATING_MIN_TRADES
+        and loss_count == effective_trade_count
+        and avg_pnl_pct <= PAPER_SYMBOL_GATING_MAX_AVG_PNL_PCT
+    )
+    if not should_block:
+        return False, "", diagnostics
+
+    reason = f"symbol_performance_blocked_{effective_trade_count}t_{avg_pnl_pct:.2f}pct"
+    return True, reason, diagnostics
 
 
 def _normalize_paper_trade_results(raw_result: Any) -> list[dict[str, Any]]:
@@ -698,9 +752,29 @@ def execute_full_scan(
 
                 try:
                     # Fetch recent closed trades for symbol (last 5)
-                    recent_trades = get_recent_closed_trades_for_symbol(candidate_symbol, limit=5)
+                    recent_trades = get_recent_closed_trades_for_symbol(candidate_symbol, limit=PAPER_SYMBOL_GATING_LOOKBACK)
                 except Exception:
                     recent_trades = []
+
+                should_block_symbol, symbol_block_reason, symbol_gate_details = evaluate_symbol_performance_gate(recent_trades)
+                if should_block_symbol:
+                    record_attempt(
+                        "PLACEMENT_SKIPPED",
+                        symbol=candidate_symbol,
+                        metrics=paper_trade_candidate["metrics"],
+                        final_reason=symbol_block_reason,
+                        placed=False,
+                    )
+                    paper_results.append({
+                        "attempted": False,
+                        "placed": False,
+                        "symbol": candidate_symbol,
+                        "reason": symbol_block_reason,
+                        "details": symbol_gate_details,
+                    })
+                    skipped_symbols.append(candidate_symbol)
+                    skip_reasons.append(f"{candidate_symbol}:symbol_performance_blocked")
+                    continue
 
                 consecutive_losses = 0
                 for t in recent_trades:

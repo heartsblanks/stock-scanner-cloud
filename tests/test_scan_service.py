@@ -7,12 +7,40 @@ from services.scan_service import (
     _apply_low_price_notional_cap,
     _apply_confidence_loss_sizing,
     _apply_minimum_viable_position_sizing,
+    evaluate_symbol_performance_gate,
     execute_full_scan,
     _get_live_alpaca_account_equity,
 )
 
 
 class ScanServiceSizingTests(unittest.TestCase):
+    def test_symbol_performance_gate_blocks_consistently_losing_symbol(self):
+        blocked, reason, details = evaluate_symbol_performance_gate(
+            [
+                {"realized_pnl_percent": -0.8},
+                {"realized_pnl_percent": -0.6},
+                {"realized_pnl_percent": -1.1},
+            ]
+        )
+
+        self.assertTrue(blocked)
+        self.assertIn("symbol_performance_blocked", reason)
+        self.assertEqual(details["loss_count"], 3)
+        self.assertEqual(details["win_count"], 0)
+
+    def test_symbol_performance_gate_allows_mixed_recent_symbol_results(self):
+        blocked, reason, details = evaluate_symbol_performance_gate(
+            [
+                {"realized_pnl_percent": -0.8},
+                {"realized_pnl_percent": 0.5},
+                {"realized_pnl_percent": -0.4},
+            ]
+        )
+
+        self.assertFalse(blocked)
+        self.assertEqual(reason, "")
+        self.assertEqual(details["win_count"], 1)
+
     def test_minimum_viable_position_sizing_compresses_slots_for_expensive_symbol(self):
         metrics = {
             "entry": 6000.0,
