@@ -180,6 +180,9 @@ Parallel IBKR evaluation strategy:
 - current implementation status: VM deployment scaffolding now exists under `ibkr_bridge/systemd/` with a service unit, env template, and bridge runbook for the GCP VM path
 - current implementation status: the first real IBKR bridge read-path is now implemented for account, positions, and open-order reads; write-path endpoints remain intentionally deferred until IB Gateway connectivity is verified on the VM
 - cost-control plan: the IBKR VM should not run 24/7; it should be started and stopped by dedicated Cloud Scheduler jobs around the trading window, while IB Gateway login remains a manual daily step for now
+- operational compromise for now: keep the VM public IP attached while IB Gateway login is still a manual operator task from a laptop or phone; once admin access is moved to IAP or another private-only path, the public IP should be removed to reduce standing cost
+- current implementation status: the IBKR bridge service is being decoupled from raw Gateway port readiness so the dashboard can surface `LOGIN_REQUIRED` and `MARKET_DATA_UNAVAILABLE` states instead of only showing the VM as down
+- current implementation status: a repeatable VM desktop bootstrap path is now part of the repo so `xrdp`, `xfce`, and headless `Xvfb` support can be applied consistently on the IBKR VM
 - current implementation status: the bridge now also supports the first operational write-path actions for cancel-by-symbol and market close-position flows; paper bracket placement remains deferred
 - current implementation status: holiday-aware VM control is now implemented in the main Cloud Run app through `POST /scheduler/ibkr-vm-control`, which reuses the NYSE calendar before starting the VM on trading days
 - current implementation status: the persistence model is being extended to tag paper-trading rows by broker so Alpaca and IBKR orders, trade events, lifecycles, and attempts can be compared cleanly from the database
@@ -199,6 +202,7 @@ Parallel IBKR evaluation strategy:
 - `3.` stop the VM at `5:00 PM ET`
 - `4.` keep a manual IB Gateway login fallback for now, but auto-start the VM, IB Gateway process, and bridge so operator intervention is only needed when readiness fails
 - `5.` keep a static public VM IP for operator access so phone/laptop RDP does not change across stop/start cycles
+- `6.` keep the bridge reachable even when the broker session is not yet ready, so the dashboard can distinguish process health from broker-login readiness
 - holiday handling note:
 - `1.` plain Cloud Scheduler cron can handle weekdays and timezone shifts but not exchange holidays
 - `2.` the current design now uses a calendar-aware Cloud Run controller at `POST /scheduler/ibkr-vm-control`
@@ -1118,6 +1122,7 @@ Reconciliation compares local trade data and broker-side order/exit data.
 ### Fully implemented
 - Cloud Run backend deployment
 - Cloud Build configuration
+- push-triggered Cloud Build deployment flow, so normal code pushes should not require a second manual build trigger in routine operation
 - consolidated Cloud Scheduler architecture with three production jobs
 - PostgreSQL schema for core operational tables
 - repository-based persistence split with `storage.py` compatibility layer
@@ -1138,6 +1143,7 @@ Reconciliation compares local trade data and broker-side order/exit data.
 - repository documentation and cleanup
 - separation of concerns between `app.py`, route modules, and service modules
 - lifecycle handling for delayed broker-side close fills outside the original bracket order tree
+- Artifact Registry retention hardening; a repository cleanup policy file now exists in `scripts/artifact_registry_cleanup_policy.json`, but production cleanup policy application and validation should be treated as an operational follow-up item
 
 ### Missing
 - volatility-based sizing (ATR)

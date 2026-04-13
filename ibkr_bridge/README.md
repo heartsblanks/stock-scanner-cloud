@@ -144,9 +144,9 @@ sudo systemctl start ibkr-gateway
 
 Notes:
 - you still need to verify the launcher path in `/etc/ibkr-gateway.env`
-- this helps auto-start the application, but it does not magically solve IBKR login/session prompts by itself
+- the bridge service can now start even before the Gateway API port is ready, which keeps `/health` available for dashboard status checks
+- Gateway can auto-start headlessly through `Xvfb` when no `DISPLAY` is present
 - keep the bridge separate from Gateway so the API service can be restarted independently
-- the bridge service now waits for the Gateway port before it starts
 
 ### 7b. Add a readiness check
 Once both services are installed, you can verify whether automation actually resulted in a usable broker session:
@@ -171,6 +171,27 @@ Recommended daily flow now that VM startup is automated:
 4. only log into IB Gateway if readiness fails
 
 That keeps the manual step as a fallback instead of a required daily ritual.
+
+### 7d. Make the VM desktop repeatable
+If you want a visible remote desktop session for IB Gateway logins, use the helper script from your laptop:
+
+```bash
+bash scripts/setup_ibkr_vm_desktop.sh
+```
+
+That script installs:
+- `xrdp`
+- `xfce4`
+- `dbus-x11`
+- `xvfb`
+
+It also configures the `ibkr` user to start an XFCE session and enables the `xrdp` service. After that, your normal daily flow can be:
+
+1. let the VM auto-start
+2. let Gateway auto-start
+3. check the dashboard
+4. if the dashboard says `LOGIN_REQUIRED`, connect by RDP and complete the IBKR login
+5. let the bridge continue serving account and market-data checks once the session is ready
 
 Phone-friendly fallback:
 - you can use your phone for the IBKR approval/IB Key step if IBKR prompts for it
@@ -218,6 +239,9 @@ bash scripts/deploy_ibkr_vm.sh
 That script:
 - SSHes into the VM
 - fast-forwards the `ibkr-parallel-eval` checkout
+- refreshes the `ibkr-gateway` and `ibkr-bridge` systemd unit files from the repo
+- reloads systemd
+- restarts both services
 - restarts `ibkr-bridge`
 
 This is safer than silently redeploying the VM on every push while the broker session is live.
