@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 
 from orchestration.scheduler_ops import (
     build_market_ops_plan,
+    execute_maintenance_ops,
     execute_ibkr_login_alert,
     execute_ibkr_vm_control,
     execute_post_close_ops,
@@ -105,6 +106,25 @@ class SchedulerOpsTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertNotIn("repair_ibkr_stale_closes", result["results"])
+
+    def test_maintenance_ops_prunes_operational_tables(self):
+        now_ny = datetime(2026, 4, 2, 18, 0, tzinfo=NY_TZ)
+        result = execute_maintenance_ops(
+            now_ny=now_ny,
+            prune_logs=lambda retention_days: 12,
+            prune_operational_data=lambda retention_days_by_table: {
+                "signal_logs": {"retention_days": retention_days_by_table["signal_logs"], "deleted_count": 3},
+                "scan_runs": {"retention_days": retention_days_by_table["scan_runs"], "deleted_count": 1},
+            },
+            retention_days=30,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertIn("prune_alpaca_api_logs", result["results"])
+        self.assertIn("prune_signal_logs", result["results"])
+        self.assertIn("prune_scan_runs", result["results"])
+        self.assertEqual(result["results"]["prune_signal_logs"]["body"]["retention_days"], 45)
+        self.assertEqual(result["results"]["prune_scan_runs"]["body"]["deleted_count"], 1)
 
     def test_ibkr_vm_start_skips_on_holiday(self):
         now_ny = datetime(2026, 7, 4, 9, 15, tzinfo=NY_TZ)

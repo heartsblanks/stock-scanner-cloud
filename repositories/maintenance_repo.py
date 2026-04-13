@@ -1,0 +1,45 @@
+from __future__ import annotations
+
+from typing import Any
+
+from core.db import fetch_one
+
+
+_RETENTION_TABLES: dict[str, tuple[str, str]] = {
+    "alpaca_api_logs": ("logged_at", "alpaca_api_logs"),
+    "signal_logs": ("timestamp_utc", "signal_logs"),
+    "scan_runs": ("scan_time", "scan_runs"),
+    "paper_trade_attempts": ("timestamp_utc", "paper_trade_attempts"),
+    "broker_orders": ("created_at", "broker_orders"),
+    "reconciliation_details": ("created_at", "reconciliation_details"),
+    "reconciliation_runs": ("run_time", "reconciliation_runs"),
+}
+
+
+def prune_operational_data(retention_days_by_table: dict[str, int]) -> dict[str, dict[str, Any]]:
+    results: dict[str, dict[str, Any]] = {}
+
+    for table_name, retention_days in retention_days_by_table.items():
+        if table_name not in _RETENTION_TABLES:
+            raise ValueError(f"Unsupported maintenance table: {table_name}")
+
+        timestamp_column, resolved_table_name = _RETENTION_TABLES[table_name]
+        resolved_retention_days = max(1, int(retention_days))
+        row = fetch_one(
+            f"""
+            WITH deleted AS (
+                DELETE FROM {resolved_table_name}
+                WHERE {timestamp_column} < NOW() - (%(retention_days)s::text || ' days')::interval
+                RETURNING 1
+            )
+            SELECT COUNT(*)::INT AS deleted_count FROM deleted
+            """,
+            {"retention_days": resolved_retention_days},
+        )
+        deleted_count = int(row["deleted_count"]) if row and row.get("deleted_count") is not None else 0
+        results[table_name] = {
+            "retention_days": resolved_retention_days,
+            "deleted_count": deleted_count,
+        }
+
+    return results

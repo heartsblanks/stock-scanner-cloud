@@ -131,25 +131,49 @@ def execute_maintenance_ops(
     *,
     now_ny: datetime,
     prune_logs: Callable[[int], int],
+    prune_operational_data: Callable[[dict[str, int]], dict[str, dict[str, Any]]] | None = None,
     retention_days: int = 30,
 ) -> dict[str, Any]:
     deleted_count = prune_logs(retention_days)
+    operational_results = (
+        prune_operational_data(
+            {
+                "signal_logs": 45,
+                "scan_runs": 45,
+                "paper_trade_attempts": 120,
+                "broker_orders": 120,
+                "reconciliation_details": 120,
+                "reconciliation_runs": 120,
+            }
+        )
+        if prune_operational_data is not None
+        else {}
+    )
+
+    results = {
+        "prune_alpaca_api_logs": {
+            "ok": True,
+            "status_code": 200,
+            "body": {
+                "retention_days": retention_days,
+                "deleted_count": deleted_count,
+            },
+        }
+    }
+    for table_name, table_result in operational_results.items():
+        results[f"prune_{table_name}"] = {
+            "ok": True,
+            "status_code": 200,
+            "body": table_result,
+        }
+
     return {
         "ok": True,
         "scheduler": "maintenance",
         "current_new_york_time": now_ny.strftime("%Y-%m-%d %H:%M"),
-        "actions": ["prune_alpaca_api_logs"],
-        "action_count": 1,
-        "results": {
-            "prune_alpaca_api_logs": {
-                "ok": True,
-                "status_code": 200,
-                "body": {
-                    "retention_days": retention_days,
-                    "deleted_count": deleted_count,
-                },
-            }
-        },
+        "actions": list(results.keys()),
+        "action_count": len(results),
+        "results": results,
     }
 
 

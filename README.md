@@ -132,7 +132,7 @@ Recommended consolidated scheduler setup:
 - `maintenance`
   - `0 18 * * * (America/New_York)`
   - Calls `POST /scheduler/maintenance`
-  - Intended for periodic log pruning and future housekeeping tasks
+  - Prunes `alpaca_api_logs` plus older operational rows from `signal_logs`, `scan_runs`, `paper_trade_attempts`, `broker_orders`, `reconciliation_details`, and `reconciliation_runs`
 - `ibkr-login-alert`
   - `*/10 9-16 * * 1-5 (America/New_York)`
   - Calls `POST /scheduler/ibkr-login-alert`
@@ -156,6 +156,20 @@ Important note:
 - You need to send at least one message to that bot from the destination chat before alerts can be delivered there.
 
 ## 📊 Dashboard
+
+## 🧹 Retention Policy
+
+The maintenance scheduler currently applies this first-pass retention policy:
+
+- `alpaca_api_logs`: 30 days
+- `signal_logs`: 45 days
+- `scan_runs`: 45 days
+- `paper_trade_attempts`: 120 days
+- `broker_orders`: 120 days
+- `reconciliation_details`: 120 days
+- `reconciliation_runs`: 120 days
+
+Trade history tables such as `trade_events` and `trade_lifecycles` are intentionally not pruned by the automated maintenance job yet.
 
 Located in:
 ```

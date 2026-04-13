@@ -1150,7 +1150,7 @@ Reconciliation compares local trade data and broker-side order/exit data.
 ### Missing
 - deeper ATR-aware sizing beyond the current trade-quality filter
 - confidence calibration analytics
-- retention/cleanup policy for growing DB tables and exported artifacts
+- export artifact retention outside the current GitHub snapshot history model
 - deeper verification/repair path for the rare case where multiple broker exits remain plausible for the exact parent trade even after ambiguity detection
 
 ---
@@ -1183,7 +1183,7 @@ Reconciliation compares local trade data and broker-side order/exit data.
 
 1. monitor the new reconciliation ambiguity handling through several live market sessions and confirm no false-positive `exit_not_resolved` spikes appear
 2. verify the consolidated `market-ops` and `daily-post-close` scheduler flow against delayed fills, close timing, and post-close sync/reconciliation ordering
-3. define and implement retention policy for large operational tables and exported snapshots, especially `alpaca_api_logs`
+3. monitor and refine the new operational-table retention policy, and decide whether snapshot/history retention needs a separate archival policy beyond GitHub snapshots
 4. improve dashboard operational visibility further, especially placement/skip reasons by hour and scheduler/job health indicators
 5. document runtime environment variables, scheduler jobs, deployment steps, and the alert/test-alert flow more clearly
 6. continue reducing remaining integration/orchestration complexity inside `app.py`

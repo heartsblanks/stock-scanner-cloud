@@ -45,6 +45,7 @@ from storage import (
     get_dashboard_summary,
     get_latest_mode_ranking_order,
     prune_alpaca_api_logs,
+    prune_operational_data,
     refresh_mode_rankings,
 )
 from exports.export_daily_snapshot import run_daily_snapshot
@@ -981,6 +982,7 @@ def run_maintenance_scheduler(*, now_ny: datetime, retention_days: int = 30):
     return build_execute_maintenance_ops(
         now_ny=now_ny,
         prune_logs=prune_alpaca_api_logs,
+        prune_operational_data=prune_operational_data,
         retention_days=retention_days,
     )
 
