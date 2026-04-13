@@ -118,6 +118,93 @@ class TradeScanSizingConfigTests(unittest.TestCase):
 
 
 class TradeScanTimePenaltyTests(unittest.TestCase):
+    def test_valid_breakout_passes_atr_noise_filter(self):
+        info = {"symbol": "GOOGL", "type": "stock", "priority": 9, "market": "NASDAQ"}
+        candles = build_valid_breakout_candles()
+        candles.append(
+            {
+                "datetime": "2026-04-01 09:45:00",
+                "open": 100.20,
+                "high": 100.65,
+                "low": 98.50,
+                "close": 100.55,
+            }
+        )
+
+        with patch.dict(os.environ, {"ENABLE_LATE_SESSION_HARD_BLOCK": "false"}, clear=False):
+            with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 10, 15, tzinfo=NY_TZ)):
+                result = evaluate_symbol(
+                    name="Alphabet",
+                    info=info,
+                    candles=candles,
+                    account_size=100000.0,
+                    benchmark_directions={"NASDAQ": "BUY"},
+                    current_open_positions=0,
+                    current_open_exposure=0.0,
+                )
+
+        self.assertTrue(result["checks"]["atr_noise_filter"])
+        self.assertGreater(result["metrics"]["stop_to_atr_ratio"], result["metrics"]["min_stop_to_atr_ratio"])
+
+    def test_rejects_trade_when_stop_is_too_tight_for_recent_atr(self):
+        info = {"symbol": "PLUG", "type": "stock", "priority": 9, "market": "SP500"}
+        candles = build_valid_breakout_candles()
+        candles.extend(
+            [
+                {
+                    "datetime": "2026-04-01 09:45:00",
+                    "open": 100.20,
+                    "high": 101.50,
+                    "low": 99.35,
+                    "close": 100.12,
+                },
+                {
+                    "datetime": "2026-04-01 09:46:00",
+                    "open": 100.10,
+                    "high": 101.35,
+                    "low": 99.20,
+                    "close": 100.08,
+                },
+                {
+                    "datetime": "2026-04-01 09:47:00",
+                    "open": 100.08,
+                    "high": 101.40,
+                    "low": 99.15,
+                    "close": 100.16,
+                },
+                {
+                    "datetime": "2026-04-01 09:48:00",
+                    "open": 100.16,
+                    "high": 101.45,
+                    "low": 99.10,
+                    "close": 100.18,
+                },
+                {
+                    "datetime": "2026-04-01 09:49:00",
+                    "open": 100.18,
+                    "high": 101.48,
+                    "low": 99.05,
+                    "close": 100.55,
+                },
+            ]
+        )
+
+        with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 10, 0, tzinfo=NY_TZ)):
+            result = evaluate_symbol(
+                name="Plug Power",
+                info=info,
+                candles=candles,
+                account_size=100000.0,
+                benchmark_directions={"SP500": "BUY"},
+                current_open_positions=0,
+                current_open_exposure=0.0,
+            )
+
+        self.assertEqual(result["decision"], "REJECTED")
+        self.assertEqual(result["final_reason"], "Stop too tight for current intraday volatility.")
+        self.assertFalse(result["checks"]["atr_noise_filter"])
+        self.assertLess(result["metrics"]["stop_to_atr_ratio"], result["metrics"]["min_stop_to_atr_ratio"])
+
     def test_post_noon_time_penalty_is_stronger(self):
         info = {"symbol": "GOOGL", "type": "stock", "priority": 9, "market": "NASDAQ"}
         candles = build_valid_breakout_candles()

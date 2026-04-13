@@ -30,6 +30,8 @@ from core.paper_trade_config import get_paper_trade_limits
 MIN_CONFIDENCE = 75
 MIN_SHORT_CONFIDENCE = 82
 MIN_REMAINING_ALLOCATABLE_CAPITAL = 50.0
+MIN_STOP_TO_ATR_RATIO_STOCK = 0.35
+MIN_STOP_TO_ATR_RATIO_ETF = 0.30
 API_KEY = os.getenv("TWELVEDATA_API_KEY")
 BASE_URL = "https://api.twelvedata.com/time_series"
 
@@ -272,6 +274,28 @@ def get_day_high_low(candles: list[dict]):
     return max(highs), min(lows)
 
 
+def calculate_recent_atr(candles: list[dict], lookback: int = 5):
+    if len(candles) < 2:
+        return None
+
+    true_ranges = []
+    start_index = max(1, len(candles) - max(1, lookback))
+
+    for idx in range(start_index, len(candles)):
+        current = candles[idx]
+        previous = candles[idx - 1]
+        high = float(current["high"])
+        low = float(current["low"])
+        prev_close = float(previous["close"])
+        true_range = max(high - low, abs(high - prev_close), abs(low - prev_close))
+        true_ranges.append(true_range)
+
+    if not true_ranges:
+        return None
+
+    return sum(true_ranges) / len(true_ranges)
+
+
 def get_market_direction(candles: list[dict]):
     or_data = build_opening_range(candles)
     if not or_data:
@@ -373,6 +397,7 @@ def evaluate_symbol(
     vwap = calculate_vwap(candles)
     day_high, day_low = get_day_high_low(candles)
     day_range = day_high - day_low
+    recent_atr = calculate_recent_atr(candles, lookback=5)
 
     metrics.update({
         "price": price,
@@ -383,6 +408,7 @@ def evaluate_symbol(
         "day_high": day_high,
         "day_low": day_low,
         "day_range": day_range,
+        "recent_atr": recent_atr,
     })
 
     checks["opening_range_available"] = True
@@ -478,6 +504,30 @@ def evaluate_symbol(
         "breakout": breakout,
         "stop_distance": stop_distance,
     })
+
+    checks["atr_available"] = recent_atr is not None and recent_atr > 0
+    if not checks["atr_available"]:
+        return {
+            "name": name,
+            "decision": "REJECTED",
+            "final_reason": "Recent ATR not available.",
+            "checks": checks,
+            "metrics": metrics,
+        }
+
+    min_stop_to_atr_ratio = MIN_STOP_TO_ATR_RATIO_STOCK if info["type"] == "stock" else MIN_STOP_TO_ATR_RATIO_ETF
+    stop_to_atr_ratio = stop_distance / recent_atr if recent_atr else 0.0
+    metrics["stop_to_atr_ratio"] = stop_to_atr_ratio
+    metrics["min_stop_to_atr_ratio"] = min_stop_to_atr_ratio
+    checks["atr_noise_filter"] = stop_to_atr_ratio >= min_stop_to_atr_ratio
+    if not checks["atr_noise_filter"]:
+        return {
+            "name": name,
+            "decision": "REJECTED",
+            "final_reason": "Stop too tight for current intraday volatility.",
+            "checks": checks,
+            "metrics": metrics,
+        }
 
     if info["type"] == "stock":
         checks["anti_chase_filter"] = breakout <= opening_range * 1.0
