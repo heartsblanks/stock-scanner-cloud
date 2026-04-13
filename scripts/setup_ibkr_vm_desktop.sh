@@ -12,13 +12,17 @@ set -euo pipefail
 
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  xfce4 \
-  xfce4-goodies \
+  openbox \
   xrdp \
+  xorgxrdp \
   dbus-x11 \
   xvfb
 
-echo "xfce4-session" | sudo tee /home/__VM_USER__/.xsession >/dev/null
+cat <<'EOS' | sudo tee /home/__VM_USER__/.xsession >/dev/null
+export LIBGL_ALWAYS_SOFTWARE=1
+export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
+openbox-session
+EOS
 sudo chown __VM_USER__:__VM_USER__ /home/__VM_USER__/.xsession
 sudo chmod 644 /home/__VM_USER__/.xsession
 
