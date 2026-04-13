@@ -65,6 +65,15 @@ from orchestration.app_orchestration import (
     handle_sync_paper_trades as run_handle_sync_paper_trades,
     run_scheduled_paper_scan_wrapper as run_scheduled_scan_wrapper,
 )
+from orchestration.app_runtime import (
+    build_scan_pipeline_runner,
+    close_all_paper_positions as runtime_close_all_paper_positions,
+    close_all_paper_positions_for_broker as runtime_close_all_paper_positions_for_broker,
+    handle_scan_request as runtime_handle_scan_request,
+    handle_sync_paper_trades as runtime_handle_sync_paper_trades,
+    run_ibkr_shadow_scans as runtime_run_ibkr_shadow_scans,
+    run_scheduled_scan_wrapper as runtime_run_scheduled_scan_wrapper,
+)
 from orchestration.scheduler_ops import (
     execute_maintenance_ops as build_execute_maintenance_ops,
     execute_ibkr_login_alert as build_execute_ibkr_login_alert,
@@ -194,50 +203,27 @@ def paper_candidate_from_evaluation(eval_result: dict, min_confidence: float = P
     return build_paper_candidate_from_evaluation(eval_result, min_confidence)
 
 
-def execute_scan_pipeline(
-    payload: dict[str, Any],
-    *,
-    broker_name: str,
-    run_scan_fn,
-    resolve_account_size_fn,
-    get_current_open_position_state_fn,
-    get_risk_exposure_summary_fn,
-    get_latest_open_trade_fn,
-    place_paper_orders_fn,
-    paper_trade_min_confidence: float = PAPER_TRADE_MIN_CONFIDENCE,
-):
-    return run_handle_scan_request(
-        payload,
-        get_current_open_position_state=get_current_open_position_state_fn,
-        get_risk_exposure_summary=get_risk_exposure_summary_fn,
-        execute_full_scan=execute_full_scan,
-        market_time_check=market_time_check,
-        build_scan_id=build_scan_id,
-        market_phase_from_timestamp=market_phase_from_timestamp,
-        append_signal_log=append_signal_log,
-        safe_insert_paper_trade_attempt=safe_insert_paper_trade_attempt,
-        safe_insert_scan_run=safe_insert_scan_run,
-        parse_iso_utc=parse_iso_utc,
-        run_scan=run_scan_fn,
-        trade_to_dict=trade_to_dict,
-        debug_to_dict=debug_to_dict,
-        paper_candidate_from_evaluation=lambda eval_result: paper_candidate_from_evaluation(
-            eval_result,
-            min_confidence=paper_trade_min_confidence,
-        ),
-        evaluate_symbol=evaluate_symbol,
-        get_latest_open_paper_trade_for_symbol=get_latest_open_trade_fn,
-        is_symbol_in_paper_cooldown=is_symbol_in_paper_cooldown,
-        place_paper_orders_from_trade=place_paper_orders_fn,
-        append_trade_log=append_trade_log,
-        safe_insert_trade_event=safe_insert_trade_event,
-        safe_insert_broker_order=safe_insert_broker_order,
-        to_float_or_none=to_float_or_none,
-        min_confidence=MIN_CONFIDENCE,
-        upsert_trade_lifecycle=upsert_trade_lifecycle,
-        resolve_account_size=resolve_account_size_fn,
-        active_broker=broker_name,
-    )
+execute_scan_pipeline = build_scan_pipeline_runner(
+    run_handle_scan_request=run_handle_scan_request,
+    execute_full_scan=execute_full_scan,
+    market_time_check=market_time_check,
+    build_scan_id=build_scan_id,
+    market_phase_from_timestamp=market_phase_from_timestamp,
+    append_signal_log=append_signal_log,
+    safe_insert_paper_trade_attempt=safe_insert_paper_trade_attempt,
+    safe_insert_scan_run=safe_insert_scan_run,
+    parse_iso_utc=parse_iso_utc,
+    trade_to_dict=trade_to_dict,
+    debug_to_dict=debug_to_dict,
+    evaluate_symbol=evaluate_symbol,
+    is_symbol_in_paper_cooldown=is_symbol_in_paper_cooldown,
+    append_trade_log=append_trade_log,
+    safe_insert_trade_event=safe_insert_trade_event,
+    safe_insert_broker_order=safe_insert_broker_order,
+    to_float_or_none=to_float_or_none,
+    min_confidence=MIN_CONFIDENCE,
+    upsert_trade_lifecycle=upsert_trade_lifecycle,
+)
 
 
 def _run_ibkr_shadow_scan(payload: dict[str, Any]) -> dict[str, Any]:
@@ -259,7 +245,10 @@ def _run_ibkr_shadow_scan(payload: dict[str, Any]) -> dict[str, Any]:
             get_risk_exposure_summary_fn=lambda: get_ibkr_shadow_risk_exposure_summary(ibkr_payload),
             get_latest_open_trade_fn=lambda symbol: get_latest_open_paper_trade_for_symbol_for_broker(symbol, "IBKR"),
             place_paper_orders_fn=place_ibkr_paper_orders_from_trade,
-            paper_trade_min_confidence=IBKR_PAPER_TRADE_MIN_CONFIDENCE,
+            paper_candidate_from_evaluation_fn=lambda eval_result: paper_candidate_from_evaluation(
+                eval_result,
+                min_confidence=IBKR_PAPER_TRADE_MIN_CONFIDENCE,
+            ),
         )
     except Exception as exc:
         return {
@@ -271,57 +260,18 @@ def _run_ibkr_shadow_scan(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _run_ibkr_shadow_scans(payload: dict[str, Any]) -> dict[str, Any]:
-    scan_source = str((payload or {}).get("scan_source", "") or "").strip().upper()
-    scheduled_shadow = scan_source == "SCHEDULED"
-    modes = list(IBKR_SCHEDULED_MODE_ORDER) if scheduled_shadow else [str(payload.get("mode", "primary")).strip().lower()]
-
-    per_mode_results: list[dict[str, Any]] = []
-    total_candidates = 0
-    total_placed = 0
-    total_skipped = 0
-
-    for mode in modes:
-        mode_payload = dict(payload)
-        mode_payload["mode"] = mode
-        mode_response = _run_ibkr_shadow_scan(mode_payload)
-        mode_result = mode_response if isinstance(mode_response, dict) else {"ok": False, "error": "invalid_ibkr_shadow_response", "mode": mode}
-        mode_result.setdefault("mode", mode)
-        per_mode_results.append(mode_result)
-
-        total_candidates += int(float(mode_result.get("candidate_count", 0) or 0))
-        total_placed += int(float(mode_result.get("placed_count", 0) or 0))
-        total_skipped += int(float(mode_result.get("skipped_count", 0) or 0))
-
-        log_info(
-            "IBKR shadow scan completed",
-            component="app",
-            operation="handle_scan_request",
-            broker="IBKR",
-            ok=bool(mode_result.get("ok", False)),
-            mode=mode,
-            error=mode_result.get("error"),
-            candidate_count=mode_result.get("candidate_count"),
-            placed_count=mode_result.get("placed_count"),
-            skipped_count=mode_result.get("skipped_count"),
-            scan_id=mode_result.get("scan_id"),
-        )
-
-    return {
-        "ok": all(bool(result.get("ok", False)) for result in per_mode_results),
-        "scheduled_all_modes": scheduled_shadow,
-        "mode_count": len(modes),
-        "modes": modes,
-        "candidate_count": total_candidates,
-        "placed_count": total_placed,
-        "skipped_count": total_skipped,
-        "per_mode_results": per_mode_results,
-    }
+    return runtime_run_ibkr_shadow_scans(
+        payload,
+        ibkr_scheduled_mode_order=list(IBKR_SCHEDULED_MODE_ORDER),
+        run_single_shadow_scan=_run_ibkr_shadow_scan,
+    )
 
 
 
 
 def handle_sync_paper_trades():
-    return run_handle_sync_paper_trades(
+    return runtime_handle_sync_paper_trades(
+        run_handle_sync_paper_trades=run_handle_sync_paper_trades,
         execute_sync_paper_trades=execute_sync_paper_trades,
         get_open_paper_trades=get_open_paper_trades,
         sync_order_by_id=sync_order_by_id,
@@ -335,37 +285,31 @@ def handle_sync_paper_trades():
         upsert_trade_lifecycle=upsert_trade_lifecycle,
         get_open_positions=get_open_positions,
         close_position=close_position,
-        get_open_positions_for_broker=get_open_positions_for_broker_name,
-        close_position_for_broker=close_position_for_broker_name,
+        get_open_positions_for_broker_name=get_open_positions_for_broker_name,
+        close_position_for_broker_name=close_position_for_broker_name,
     )
 
 def handle_scan_request(payload):
-    alpaca_response = execute_scan_pipeline(
+    return runtime_handle_scan_request(
         payload,
-        broker_name="ALPACA",
-        run_scan_fn=run_scan,
-        resolve_account_size_fn=resolve_alpaca_account_size,
-        get_current_open_position_state_fn=lambda: get_current_open_position_state_for_broker(ALPACA_PAPER_BROKER),
-        get_risk_exposure_summary_fn=lambda: get_risk_exposure_summary_for_broker(ALPACA_PAPER_BROKER),
-        get_latest_open_trade_fn=lambda symbol: get_latest_open_paper_trade_for_symbol_for_broker(symbol, "ALPACA"),
-        place_paper_orders_fn=place_alpaca_paper_orders_from_trade,
+        run_alpaca_scan=lambda scan_payload: execute_scan_pipeline(
+            scan_payload,
+            broker_name="ALPACA",
+            run_scan_fn=run_scan,
+            resolve_account_size_fn=resolve_alpaca_account_size,
+            get_current_open_position_state_fn=lambda: get_current_open_position_state_for_broker(ALPACA_PAPER_BROKER),
+            get_risk_exposure_summary_fn=lambda: get_risk_exposure_summary_for_broker(ALPACA_PAPER_BROKER),
+            get_latest_open_trade_fn=lambda symbol: get_latest_open_paper_trade_for_symbol_for_broker(symbol, "ALPACA"),
+            place_paper_orders_fn=place_alpaca_paper_orders_from_trade,
+            paper_candidate_from_evaluation_fn=lambda eval_result: paper_candidate_from_evaluation(
+                eval_result,
+                min_confidence=PAPER_TRADE_MIN_CONFIDENCE,
+            ),
+        ),
+        shadow_mode_enabled=PAPER_BROKER_CONFIG.shadow_mode_enabled,
+        ibkr_bridge_enabled=ibkr_bridge_enabled(),
+        run_ibkr_shadow_scans=_run_ibkr_shadow_scans,
     )
-
-    if not (isinstance(payload, dict) and payload.get("paper_trade") and PAPER_BROKER_CONFIG.shadow_mode_enabled and ibkr_bridge_enabled()):
-        return alpaca_response
-
-    ibkr_response = _run_ibkr_shadow_scans(payload)
-
-    if isinstance(alpaca_response, tuple) or isinstance(ibkr_response, tuple):
-        return alpaca_response
-
-    if isinstance(alpaca_response, dict):
-        alpaca_response["parallel_runs"] = {
-            "alpaca": {"ok": bool(alpaca_response.get("ok", False))},
-            "ibkr": {"ok": bool(ibkr_response.get("ok", False)) if isinstance(ibkr_response, dict) else False},
-        }
-        alpaca_response["shadow_ibkr"] = ibkr_response
-    return alpaca_response
 
 
 def run_scan_wrapper(payload):
@@ -375,14 +319,12 @@ def run_scan_wrapper(payload):
 def run_scheduled_paper_scan_wrapper(payload):
     now_ny = datetime.now(NY_TZ)
     scheduled_mode_order = resolve_alpaca_scheduled_mode_order()
-    return run_scheduled_scan_wrapper(
+    return runtime_run_scheduled_scan_wrapper(
         payload,
         now_ny=now_ny,
-        build_scheduled_scan_payload=lambda scan_payload, now_ny=None: build_scheduled_scan_payload(
-            scan_payload,
-            now_ny=now_ny,
-            mode_order=scheduled_mode_order,
-        ),
+        run_scheduled_scan_wrapper_fn=run_scheduled_scan_wrapper,
+        build_scheduled_scan_payload=build_scheduled_scan_payload,
+        scheduled_mode_order=scheduled_mode_order,
         handle_scan_request_fn=handle_scan_request,
     )
 
@@ -392,13 +334,11 @@ def run_scheduled_paper_scan_wrapper(payload):
 
 
 def _close_all_paper_positions_for_broker(broker) -> dict[str, Any] | tuple[dict[str, Any], int]:
-    return run_close_all_paper_positions(
+    return runtime_close_all_paper_positions_for_broker(
+        broker,
+        run_close_all_paper_positions=run_close_all_paper_positions,
         execute_close_all_paper_positions=execute_close_all_paper_positions,
-        get_open_positions=broker.get_open_positions,
-        get_managed_open_paper_trades_for_eod_close=lambda: get_managed_open_paper_trades_for_eod_close_for_broker(broker),
-        cancel_open_orders_for_symbol=broker.cancel_open_orders_for_symbol,
-        close_position=broker.close_position,
-        get_order_by_id=broker.get_order_by_id,
+        get_managed_open_paper_trades_for_eod_close_for_broker=get_managed_open_paper_trades_for_eod_close_for_broker,
         safe_insert_broker_order=safe_insert_broker_order,
         append_trade_log=append_trade_log,
         safe_insert_trade_event=safe_insert_trade_event,
@@ -409,27 +349,13 @@ def _close_all_paper_positions_for_broker(broker) -> dict[str, Any] | tuple[dict
 
 
 def close_all_paper_positions():
-    alpaca_result = _close_all_paper_positions_for_broker(ALPACA_PAPER_BROKER)
-
-    if not PAPER_BROKER_CONFIG.shadow_mode_enabled or not ibkr_bridge_enabled():
-        return alpaca_result
-
-    ibkr_result = _close_all_paper_positions_for_broker(IBKR_PAPER_BROKER)
-
-    if isinstance(alpaca_result, tuple):
-        return alpaca_result
-
-    if isinstance(ibkr_result, tuple):
-        alpaca_result["shadow_ibkr_close"] = ibkr_result[0]
-        alpaca_result["shadow_ibkr_close_status_code"] = ibkr_result[1]
-        return alpaca_result
-
-    aggregated = dict(alpaca_result or {})
-    aggregated["shadow_ibkr_close"] = ibkr_result
-    aggregated["combined_position_count"] = int(alpaca_result.get("position_count", 0) or 0) + int(ibkr_result.get("position_count", 0) or 0)
-    aggregated["combined_closed_count"] = int(alpaca_result.get("closed_count", 0) or 0) + int(ibkr_result.get("closed_count", 0) or 0)
-    aggregated["combined_skipped_count"] = int(alpaca_result.get("skipped_count", 0) or 0) + int(ibkr_result.get("skipped_count", 0) or 0)
-    return aggregated
+    return runtime_close_all_paper_positions(
+        alpaca_broker=ALPACA_PAPER_BROKER,
+        ibkr_broker=IBKR_PAPER_BROKER,
+        shadow_mode_enabled=PAPER_BROKER_CONFIG.shadow_mode_enabled,
+        ibkr_bridge_enabled=ibkr_bridge_enabled(),
+        close_all_paper_positions_for_broker_fn=_close_all_paper_positions_for_broker,
+    )
 
 
 
