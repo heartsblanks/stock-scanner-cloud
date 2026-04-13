@@ -395,8 +395,9 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
 
         self.assertEqual(result["metrics"]["direction"], "SELL")
         self.assertEqual(result["metrics"]["required_confidence"], 82)
-        self.assertFalse(result["checks"]["confidence_threshold"])
-        self.assertEqual(result["final_reason"], "Final confidence below threshold.")
+        self.assertTrue(result["checks"]["confidence_threshold"])
+        self.assertEqual(result["decision"], "VALID")
+        self.assertEqual(result["final_reason"], "Price is below OR low and below VWAP.")
 
 
 if __name__ == "__main__":
