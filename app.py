@@ -299,6 +299,7 @@ def get_ibkr_operational_status() -> dict[str, Any]:
         "state": "DISABLED",
         "bridge_health_ok": False,
         "account_ok": False,
+        "session_probe_ok": False,
         "market_data_ok": False,
         "login_required": False,
         "message": "",
@@ -307,6 +308,7 @@ def get_ibkr_operational_status() -> dict[str, Any]:
         "equity": None,
         "market_data_symbol": os.getenv("IBKR_READINESS_SYMBOL", "SPY").strip().upper() or "SPY",
         "market_data_count": 0,
+        "position_count": 0,
         "errors": [],
     }
 
@@ -316,6 +318,7 @@ def get_ibkr_operational_status() -> dict[str, Any]:
 
     bridge_timeout = int(os.getenv("IBKR_BRIDGE_HEALTH_TIMEOUT_SECONDS", "4"))
     account_timeout = int(os.getenv("IBKR_BRIDGE_ACCOUNT_TIMEOUT_SECONDS", "5"))
+    positions_timeout = int(os.getenv("IBKR_BRIDGE_POSITIONS_TIMEOUT_SECONDS", "8"))
     market_timeout = int(os.getenv("IBKR_BRIDGE_STATUS_MARKET_DATA_TIMEOUT_SECONDS", "8"))
 
     try:
@@ -338,6 +341,13 @@ def get_ibkr_operational_status() -> dict[str, Any]:
         status["errors"].append(f"account: {exc}")
 
     try:
+        positions_payload = ibkr_bridge_get("/positions", timeout=positions_timeout) or []
+        status["session_probe_ok"] = True
+        status["position_count"] = len(positions_payload)
+    except Exception as exc:
+        status["errors"].append(f"positions: {exc}")
+
+    try:
         candles = ibkr_bridge_get(
             "/market-data/intraday",
             params={"symbol": status["market_data_symbol"], "interval": "1min", "outputsize": 5},
@@ -348,16 +358,21 @@ def get_ibkr_operational_status() -> dict[str, Any]:
     except Exception as exc:
         status["errors"].append(f"market_data: {exc}")
 
-    if status["bridge_health_ok"] and status["account_ok"] and status["market_data_ok"]:
+    session_ready = status["account_ok"] or status["session_probe_ok"]
+
+    if status["bridge_health_ok"] and session_ready and status["market_data_ok"]:
         status["state"] = "READY"
-        status["message"] = "IBKR bridge, account, and market data checks passed."
+        if status["account_ok"]:
+            status["message"] = "IBKR bridge, account, and market data checks passed."
+        else:
+            status["message"] = "IBKR bridge session and market data checks passed; account summary is slow or unavailable."
         return status
 
-    status["login_required"] = True
-    if status["bridge_health_ok"] and not status["account_ok"]:
+    status["login_required"] = not status["session_probe_ok"]
+    if status["bridge_health_ok"] and not session_ready:
         status["state"] = "LOGIN_REQUIRED"
         status["message"] = "IBKR bridge is up, but the account session is not ready."
-    elif status["bridge_health_ok"] and status["account_ok"] and not status["market_data_ok"]:
+    elif status["bridge_health_ok"] and session_ready and not status["market_data_ok"]:
         status["state"] = "MARKET_DATA_UNAVAILABLE"
         status["message"] = "IBKR account is up, but market data is not ready."
     else:

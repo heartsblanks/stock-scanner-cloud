@@ -12,6 +12,7 @@ class IbkrOperationalStatusTests(unittest.TestCase):
         mock_bridge_get.side_effect = [
             {"ok": True, "ibkr": {"configured": True}},
             {"account_id": "DU12345"},
+            [],
             [{"symbol": "SPY"}, {"symbol": "SPY"}],
         ]
 
@@ -29,6 +30,7 @@ class IbkrOperationalStatusTests(unittest.TestCase):
         mock_bridge_get.side_effect = [
             {"ok": True, "ibkr": {"configured": True}},
             RuntimeError("not logged in"),
+            RuntimeError("no positions"),
             [],
         ]
 
@@ -48,6 +50,7 @@ class IbkrOperationalStatusTests(unittest.TestCase):
             {"ok": True, "ibkr": {"configured": True}},
             {"account_id": "DU12345"},
             [],
+            [],
         ]
 
         result = app.get_ibkr_operational_status()
@@ -55,7 +58,25 @@ class IbkrOperationalStatusTests(unittest.TestCase):
         self.assertEqual(result["state"], "MARKET_DATA_UNAVAILABLE")
         self.assertTrue(result["account_ok"])
         self.assertFalse(result["market_data_ok"])
-        self.assertTrue(result["login_required"])
+        self.assertFalse(result["login_required"])
+
+    @patch("app.ibkr_bridge_enabled", return_value=True)
+    @patch("app.ibkr_bridge_get")
+    def test_ready_when_positions_and_market_data_work_even_if_account_times_out(self, mock_bridge_get, _mock_enabled):
+        mock_bridge_get.side_effect = [
+            {"ok": True, "ibkr": {"configured": True}},
+            RuntimeError("account timeout"),
+            [{"symbol": "NVDA"}],
+            [{"symbol": "SPY"}],
+        ]
+
+        result = app.get_ibkr_operational_status()
+
+        self.assertEqual(result["state"], "READY")
+        self.assertFalse(result["account_ok"])
+        self.assertTrue(result["session_probe_ok"])
+        self.assertTrue(result["market_data_ok"])
+        self.assertFalse(result["login_required"])
 
 
 if __name__ == "__main__":
