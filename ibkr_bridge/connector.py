@@ -414,6 +414,101 @@ class IbkrGatewayClient:
             "stop_price": _to_float(getattr(order, "auxPrice", 0.0)),
         }
 
+    def _fetch_recent_fills(self, ib) -> list[Any]:
+        try:
+            fills = list(ib.reqExecutions() or [])
+            if fills:
+                return fills
+        except Exception as exc:
+            log_exception(
+                "IBKR bridge execution fetch failed",
+                exc,
+                component="ibkr_bridge",
+                operation="fetch_recent_fills",
+            )
+        return list(getattr(ib, "fills", lambda: [])() or [])
+
+    def _execution_time_value(self, fill: Any) -> str:
+        execution = getattr(fill, "execution", None)
+        execution_time = getattr(execution, "time", None)
+        if hasattr(execution_time, "isoformat"):
+            return execution_time.isoformat()
+        if execution_time is None:
+            return ""
+        return str(execution_time)
+
+    def _sync_order_from_fills(self, ib, order_id: str) -> dict[str, Any]:
+        fills = self._fetch_recent_fills(ib)
+        if not fills:
+            return {
+                "id": str(order_id).strip(),
+                "status": "unknown",
+                "message": "Order was not found in current IBKR fills.",
+            }
+
+        order_id_text = str(order_id).strip()
+        entry_fills = [
+            fill
+            for fill in fills
+            if str(getattr(getattr(fill, "execution", None), "orderId", "")).strip() == order_id_text
+        ]
+        if not entry_fills:
+            return {
+                "id": order_id_text,
+                "status": "unknown",
+                "message": "Order was not found in current IBKR fills.",
+            }
+
+        entry_fill = entry_fills[-1]
+        entry_execution = getattr(entry_fill, "execution", None)
+        order_ref = str(getattr(entry_execution, "orderRef", "")).strip()
+        related_fills = fills
+        if order_ref:
+            related_fills = [
+                fill
+                for fill in fills
+                if str(getattr(getattr(fill, "execution", None), "orderRef", "")).strip() == order_ref
+            ] or entry_fills
+
+        related_fills = sorted(related_fills, key=self._execution_time_value)
+        latest_fill = related_fills[-1]
+        latest_execution = getattr(latest_fill, "execution", None)
+        latest_order_id = str(getattr(latest_execution, "orderId", "")).strip()
+        latest_price = _to_float(getattr(latest_execution, "price", 0.0))
+        latest_qty = _to_float(getattr(latest_execution, "shares", 0.0))
+        latest_avg_price = _to_float(getattr(latest_execution, "avgPrice", 0.0), latest_price)
+        latest_side = str(getattr(latest_execution, "side", "")).strip().upper()
+
+        result = {
+            "id": order_id_text,
+            "status": "filled",
+            "parent_order_id": order_id_text,
+            "parent_status": "Filled",
+            "entry_filled": True,
+            "entry_filled_qty": _to_float(getattr(entry_execution, "shares", 0.0)),
+            "entry_filled_avg_price": _to_float(getattr(entry_execution, "avgPrice", 0.0), _to_float(getattr(entry_execution, "price", 0.0))),
+            "client_order_id": order_ref,
+            "symbol": str(getattr(getattr(entry_fill, "contract", None), "symbol", "")).strip().upper(),
+        }
+
+        if latest_order_id and latest_order_id != order_id_text:
+            result.update(
+                {
+                    "status": "closed",
+                    "exit_event": "MANUAL_CLOSE",
+                    "exit_order_id": latest_order_id,
+                    "exit_status": "Filled",
+                    "exit_price": round(latest_price, 4) if latest_price > 0 else "",
+                    "exit_filled_qty": round(latest_qty, 4) if latest_qty > 0 else "",
+                    "exit_filled_avg_price": round(latest_avg_price, 4) if latest_avg_price > 0 else "",
+                    "exit_reason": "BROKER_FILLED_EXIT",
+                    "exit_side": latest_side,
+                    "exit_filled_at": self._execution_time_value(latest_fill),
+                }
+            )
+
+        return result
+
     def _fetch_open_trades(self, ib) -> list[Any]:
         trades = list(ib.openTrades() or [])
         if trades:
@@ -476,6 +571,27 @@ class IbkrGatewayClient:
             if trade_order_id == normalized_order_id:
                 return self._normalize_trade(trade)
         return None
+
+    def sync_order(self, order_id: str) -> dict[str, Any]:
+        normalized_order_id = str(order_id).strip()
+        if not normalized_order_id:
+            return {"id": "", "status": "unknown", "message": "order_id is required"}
+
+        ib = self._connect()
+        for trade in self._fetch_open_trades(ib):
+            trade_order_id = str(getattr(getattr(trade, "order", None), "orderId", "")).strip()
+            if trade_order_id == normalized_order_id:
+                normalized_trade = self._normalize_trade(trade)
+                return {
+                    "id": normalized_order_id,
+                    "status": str(normalized_trade.get("status", "") or "open"),
+                    "parent_order_id": normalized_order_id,
+                    "parent_status": str(normalized_trade.get("status", "") or ""),
+                    "symbol": normalized_trade.get("symbol", ""),
+                    "client_order_id": normalized_trade.get("client_order_id", ""),
+                }
+
+        return self._sync_order_from_fills(ib, normalized_order_id)
 
     def place_paper_bracket_order(self, trade: dict[str, Any], max_notional: float | None = None) -> dict[str, Any]:
         metrics = trade.get("metrics", {}) if isinstance(trade, dict) else {}

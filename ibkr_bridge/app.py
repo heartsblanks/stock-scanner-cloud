@@ -231,8 +231,8 @@ def get_order(order_id: str):
 @require_auth
 def sync_order(order_id: str):
     def sync_open_order():
-        order = get_ibkr_client().get_order(order_id)
-        if order:
+        order = get_ibkr_client().sync_order(order_id)
+        if order and str(order.get("status", "")).strip().lower() != "unknown":
             _audit_success(
                 "IBKR bridge order synced",
                 operation=f"sync_order:{order_id}",

@@ -25,6 +25,24 @@ class FakeIbkrClient:
             return {"id": "1001", "symbol": "AAPL", "status": "Submitted"}
         return None
 
+    def sync_order(self, order_id):
+        if str(order_id) == "1001":
+            return {
+                "id": "1001",
+                "status": "closed",
+                "parent_order_id": "1001",
+                "parent_status": "Filled",
+                "symbol": "AAPL",
+                "exit_event": "MANUAL_CLOSE",
+                "exit_order_id": "1002",
+                "exit_status": "Filled",
+                "exit_price": 209.5,
+                "exit_filled_qty": 10,
+                "exit_filled_avg_price": 209.5,
+                "exit_reason": "BROKER_FILLED_EXIT",
+            }
+        return {"id": str(order_id), "status": "unknown", "message": "missing"}
+
     def cancel_orders_by_symbol(self, symbol):
         return ["1001"] if str(symbol).upper() == "AAPL" else []
 
@@ -88,6 +106,16 @@ class IbkrBridgeApiTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["error"], "service_unavailable")
         self.assertEqual(payload["operation"], "get_order:9999")
+
+    def test_sync_order_route_returns_completed_order_payload(self):
+        with patch("ibkr_bridge.app.get_ibkr_client", return_value=FakeIbkrClient()):
+            response = self.client.get("/orders/1001/sync")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["id"], "1001")
+        self.assertEqual(payload["exit_order_id"], "1002")
+        self.assertEqual(payload["exit_reason"], "BROKER_FILLED_EXIT")
 
     def test_cancel_orders_by_symbol_route_returns_canceled_ids(self):
         with patch("ibkr_bridge.app.get_ibkr_client", return_value=FakeIbkrClient()):

@@ -40,6 +40,23 @@ class _FakeTrade:
         self.orderStatus = _FakeStatus(status=status, remaining=remaining)
 
 
+class _FakeExecution:
+    def __init__(self, *, order_id, order_ref, price, shares, avg_price=None, side="BOT", time="2026-04-10T15:37:03+00:00"):
+        self.orderId = order_id
+        self.orderRef = order_ref
+        self.price = price
+        self.shares = shares
+        self.avgPrice = avg_price if avg_price is not None else price
+        self.side = side
+        self.time = time
+
+
+class _FakeFill:
+    def __init__(self, *, symbol, execution):
+        self.contract = _FakeContract(symbol)
+        self.execution = execution
+
+
 class IbkrConnectorTests(unittest.TestCase):
     def test_get_open_orders_filters_cancelled_rows(self):
         client = IbkrGatewayClient.__new__(IbkrGatewayClient)
@@ -67,6 +84,28 @@ class IbkrConnectorTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result["status"], "Cancelled")
         self.assertEqual(result["id"], "64")
+
+    def test_sync_order_uses_completed_execution_fills_when_order_is_no_longer_open(self):
+        client = IbkrGatewayClient.__new__(IbkrGatewayClient)
+        client._connect = lambda: object()
+        client._fetch_open_trades = lambda ib: []
+        client._fetch_recent_fills = lambda ib: [
+            _FakeFill(
+                symbol="RIVN",
+                execution=_FakeExecution(order_id=34, order_ref="scanner-RIVN-BUY-157100-317", price=15.71, shares=317, side="BOT", time="2026-04-10T15:35:13+00:00"),
+            ),
+            _FakeFill(
+                symbol="RIVN",
+                execution=_FakeExecution(order_id=36, order_ref="scanner-RIVN-BUY-157100-317", price=15.47, shares=317, side="SLD", time="2026-04-10T16:01:09+00:00"),
+            ),
+        ]
+
+        result = client.sync_order("34")
+
+        self.assertEqual(result["parent_order_id"], "34")
+        self.assertEqual(result["exit_order_id"], "36")
+        self.assertEqual(result["exit_price"], 15.47)
+        self.assertEqual(result["exit_reason"], "BROKER_FILLED_EXIT")
 
 
 if __name__ == "__main__":
