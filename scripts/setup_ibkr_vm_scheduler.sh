@@ -12,11 +12,13 @@ RUN_BASE_URL="${RUN_BASE_URL:-}"
 TIMEZONE="${TIMEZONE:-America/New_York}"
 START_SCHEDULE="${START_SCHEDULE:-15 9 * * 1-5}"
 STOP_SCHEDULE="${STOP_SCHEDULE:-0 17 * * 1-5}"
+LOGIN_ALERT_SCHEDULE="${LOGIN_ALERT_SCHEDULE:-*/10 9-16 * * 1-5}"
 SERVICE_ACCOUNT_NAME="${SERVICE_ACCOUNT_NAME:-ibkr-vm-scheduler}"
 SERVICE_ACCOUNT_EMAIL="${SERVICE_ACCOUNT_EMAIL:-${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com}"
 
 START_JOB_ID="${START_JOB_ID:-ibkr-vm-start}"
 STOP_JOB_ID="${STOP_JOB_ID:-ibkr-vm-stop}"
+LOGIN_ALERT_JOB_ID="${LOGIN_ALERT_JOB_ID:-ibkr-login-alert}"
 
 if [[ -z "${RUN_BASE_URL}" ]]; then
   RUN_BASE_URL="$(gcloud run services describe "${RUN_SERVICE_NAME}" \
@@ -27,6 +29,7 @@ fi
 
 START_URI="${RUN_BASE_URL}/scheduler/ibkr-vm-control"
 STOP_URI="${RUN_BASE_URL}/scheduler/ibkr-vm-control"
+LOGIN_ALERT_URI="${RUN_BASE_URL}/scheduler/ibkr-login-alert"
 
 echo "Using project: ${PROJECT_ID}"
 echo "Using instance: ${INSTANCE_NAME}"
@@ -109,7 +112,35 @@ else
     --oidc-token-audience="${RUN_BASE_URL}"
 fi
 
+echo "Creating or updating login alert job..."
+if gcloud scheduler jobs describe "${LOGIN_ALERT_JOB_ID}" --project="${PROJECT_ID}" --location="${LOCATION}" >/dev/null 2>&1; then
+  gcloud scheduler jobs update http "${LOGIN_ALERT_JOB_ID}" \
+    --project="${PROJECT_ID}" \
+    --location="${LOCATION}" \
+    --schedule="${LOGIN_ALERT_SCHEDULE}" \
+    --time-zone="${TIMEZONE}" \
+    --uri="${LOGIN_ALERT_URI}" \
+    --http-method=POST \
+    --update-headers="Content-Type=application/json" \
+    --message-body='{}' \
+    --oidc-service-account-email="${SERVICE_ACCOUNT_EMAIL}" \
+    --oidc-token-audience="${RUN_BASE_URL}"
+else
+  gcloud scheduler jobs create http "${LOGIN_ALERT_JOB_ID}" \
+    --project="${PROJECT_ID}" \
+    --location="${LOCATION}" \
+    --schedule="${LOGIN_ALERT_SCHEDULE}" \
+    --time-zone="${TIMEZONE}" \
+    --uri="${LOGIN_ALERT_URI}" \
+    --http-method=POST \
+    --update-headers="Content-Type=application/json" \
+    --message-body='{}' \
+    --oidc-service-account-email="${SERVICE_ACCOUNT_EMAIL}" \
+    --oidc-token-audience="${RUN_BASE_URL}"
+fi
+
 echo
 echo "IBKR VM scheduler jobs are configured:"
 echo "- ${START_JOB_ID}: ${START_SCHEDULE} (${TIMEZONE})"
 echo "- ${STOP_JOB_ID}: ${STOP_SCHEDULE} (${TIMEZONE})"
+echo "- ${LOGIN_ALERT_JOB_ID}: ${LOGIN_ALERT_SCHEDULE} (${TIMEZONE})"
