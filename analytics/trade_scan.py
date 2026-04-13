@@ -582,6 +582,14 @@ def evaluate_symbol(
     now_ny = get_ny_now()
     minutes_after_open = (now_ny.hour * 60 + now_ny.minute) - (9 * 60 + 30)
     metrics["minutes_after_open"] = minutes_after_open
+    late_long_confidence_boost = 0
+    if direction == "BUY":
+        if minutes_after_open >= 210:
+            late_long_confidence_boost += 2
+        if minutes_after_open >= 270:
+            late_long_confidence_boost += 2
+    metrics["late_long_confidence_boost"] = late_long_confidence_boost
+    metrics["required_confidence"] = (MIN_SHORT_CONFIDENCE if direction == "SELL" else MIN_CONFIDENCE) + late_long_confidence_boost
 
     # Hard entry cutoff temporarily disabled.
     hard_entry_cutoff = False
@@ -599,6 +607,17 @@ def evaluate_symbol(
                 "checks": checks,
                 "metrics": metrics,
             }
+
+    checks["power_hour_long_rule"] = True
+    if direction == "BUY" and info["type"] == "stock" and minutes_after_open >= 300 and info["priority"] < 10:
+        checks["power_hour_long_rule"] = False
+        return {
+            "name": name,
+            "decision": "REJECTED",
+            "final_reason": "Power-hour long setups require top-tier priority.",
+            "checks": checks,
+            "metrics": metrics,
+        }
 
     sizing = calculate_position_sizing(
         account_size=account_size,
@@ -723,7 +742,7 @@ def evaluate_symbol(
             time_penalty += 6
 
     final_confidence = base_confidence + priority - time_penalty
-    required_confidence = MIN_SHORT_CONFIDENCE if direction == "SELL" else MIN_CONFIDENCE
+    required_confidence = metrics["required_confidence"]
 
     metrics.update({
         "base_confidence": base_confidence,

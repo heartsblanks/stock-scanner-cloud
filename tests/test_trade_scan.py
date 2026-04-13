@@ -90,6 +90,45 @@ class TradeScanLateSessionTests(unittest.TestCase):
         self.assertEqual(result["final_reason"], "Later in session: only stronger names allowed.")
         self.assertFalse(result["checks"]["late_session_strict_rule"])
 
+    def test_power_hour_long_priority_nine_stock_is_rejected(self):
+        info = {"symbol": "GOOGL", "type": "stock", "priority": 9, "market": "NASDAQ"}
+        candles = build_valid_breakout_candles()
+
+        with patch.dict(os.environ, {"ENABLE_LATE_SESSION_HARD_BLOCK": "false"}, clear=False):
+            with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 14, 45, tzinfo=NY_TZ)):
+                result = evaluate_symbol(
+                    name="Alphabet",
+                    info=info,
+                    candles=candles,
+                    account_size=100000.0,
+                    benchmark_directions={"NASDAQ": "BUY"},
+                    current_open_positions=0,
+                    current_open_exposure=0.0,
+                )
+
+        self.assertEqual(result["decision"], "REJECTED")
+        self.assertEqual(result["final_reason"], "Power-hour long setups require top-tier priority.")
+        self.assertFalse(result["checks"]["power_hour_long_rule"])
+
+    def test_power_hour_long_priority_ten_stock_can_still_pass(self):
+        info = {"symbol": "GOOGL", "type": "stock", "priority": 10, "market": "NASDAQ"}
+        candles = build_valid_breakout_candles()
+
+        with patch.dict(os.environ, {"ENABLE_LATE_SESSION_HARD_BLOCK": "false"}, clear=False):
+            with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 14, 45, tzinfo=NY_TZ)):
+                result = evaluate_symbol(
+                    name="Alphabet",
+                    info=info,
+                    candles=candles,
+                    account_size=100000.0,
+                    benchmark_directions={"NASDAQ": "BUY"},
+                    current_open_positions=0,
+                    current_open_exposure=0.0,
+                )
+
+        self.assertTrue(result["checks"]["power_hour_long_rule"])
+        self.assertEqual(result["metrics"]["late_long_confidence_boost"], 4)
+
 
 class TradeScanSizingConfigTests(unittest.TestCase):
     def test_position_sizing_defaults_to_full_equity_without_position_cap(self):
@@ -232,6 +271,25 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
 
         self.assertEqual(result["metrics"]["minutes_after_open"], 150)
         self.assertEqual(result["metrics"]["time_penalty"], 10)
+
+    def test_late_long_setups_require_extra_confidence(self):
+        info = {"symbol": "GOOGL", "type": "stock", "priority": 9, "market": "NASDAQ"}
+        candles = build_valid_breakout_candles()
+
+        with patch.dict(os.environ, {"ENABLE_LATE_SESSION_HARD_BLOCK": "false"}, clear=False):
+            with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 13, 15, tzinfo=NY_TZ)):
+                result = evaluate_symbol(
+                    name="Alphabet",
+                    info=info,
+                    candles=candles,
+                    account_size=100000.0,
+                    benchmark_directions={"NASDAQ": "BUY"},
+                    current_open_positions=0,
+                    current_open_exposure=0.0,
+                )
+
+        self.assertEqual(result["metrics"]["late_long_confidence_boost"], 2)
+        self.assertEqual(result["metrics"]["required_confidence"], 77)
 
     def test_short_setups_get_extra_midday_time_penalty(self):
         info = {"symbol": "PLUG", "type": "stock", "priority": 9, "market": "SP500"}
