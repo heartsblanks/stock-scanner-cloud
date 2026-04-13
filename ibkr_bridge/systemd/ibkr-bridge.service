@@ -10,7 +10,7 @@ Group=ibkr
 WorkingDirectory=/opt/stock-scanner-cloud
 EnvironmentFile=/etc/ibkr-bridge.env
 EnvironmentFile=-/etc/ibkr-gateway.env
-ExecStart=/usr/bin/python3 -m ibkr_bridge.app
+ExecStart=/opt/stock-scanner-cloud/.venv/bin/python -m ibkr_bridge.app
 Restart=always
 RestartSec=5
 

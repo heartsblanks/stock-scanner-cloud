@@ -239,6 +239,7 @@ bash scripts/deploy_ibkr_vm.sh
 That script:
 - SSHes into the VM
 - fast-forwards the `ibkr-parallel-eval` checkout
+- refreshes the repo-local Python virtualenv and installs `requirements.txt`
 - refreshes the `ibkr-gateway` and `ibkr-bridge` systemd unit files from the repo
 - reloads systemd
 - restarts both services
