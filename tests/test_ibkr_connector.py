@@ -70,6 +70,29 @@ class _FakePositionRow:
         self.avgCost = avg_cost
 
 
+class _FakeMarketOrder:
+    def __init__(self, action, qty):
+        self.action = action
+        self.totalQuantity = qty
+        self.orderRef = ""
+
+
+class _FakeCloseTrade:
+    def __init__(self, *, symbol, order_id, status, filled=0.0, remaining=0.0, avg_fill_price=0.0):
+        self.contract = _FakeContract(symbol)
+        self.order = _FakeOrder(
+            order_id=order_id,
+            order_ref=f"scanner-close-{symbol}",
+            action="SELL",
+            qty=remaining or filled or 1,
+            order_type="MKT",
+        )
+        self.orderStatus = _FakeStatus(status=status, filled=filled, remaining=remaining)
+        self.fills = []
+        self.log = []
+        self.advancedError = ""
+
+
 class _FakeIbForPositions:
     def __init__(self, positions):
         self._positions = positions
@@ -150,6 +173,40 @@ class IbkrConnectorTests(unittest.TestCase):
         self.assertEqual(fake_ib.req_tickers_calls, 0)
         self.assertEqual(result[0]["symbol"], "NVDA")
         self.assertEqual(result[0]["current_price"], 189.6092)
+
+    def test_close_position_marks_unresolved_when_position_stays_open(self):
+        client = IbkrGatewayClient.__new__(IbkrGatewayClient)
+        fake_position = _FakePositionRow(symbol="NVDA", qty=52, avg_cost=189.60923075, con_id=4815747)
+        fake_trade = _FakeCloseTrade(symbol="NVDA", order_id=65, status="Submitted", remaining=52.0)
+
+        class _FakeIb:
+            def qualifyContracts(self, contract):
+                return [contract]
+
+            def placeOrder(self, contract, order):
+                return fake_trade
+
+        client._connect = lambda: _FakeIb()
+        client._find_position_row = lambda ib, symbol: fake_position
+        client._load_order_classes = lambda: (None, _FakeMarketOrder, None, _FakeContract)
+        client._normalize_trade = lambda trade: {"id": "65", "status": "Submitted"}
+        client._close_poll_config = lambda: (1, 0.0)
+        client._order_status_snapshot = lambda trade: {
+            "status": "Submitted",
+            "filled_qty": 0.0,
+            "avg_fill_price": 0.0,
+            "filled_at": "",
+        }
+        client._position_is_open = lambda ib, symbol: True
+
+        result = client.close_position("NVDA")
+
+        self.assertTrue(result["attempted"])
+        self.assertTrue(result["placed"])
+        self.assertTrue(result["close_failed"])
+        self.assertFalse(result["position_closed"])
+        self.assertEqual(result["reason"], "broker_close_not_confirmed")
+        self.assertEqual(result["status"], "Submitted")
 
 
 if __name__ == "__main__":

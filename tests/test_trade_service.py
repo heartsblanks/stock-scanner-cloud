@@ -123,6 +123,60 @@ class TradeServiceTests(unittest.TestCase):
         self.assertEqual(result["results"][0]["reason"], "broker_close_failed")
         self.assertEqual(result["results"][0]["order_id"], "65")
 
+    def test_ibkr_eod_close_does_not_count_unresolved_order_as_closed(self):
+        result = execute_close_all_paper_positions(
+            get_open_positions=lambda: [
+                {
+                    "symbol": "NVDA",
+                    "qty": 52,
+                    "side": "long",
+                    "current_price": "188.50",
+                    "broker": "IBKR",
+                }
+            ],
+            get_managed_open_paper_trades_for_eod_close=lambda: [
+                {
+                    "timestamp_utc": "2026-04-10T15:36:53+00:00",
+                    "symbol": "NVDA",
+                    "name": "NVIDIA",
+                    "mode": "core_one",
+                    "side": "BUY",
+                    "shares": "52",
+                    "entry_price": "189.59",
+                    "stop_price": "187.532",
+                    "target_price": "193.706",
+                    "broker": "IBKR",
+                    "broker_order_id": "40",
+                    "broker_parent_order_id": "40",
+                }
+            ],
+            cancel_open_orders_for_symbol=lambda symbol: ["41", "42"],
+            close_position=lambda symbol, cancel_orders=True: {
+                "id": "65",
+                "status": "Submitted",
+                "position_closed": False,
+                "close_failed": False,
+                "reason": "",
+                "status_transitions": [
+                    {"attempt": 0, "status": "PendingSubmit"},
+                    {"attempt": 12, "status": "Submitted", "broker_position_open": True},
+                ],
+            },
+            get_order_by_id=lambda order_id, nested=False: {"status": "Submitted"},
+            safe_insert_broker_order=lambda **kwargs: None,
+            append_trade_log=lambda row: None,
+            safe_insert_trade_event=lambda **kwargs: None,
+            upsert_trade_lifecycle=lambda **kwargs: None,
+            to_float_or_none=to_float_or_none,
+            parse_iso_utc=parse_iso_utc,
+        )
+
+        self.assertEqual(result["closed_count"], 0)
+        self.assertEqual(result["skipped_count"], 1)
+        self.assertFalse(result["results"][0]["closed"])
+        self.assertEqual(result["results"][0]["reason"], "broker_close_unresolved")
+        self.assertEqual(result["results"][0]["order_id"], "65")
+
 
 if __name__ == "__main__":
     unittest.main()

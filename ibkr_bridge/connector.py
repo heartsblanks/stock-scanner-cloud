@@ -895,11 +895,9 @@ class IbkrGatewayClient:
             final_snapshot = dict(current_snapshot)
             last_status = current_status
 
-        close_filled = (
-            str(final_snapshot.get("status", "")).strip().lower() == "filled"
-            or not broker_position_open
-        )
-        close_failed = broker_position_open and str(final_snapshot.get("status", "")).strip() in {"Cancelled", "ApiCancelled", "Inactive"}
+        final_status = str(final_snapshot.get("status", "")).strip()
+        close_filled = final_status.lower() == "filled" or not broker_position_open
+        close_failed = broker_position_open
         result_reason = ""
         if close_failed:
             result_reason = "broker_close_not_confirmed"
@@ -911,7 +909,7 @@ class IbkrGatewayClient:
             "action": action.lower(),
             "qty": abs(qty),
             "order_id": normalized_trade.get("id", ""),
-            "status": str(final_snapshot.get("status", "")).strip() or normalized_trade.get("status", ""),
+            "status": final_status or normalized_trade.get("status", ""),
             "filled_qty": final_snapshot.get("filled_qty", 0.0),
             "filled_avg_price": final_snapshot.get("avg_fill_price", 0.0),
             "filled_at": final_snapshot.get("filled_at", ""),

@@ -205,6 +205,29 @@ def execute_close_all_paper_positions(
                 close_response=close_response,
             )
             continue
+        if not close_filled:
+            skipped_count += 1
+            unresolved_reason = str(close_response.get("reason", "") or "broker_close_unresolved")
+            results.append({
+                "symbol": symbol,
+                "closed": False,
+                "reason": "broker_close_unresolved",
+                "details": unresolved_reason,
+                "order_id": close_order_id,
+                "status": close_order_status,
+                "broker": broker_name,
+            })
+            log_warning(
+                "Paper EOD close unresolved after broker polling",
+                component="trade_service",
+                operation="execute_close_all_paper_positions",
+                symbol=symbol,
+                broker=broker_name,
+                order_id=close_order_id,
+                status=close_order_status,
+                close_response=close_response,
+            )
+            continue
         if open_row and close_filled:
             entry_timestamp_utc = str(open_row.get("timestamp_utc", "")).strip()
             entry_timestamp = parse_iso_utc(entry_timestamp_utc) if entry_timestamp_utc else None
