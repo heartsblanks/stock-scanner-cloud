@@ -103,6 +103,10 @@ class IbkrGatewayClient:
         self._disconnect()
         return self._connect()
 
+    def _is_open_order_status(self, status: str) -> bool:
+        normalized = str(status or "").strip().lower()
+        return normalized not in {"", "filled", "cancelled", "apicancelled", "inactive"}
+
     def _find_position_row(self, ib, symbol: str):
         account_id = self._resolve_account_id(ib)
         normalized_symbol = str(symbol).strip().upper()
@@ -452,27 +456,26 @@ class IbkrGatewayClient:
         return fallback_trades
 
     def get_open_orders(self) -> list[dict[str, Any]]:
-        ib = self._reset_connection()
-        try:
-            trades = self._fetch_open_trades(ib)
-            return [self._normalize_trade(trade) for trade in trades]
-        finally:
-            self._disconnect()
+        ib = self._connect()
+        trades = self._fetch_open_trades(ib)
+        normalized_trades = [self._normalize_trade(trade) for trade in trades]
+        return [
+            trade
+            for trade in normalized_trades
+            if self._is_open_order_status(trade.get("status", "")) and _to_float(trade.get("remaining_qty", 0.0)) > 0
+        ]
 
     def get_order(self, order_id: str) -> dict[str, Any] | None:
         normalized_order_id = str(order_id).strip()
         if not normalized_order_id:
             return None
 
-        ib = self._reset_connection()
-        try:
-            for trade in self._fetch_open_trades(ib):
-                trade_order_id = str(getattr(getattr(trade, "order", None), "orderId", "")).strip()
-                if trade_order_id == normalized_order_id:
-                    return self._normalize_trade(trade)
-            return None
-        finally:
-            self._disconnect()
+        ib = self._connect()
+        for trade in self._fetch_open_trades(ib):
+            trade_order_id = str(getattr(getattr(trade, "order", None), "orderId", "")).strip()
+            if trade_order_id == normalized_order_id:
+                return self._normalize_trade(trade)
+        return None
 
     def place_paper_bracket_order(self, trade: dict[str, Any], max_notional: float | None = None) -> dict[str, Any]:
         metrics = trade.get("metrics", {}) if isinstance(trade, dict) else {}
@@ -517,7 +520,7 @@ class IbkrGatewayClient:
             notional_cap=round(notional_cap, 2),
         )
 
-        ib = self._reset_connection()
+        ib = self._connect()
         LimitOrder, MarketOrder, StopOrder, Stock = self._load_order_classes()
         contract = Stock(symbol, "SMART", "USD")
         try:
@@ -539,7 +542,6 @@ class IbkrGatewayClient:
                 operation="place_paper_bracket_order",
                 symbol=symbol,
             )
-            self._disconnect()
             return {
                 "attempted": True,
                 "placed": False,
@@ -643,8 +645,6 @@ class IbkrGatewayClient:
             stop_loss_status=stop_loss_status,
             estimated_notional=estimated_notional,
         )
-        self._disconnect()
-
         return {
             "attempted": True,
             "placed": True,
