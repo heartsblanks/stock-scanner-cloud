@@ -79,7 +79,7 @@ else
     --time-zone="${TIMEZONE}" \
     --uri="${START_URI}" \
     --http-method=POST \
-    --update-headers="Content-Type=application/json" \
+    --headers="Content-Type=application/json" \
     --message-body='{"action":"start"}' \
     --oidc-service-account-email="${SERVICE_ACCOUNT_EMAIL}" \
     --oidc-token-audience="${RUN_BASE_URL}"
@@ -106,7 +106,7 @@ else
     --time-zone="${TIMEZONE}" \
     --uri="${STOP_URI}" \
     --http-method=POST \
-    --update-headers="Content-Type=application/json" \
+    --headers="Content-Type=application/json" \
     --message-body='{"action":"stop"}' \
     --oidc-service-account-email="${SERVICE_ACCOUNT_EMAIL}" \
     --oidc-token-audience="${RUN_BASE_URL}"
@@ -133,7 +133,7 @@ else
     --time-zone="${TIMEZONE}" \
     --uri="${LOGIN_ALERT_URI}" \
     --http-method=POST \
-    --update-headers="Content-Type=application/json" \
+    --headers="Content-Type=application/json" \
     --message-body='{}' \
     --oidc-service-account-email="${SERVICE_ACCOUNT_EMAIL}" \
     --oidc-token-audience="${RUN_BASE_URL}"
