@@ -3,6 +3,7 @@ import DashboardFilters from "../components/DashboardFilters";
 import AttentionRequiredPanel from "../components/dashboard/AttentionRequiredPanel";
 import ExecutionInsightsSection from "../components/dashboard/ExecutionInsightsSection";
 import HealthOverviewSection from "../components/dashboard/HealthOverviewSection";
+import SchedulerHealthSection from "../components/dashboard/SchedulerHealthSection";
 import HourlyAttemptOutcomeChart from "../components/HourlyAttemptOutcomeChart";
 import HourlyOutcomeQualityTable from "../components/HourlyOutcomeQualityTable";
 import HourlyPerformanceChart from "../components/HourlyPerformanceChart";
@@ -138,6 +139,7 @@ export default function DashboardPage() {
     setReconciliationSymbolFilter,
     reconciliationHistory,
     riskExposureSummary,
+    opsSummary,
     alpacaApiLogs,
     alpacaApiErrors,
     lastUpdated,
@@ -484,6 +486,13 @@ export default function DashboardPage() {
                 finalSizingMultiplier={finalSizingMultiplier}
                 multiplierStatus={multiplierStatus}
                 compact
+              />
+
+              <SchedulerHealthSection
+                opsSummary={opsSummary}
+                alpacaRecentAttempts={alpacaRecentAttempts}
+                ibkrRecentAttempts={ibkrRecentAttempts}
+                ibkrStatus={ibkrStatus}
               />
 
               <div className="dashboard-split">
