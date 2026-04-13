@@ -1083,6 +1083,8 @@ register_health_routes(
     get_paper_trade_attempt_hourly_summary=get_paper_trade_attempt_hourly_summary,
     get_ibkr_operational_status=get_ibkr_operational_status,
     prune_alpaca_api_logs=prune_alpaca_api_logs,
+    telegram_alerts_enabled=telegram_alerts_enabled,
+    send_telegram_alert=send_telegram_alert,
 )
 register_export_routes(app, run_daily_snapshot=run_daily_snapshot)
 register_analysis_routes(

@@ -1,3 +1,4 @@
+import os
 import time
 
 from flask import jsonify, request
@@ -18,6 +19,8 @@ def register_health_routes(
     get_paper_trade_attempt_hourly_summary,
     get_ibkr_operational_status,
     prune_alpaca_api_logs,
+    telegram_alerts_enabled,
+    send_telegram_alert,
 ) -> None:
     cache: dict[tuple[str, str], tuple[float, dict]] = {}
 
@@ -66,6 +69,7 @@ def register_health_routes(
                 "/scheduler/maintenance",
                 "/scheduler/ibkr-vm-control",
                 "/scheduler/ibkr-login-alert",
+                "/admin/test-alert",
             ],
         })
 
@@ -75,6 +79,31 @@ def register_health_routes(
             "ok": True,
             "service": "stock-scanner",
         })
+
+    @app.post("/admin/test-alert")
+    def admin_test_alert():
+        admin_token = str(os.getenv("ADMIN_API_TOKEN", "")).strip()
+        request_token = str(request.headers.get("X-Admin-Token", "")).strip()
+        if not admin_token:
+            return jsonify({"ok": False, "error": "admin_test_alert_disabled"}), 503
+        if request_token != admin_token:
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
+        if not telegram_alerts_enabled():
+            return jsonify({"ok": False, "error": "telegram_alerts_disabled"}), 503
+
+        payload = request.get_json(silent=True) or {}
+        message = str(payload.get("message", "")).strip() or "Stock Scanner admin test alert: Telegram delivery path is working."
+        alert_result = send_telegram_alert(
+            alert_key="admin-test-alert",
+            message=message,
+            payload={"source": "admin_test_alert"},
+        )
+        status_code = 200 if bool(alert_result.get("ok")) else 500
+        return jsonify({
+            "ok": bool(alert_result.get("ok", False)),
+            "route": "/admin/test-alert",
+            "alert_result": alert_result,
+        }), status_code
 
     @app.get("/db-health")
     def db_health():
