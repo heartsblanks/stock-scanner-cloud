@@ -185,7 +185,7 @@ Parallel IBKR evaluation strategy:
 - current implementation status: a repeatable VM desktop bootstrap path is now part of the repo so `xrdp`, `xfce`, and headless `Xvfb` support can be applied consistently on the IBKR VM
 - current implementation status: the bridge now also supports the first operational write-path actions for cancel-by-symbol and market close-position flows; paper bracket placement remains deferred
 - current implementation status: holiday-aware VM control is now implemented in the main Cloud Run app through `POST /scheduler/ibkr-vm-control`, which reuses the NYSE calendar before starting the VM on trading days
-- current implementation status: IBKR login-required alerting now exists through `POST /scheduler/ibkr-login-alert`, which can call a webhook-backed Signal relay when the broker session needs operator login
+- current implementation status: IBKR login-required alerting now exists through `POST /scheduler/ibkr-login-alert`, which can send a Telegram bot alert when the broker session needs operator login
 - current implementation status: the persistence model is being extended to tag paper-trading rows by broker so Alpaca and IBKR orders, trade events, lifecycles, and attempts can be compared cleanly from the database
 - current implementation status: the scan flow is now being split into two true parallel tracks instead of one shared candidate set, so Alpaca continues to evaluate from Twelve Data while IBKR evaluates from IBKR market data before placing to its own paper account
 - target architecture:

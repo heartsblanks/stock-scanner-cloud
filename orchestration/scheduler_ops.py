@@ -233,16 +233,16 @@ def execute_ibkr_login_alert(
     *,
     now_ny: datetime,
     get_ibkr_operational_status: Callable[[], dict[str, Any]],
-    signal_alerts_enabled: bool,
-    send_signal_alert: Callable[..., dict[str, Any]],
+    telegram_alerts_enabled: bool,
+    send_telegram_alert: Callable[..., dict[str, Any]],
 ) -> dict[str, Any]:
-    if not signal_alerts_enabled:
+    if not telegram_alerts_enabled:
         return {
             "ok": True,
             "scheduler": "ibkr-login-alert",
             "current_new_york_time": now_ny.strftime("%Y-%m-%d %H:%M"),
             "noop": True,
-            "reason": "signal_alerts_disabled",
+            "reason": "telegram_alerts_disabled",
         }
 
     if not is_weekday(now_ny):
@@ -291,7 +291,7 @@ def execute_ibkr_login_alert(
         f"State={state}. "
         f"Cloud Run cannot use the Gateway until you log in."
     )
-    alert_result = send_signal_alert(
+    alert_result = send_telegram_alert(
         alert_key="ibkr-login-required",
         message=message,
         payload={

@@ -136,24 +136,24 @@ Recommended consolidated scheduler setup:
 - `ibkr-login-alert`
   - `*/10 9-16 * * 1-5 (America/New_York)`
   - Calls `POST /scheduler/ibkr-login-alert`
-  - Only sends an alert when the IBKR bridge reports `LOGIN_REQUIRED` and `SIGNAL_ALERT_WEBHOOK_URL` is configured
+  - Only sends an alert when the IBKR bridge reports `LOGIN_REQUIRED` and Telegram alert credentials are configured
 
 ---
 
 ## 🔔 IBKR Login Alerts
 
-The app can emit an IBKR login-required alert through a generic webhook relay.
+The app can emit an IBKR login-required alert directly through a Telegram bot.
 
 Required environment variables:
 
-- `SIGNAL_ALERT_WEBHOOK_URL`
-- `SIGNAL_ALERT_DEDUP_MINUTES` (optional, defaults to `30`)
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+- `TELEGRAM_ALERT_DEDUP_MINUTES` (optional, defaults to `30`)
 
 Important note:
 
-- This does not talk to Signal directly from Cloud Run.
-- You need a small webhook-to-Signal bridge, typically powered by `signal-cli` or another relay you control.
-- On the Signal side, that usually means a one-time device link or account registration for the bridge, not a setting change inside the mobile app itself.
+- You need to create a Telegram bot once through `@BotFather`.
+- You need to send at least one message to that bot from the destination chat before alerts can be delivered there.
 
 ## 📊 Dashboard
 

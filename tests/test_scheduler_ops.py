@@ -175,18 +175,18 @@ class SchedulerOpsTests(unittest.TestCase):
         self.assertTrue(result["noop"])
         self.assertEqual(result["reason"], "IBKR VM is already stopped.")
 
-    def test_ibkr_login_alert_noops_when_signal_alerts_disabled(self):
+    def test_ibkr_login_alert_noops_when_telegram_alerts_disabled(self):
         now_ny = datetime(2026, 4, 8, 10, 0, tzinfo=NY_TZ)
         result = execute_ibkr_login_alert(
             now_ny=now_ny,
             get_ibkr_operational_status=lambda: {"enabled": True, "login_required": True},
-            signal_alerts_enabled=False,
-            send_signal_alert=lambda **kwargs: {"unexpected": True},
+            telegram_alerts_enabled=False,
+            send_telegram_alert=lambda **kwargs: {"unexpected": True},
         )
 
         self.assertTrue(result["ok"])
         self.assertTrue(result["noop"])
-        self.assertEqual(result["reason"], "signal_alerts_disabled")
+        self.assertEqual(result["reason"], "telegram_alerts_disabled")
 
     def test_ibkr_login_alert_sends_when_login_is_required(self):
         now_ny = datetime(2026, 4, 8, 10, 0, tzinfo=NY_TZ)
@@ -204,8 +204,8 @@ class SchedulerOpsTests(unittest.TestCase):
                 "position_count": 0,
                 "errors": ["positions timeout"],
             },
-            signal_alerts_enabled=True,
-            send_signal_alert=lambda **kwargs: captured.update(kwargs) or {"ok": True, "sent": True, "reason": "delivered"},
+            telegram_alerts_enabled=True,
+            send_telegram_alert=lambda **kwargs: captured.update(kwargs) or {"ok": True, "sent": True, "reason": "delivered"},
         )
 
         self.assertTrue(result["ok"])
@@ -219,8 +219,8 @@ class SchedulerOpsTests(unittest.TestCase):
         result = execute_ibkr_login_alert(
             now_ny=now_ny,
             get_ibkr_operational_status=lambda: {"enabled": True, "login_required": False, "state": "READY"},
-            signal_alerts_enabled=True,
-            send_signal_alert=lambda **kwargs: {"unexpected": True},
+            telegram_alerts_enabled=True,
+            send_telegram_alert=lambda **kwargs: {"unexpected": True},
         )
 
         self.assertTrue(result["ok"])

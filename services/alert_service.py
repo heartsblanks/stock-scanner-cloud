@@ -13,20 +13,23 @@ from core.logging_utils import log_info
 _ALERT_CACHE: dict[str, float] = {}
 
 
-def signal_alert_webhook_enabled() -> bool:
-    return bool(str(os.getenv("SIGNAL_ALERT_WEBHOOK_URL", "")).strip())
+def telegram_alerts_enabled() -> bool:
+    bot_token = str(os.getenv("TELEGRAM_BOT_TOKEN", "")).strip()
+    chat_id = str(os.getenv("TELEGRAM_CHAT_ID", "")).strip()
+    return bool(bot_token and chat_id)
 
 
-def send_signal_alert(*, alert_key: str, message: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    webhook_url = str(os.getenv("SIGNAL_ALERT_WEBHOOK_URL", "")).strip()
-    if not webhook_url:
+def send_telegram_alert(*, alert_key: str, message: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    bot_token = str(os.getenv("TELEGRAM_BOT_TOKEN", "")).strip()
+    chat_id = str(os.getenv("TELEGRAM_CHAT_ID", "")).strip()
+    if not bot_token or not chat_id:
         return {
             "ok": False,
             "sent": False,
-            "reason": "signal_webhook_not_configured",
+            "reason": "telegram_not_configured",
         }
 
-    dedupe_minutes = max(1, int(os.getenv("SIGNAL_ALERT_DEDUP_MINUTES", "30")))
+    dedupe_minutes = max(1, int(os.getenv("TELEGRAM_ALERT_DEDUP_MINUTES", "30")))
     now = time.time()
     last_sent_at = _ALERT_CACHE.get(alert_key, 0.0)
     if last_sent_at and (now - last_sent_at) < (dedupe_minutes * 60):
@@ -37,22 +40,28 @@ def send_signal_alert(*, alert_key: str, message: str, payload: dict[str, Any] |
             "dedupe_minutes": dedupe_minutes,
         }
 
+    lines = [message.strip()]
+    if payload:
+        for key, value in payload.items():
+            lines.append(f"{key}: {value}")
+    text = "\n".join(line for line in lines if line)
+
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     body = {
-        "message": message,
-        "text": message,
-        "payload": payload or {},
-        "alert_key": alert_key,
+        "chat_id": chat_id,
+        "text": text,
+        "disable_web_page_preview": True,
     }
 
     try:
-        response = requests.post(webhook_url, json=body, timeout=10)
+        response = requests.post(url, json=body, timeout=10)
         response.raise_for_status()
     except Exception as exc:
         log_exception(
-            "Signal alert send failed",
+            "Telegram alert send failed",
             exc,
             component="alert_service",
-            operation="send_signal_alert",
+            operation="send_telegram_alert",
             alert_key=alert_key,
         )
         return {
@@ -63,9 +72,9 @@ def send_signal_alert(*, alert_key: str, message: str, payload: dict[str, Any] |
 
     _ALERT_CACHE[alert_key] = now
     log_info(
-        "Signal alert delivered",
+        "Telegram alert delivered",
         component="alert_service",
-        operation="send_signal_alert",
+        operation="send_telegram_alert",
         alert_key=alert_key,
     )
     return {

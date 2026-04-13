@@ -101,7 +101,7 @@ from orchestration.scheduler_ops import (
 )
 
 from routes.sync import register_sync_routes
-from services.alert_service import send_signal_alert, signal_alert_webhook_enabled
+from services.alert_service import send_telegram_alert, telegram_alerts_enabled
 from services.sync_service import execute_sync_paper_trades
 from services.ibkr_repair_service import repair_ibkr_stale_closes
 from services.scan_service import execute_full_scan
@@ -1065,8 +1065,8 @@ def run_ibkr_login_alert_scheduler(*, now_ny: datetime):
     return build_execute_ibkr_login_alert(
         now_ny=now_ny,
         get_ibkr_operational_status=get_ibkr_operational_status,
-        signal_alerts_enabled=signal_alert_webhook_enabled(),
-        send_signal_alert=send_signal_alert,
+        telegram_alerts_enabled=telegram_alerts_enabled(),
+        send_telegram_alert=send_telegram_alert,
     )
 
 
