@@ -1,4 +1,6 @@
+import os
 import unittest
+from unittest.mock import patch
 
 from ibkr_bridge.connector import IbkrGatewayClient
 
@@ -23,8 +25,11 @@ class _FakeStatus:
 
 
 class _FakeContract:
-    def __init__(self, symbol):
+    def __init__(self, symbol, con_id=1):
         self.symbol = symbol
+        self.conId = con_id
+        self.exchange = "SMART"
+        self.currency = "USD"
 
 
 class _FakeTrade:
@@ -55,6 +60,30 @@ class _FakeFill:
     def __init__(self, *, symbol, execution):
         self.contract = _FakeContract(symbol)
         self.execution = execution
+
+
+class _FakePositionRow:
+    def __init__(self, *, symbol, qty, avg_cost, account="DU123", con_id=1):
+        self.account = account
+        self.contract = _FakeContract(symbol, con_id=con_id)
+        self.position = qty
+        self.avgCost = avg_cost
+
+
+class _FakeIbForPositions:
+    def __init__(self, positions):
+        self._positions = positions
+        self.req_tickers_calls = 0
+
+    def managedAccounts(self):
+        return ["DU123"]
+
+    def positions(self):
+        return self._positions
+
+    def reqTickers(self, *contracts):
+        self.req_tickers_calls += 1
+        return []
 
 
 class IbkrConnectorTests(unittest.TestCase):
@@ -106,6 +135,21 @@ class IbkrConnectorTests(unittest.TestCase):
         self.assertEqual(result["exit_order_id"], "36")
         self.assertEqual(result["exit_price"], 15.47)
         self.assertEqual(result["exit_reason"], "BROKER_FILLED_EXIT")
+
+    def test_get_positions_skips_ticker_enrichment_by_default(self):
+        fake_ib = _FakeIbForPositions([
+            _FakePositionRow(symbol="NVDA", qty=52, avg_cost=189.60923075, con_id=4815747),
+        ])
+        client = IbkrGatewayClient.__new__(IbkrGatewayClient)
+        client._connect = lambda: fake_ib
+        client.config = type("Cfg", (), {"account_id": "", "host": "127.0.0.1", "port": 4002, "client_id": 101, "readonly": False})()
+
+        with patch.dict(os.environ, {}, clear=False):
+            result = client.get_positions()
+
+        self.assertEqual(fake_ib.req_tickers_calls, 0)
+        self.assertEqual(result[0]["symbol"], "NVDA")
+        self.assertEqual(result[0]["current_price"], 189.6092)
 
 
 if __name__ == "__main__":
