@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import math
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -101,6 +102,58 @@ class IbkrGatewayClient:
     def _reset_connection(self):
         self._disconnect()
         return self._connect()
+
+    def _find_position_row(self, ib, symbol: str):
+        account_id = self._resolve_account_id(ib)
+        normalized_symbol = str(symbol).strip().upper()
+        for row in ib.positions() or []:
+            if account_id and str(getattr(row, "account", "")).strip() != account_id:
+                continue
+            contract = getattr(row, "contract", None)
+            if str(getattr(contract, "symbol", "")).strip().upper() == normalized_symbol:
+                return row
+        return None
+
+    def _position_is_open(self, ib, symbol: str) -> bool:
+        row = self._find_position_row(ib, symbol)
+        if row is None:
+            return False
+        return _to_float(getattr(row, "position", 0.0)) != 0.0
+
+    def _close_poll_config(self) -> tuple[int, float]:
+        try:
+            attempts = max(1, int(os.getenv("IBKR_CLOSE_POLL_ATTEMPTS", "12")))
+        except Exception:
+            attempts = 12
+        try:
+            interval_seconds = max(0.25, float(os.getenv("IBKR_CLOSE_POLL_INTERVAL_SECONDS", "1.0")))
+        except Exception:
+            interval_seconds = 1.0
+        return attempts, interval_seconds
+
+    def _order_status_snapshot(self, trade: Any) -> dict[str, Any]:
+        order = getattr(trade, "order", None)
+        order_status = getattr(trade, "orderStatus", None)
+        fills = list(getattr(trade, "fills", []) or [])
+        latest_fill = fills[-1] if fills else None
+        execution = getattr(latest_fill, "execution", None)
+        execution_time = getattr(execution, "time", None)
+        if hasattr(execution_time, "isoformat"):
+            filled_at = execution_time.isoformat()
+        elif execution_time is not None:
+            filled_at = str(execution_time)
+        else:
+            filled_at = ""
+        return {
+            "order_id": str(getattr(order, "orderId", "")).strip(),
+            "status": str(getattr(order_status, "status", "")).strip(),
+            "filled_qty": _to_float(getattr(order_status, "filled", 0.0)),
+            "remaining_qty": _to_float(getattr(order_status, "remaining", 0.0)),
+            "avg_fill_price": _to_float(getattr(order_status, "avgFillPrice", 0.0)),
+            "last_fill_price": _to_float(getattr(order_status, "lastFillPrice", 0.0)),
+            "why_held": str(getattr(order_status, "whyHeld", "")).strip(),
+            "filled_at": filled_at,
+        }
 
     def _resolve_account_id(self, ib) -> str:
         if self.config.account_id:
@@ -636,15 +689,7 @@ class IbkrGatewayClient:
             raise RuntimeError("symbol is required")
 
         ib = self._connect()
-        account_id = self._resolve_account_id(ib)
-        target_position = None
-        for row in ib.positions() or []:
-            if account_id and str(getattr(row, "account", "")).strip() != account_id:
-                continue
-            contract = getattr(row, "contract", None)
-            if str(getattr(contract, "symbol", "")).strip().upper() == normalized_symbol:
-                target_position = row
-                break
+        target_position = self._find_position_row(ib, normalized_symbol)
 
         if target_position is None:
             return {
@@ -675,6 +720,64 @@ class IbkrGatewayClient:
         trade = ib.placeOrder(contract, order)
 
         normalized_trade = self._normalize_trade(trade)
+        status_transitions: list[dict[str, Any]] = []
+        poll_attempts, poll_interval_seconds = self._close_poll_config()
+        last_snapshot = self._order_status_snapshot(trade)
+        last_status = str(last_snapshot.get("status", "")).strip()
+        status_transitions.append({
+            "attempt": 0,
+            **last_snapshot,
+        })
+        log_info(
+            "IBKR bridge close-position transition",
+            component="ibkr_bridge",
+            operation="close_position",
+            symbol=normalized_symbol,
+            attempt=0,
+            **last_snapshot,
+        )
+
+        final_snapshot = dict(last_snapshot)
+        broker_position_open = self._position_is_open(ib, normalized_symbol)
+        terminal_statuses = {"Filled", "Cancelled", "ApiCancelled", "Inactive"}
+
+        for attempt in range(1, poll_attempts + 1):
+            if last_status in terminal_statuses and not broker_position_open:
+                break
+            try:
+                ib.sleep(poll_interval_seconds)
+            except Exception:
+                time.sleep(poll_interval_seconds)
+
+            current_snapshot = self._order_status_snapshot(trade)
+            current_status = str(current_snapshot.get("status", "")).strip()
+            broker_position_open = self._position_is_open(ib, normalized_symbol)
+            if current_status != last_status or attempt == poll_attempts or not broker_position_open:
+                transition = {
+                    "attempt": attempt,
+                    **current_snapshot,
+                    "broker_position_open": broker_position_open,
+                }
+                status_transitions.append(transition)
+                log_info(
+                    "IBKR bridge close-position transition",
+                    component="ibkr_bridge",
+                    operation="close_position",
+                    symbol=normalized_symbol,
+                    **transition,
+                )
+            final_snapshot = dict(current_snapshot)
+            last_status = current_status
+
+        close_filled = (
+            str(final_snapshot.get("status", "")).strip().lower() == "filled"
+            or not broker_position_open
+        )
+        close_failed = broker_position_open and str(final_snapshot.get("status", "")).strip() in {"Cancelled", "ApiCancelled", "Inactive"}
+        result_reason = ""
+        if close_failed:
+            result_reason = "broker_close_not_confirmed"
+
         return {
             "attempted": True,
             "placed": True,
@@ -682,7 +785,14 @@ class IbkrGatewayClient:
             "action": action.lower(),
             "qty": abs(qty),
             "order_id": normalized_trade.get("id", ""),
-            "status": normalized_trade.get("status", ""),
+            "status": str(final_snapshot.get("status", "")).strip() or normalized_trade.get("status", ""),
+            "filled_qty": final_snapshot.get("filled_qty", 0.0),
+            "filled_avg_price": final_snapshot.get("avg_fill_price", 0.0),
+            "filled_at": final_snapshot.get("filled_at", ""),
+            "position_closed": not broker_position_open,
+            "close_failed": close_failed,
+            "reason": result_reason,
+            "status_transitions": status_transitions,
         }
 
 

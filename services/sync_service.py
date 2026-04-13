@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Callable
 from core.logging_utils import log_exception
+from core.logging_utils import log_info
+from core.logging_utils import log_warning
 from core.trade_math import (
     compute_duration_minutes,
     compute_realized_pnl,
@@ -153,8 +155,27 @@ def execute_sync_paper_trades(
                     }
                     exit_event = "MANUAL_CLOSE"
                     stale_reconciled = True
+                    log_info(
+                        "IBKR stale open trade reconciled closed from broker state",
+                        component="sync_service",
+                        operation="execute_sync_paper_trades",
+                        symbol=symbol,
+                        broker=broker_name,
+                        parent_order_id=parent_order_id,
+                    )
 
         if not exit_event:
+            if broker_name == "IBKR":
+                log_warning(
+                    "IBKR trade remains open on broker after sync",
+                    component="sync_service",
+                    operation="execute_sync_paper_trades",
+                    symbol=symbol,
+                    parent_order_id=parent_order_id,
+                    parent_status=sync_result.get("parent_status", ""),
+                    take_profit_status=sync_result.get("take_profit_status", ""),
+                    stop_loss_status=sync_result.get("stop_loss_status", ""),
+                )
             results.append({
                 "symbol": symbol,
                 "broker": broker_name,

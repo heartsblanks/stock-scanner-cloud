@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Callable
 from core.logging_utils import log_exception
+from core.logging_utils import log_info
+from core.logging_utils import log_warning
 from core.trade_math import (
     compute_duration_minutes,
     compute_realized_pnl,
@@ -109,7 +111,20 @@ def execute_close_all_paper_positions(
         close_filled_avg_price = ""
         close_filled_qty = qty
         close_filled = False
+        close_position_closed = bool(close_response.get("position_closed", False))
+        close_failed = bool(close_response.get("close_failed", False))
         broker_name = str(position.get("broker", "") or (open_row or {}).get("broker", "") or "ALPACA").strip().upper() or "ALPACA"
+        status_transitions = list(close_response.get("status_transitions") or [])
+
+        if status_transitions:
+            log_info(
+                "Paper EOD close status transitions observed",
+                component="trade_service",
+                operation="execute_close_all_paper_positions",
+                symbol=symbol,
+                broker=broker_name,
+                transitions=status_transitions,
+            )
 
         if close_order_id:
             try:
@@ -131,6 +146,29 @@ def execute_close_all_paper_positions(
                     symbol=symbol,
                 )
 
+        close_response_avg_fill_price = close_response.get("filled_avg_price", "")
+        if close_response_avg_fill_price not in (None, "", 0, 0.0, "0", "0.0"):
+            close_filled_avg_price = str(close_response_avg_fill_price).strip()
+            close_filled = True
+
+        close_response_filled_qty = close_response.get("filled_qty", "")
+        if close_response_filled_qty not in (None, "", 0, 0.0, "0", "0.0"):
+            close_filled_qty = str(close_response_filled_qty).strip()
+
+        if close_position_closed and not close_filled:
+            close_filled = True
+            if not close_filled_avg_price and current_price not in (None, "", "None"):
+                close_filled_avg_price = str(current_price).strip()
+            log_warning(
+                "Paper EOD close broker flattened position before fill sync",
+                component="trade_service",
+                operation="execute_close_all_paper_positions",
+                symbol=symbol,
+                broker=broker_name,
+                order_id=close_order_id,
+                fallback_exit_price=close_filled_avg_price,
+            )
+
         timestamp_utc = datetime.now(timezone.utc).isoformat()
         safe_insert_broker_order(
             order_id=close_order_id or f"close-request-{symbol}-{timestamp_utc}",
@@ -145,6 +183,28 @@ def execute_close_all_paper_positions(
             submitted_at=parse_iso_utc(timestamp_utc),
             filled_at=parse_iso_utc(timestamp_utc) if close_filled_avg_price else None,
         )
+        if close_failed and not close_filled:
+            skipped_count += 1
+            results.append({
+                "symbol": symbol,
+                "closed": False,
+                "reason": "broker_close_failed",
+                "details": str(close_response.get("reason", "") or "IBKR close order did not reach a terminal filled state."),
+                "order_id": close_order_id,
+                "status": close_order_status,
+                "broker": broker_name,
+            })
+            log_warning(
+                "Paper EOD close failed at broker",
+                component="trade_service",
+                operation="execute_close_all_paper_positions",
+                symbol=symbol,
+                broker=broker_name,
+                order_id=close_order_id,
+                status=close_order_status,
+                close_response=close_response,
+            )
+            continue
         if open_row and close_filled:
             entry_timestamp_utc = str(open_row.get("timestamp_utc", "")).strip()
             entry_timestamp = parse_iso_utc(entry_timestamp_utc) if entry_timestamp_utc else None
