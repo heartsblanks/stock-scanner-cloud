@@ -178,14 +178,14 @@ Parallel IBKR evaluation strategy:
 - current implementation status: the first broker-abstraction layer is now in place, with Alpaca wired behind a generic paper-broker adapter and the IBKR side now upgraded from a placeholder to a bridge-based contract that expects a VM-hosted HTTP service
 - current implementation status: a minimal `ibkr_bridge/` Flask service scaffold now exists in the repo so the GCP VM side has a concrete starting point and endpoint contract
 - current implementation status: VM deployment scaffolding now exists under `ibkr_bridge/systemd/` with a service unit, env template, and bridge runbook for the GCP VM path
-- current implementation status: the first real IBKR bridge read-path is now implemented for account, positions, and open-order reads; write-path endpoints remain intentionally deferred until IB Gateway connectivity is verified on the VM
+- current implementation status: the first real IBKR bridge read-path is now implemented for account, positions, and open-order reads, and the app-side paper flow now also uses bridge-backed write paths for sync, cancel, close, and paper order placement
 - cost-control plan: the IBKR VM should not run 24/7; it should be started and stopped by dedicated Cloud Scheduler jobs around the trading window, while IB Gateway login remains a manual daily step for now
 - operational compromise for now: keep the VM public IP attached while IB Gateway login is still a manual operator task from a laptop or phone; once admin access is moved to IAP or another private-only path, the public IP should be removed to reduce standing cost
 - current implementation status: the IBKR bridge service is being decoupled from raw Gateway port readiness so the dashboard can surface `LOGIN_REQUIRED` and `MARKET_DATA_UNAVAILABLE` states instead of only showing the VM as down
 - current implementation status: a repeatable VM desktop bootstrap path is now part of the repo so `xrdp`, `xfce`, and headless `Xvfb` support can be applied consistently on the IBKR VM
-- current implementation status: the bridge now also supports the first operational write-path actions for cancel-by-symbol and market close-position flows; paper bracket placement remains deferred
+- current implementation status: the bridge now supports operational write-path actions for cancel-by-symbol, market close-position flows, and paper bracket placement used by the app-side IBKR paper flow
 - current implementation status: holiday-aware VM control is now implemented in the main Cloud Run app through `POST /scheduler/ibkr-vm-control`, which reuses the NYSE calendar before starting the VM on trading days
-- current implementation status: IBKR login-required alerting now exists through `POST /scheduler/ibkr-login-alert`, which can send a Telegram bot alert when the broker session needs operator login
+- current implementation status: IBKR login-required alerting now exists through `POST /scheduler/ibkr-login-alert`, which sends Telegram bot alerts during the configured alert window
 - current implementation status: the persistence model is being extended to tag paper-trading rows by broker so Alpaca and IBKR orders, trade events, lifecycles, and attempts can be compared cleanly from the database
 - current implementation status: the scan flow is now being split into two true parallel tracks instead of one shared candidate set, so Alpaca continues to evaluate from Twelve Data while IBKR evaluates from IBKR market data before placing to its own paper account
 - target architecture:
@@ -591,13 +591,13 @@ A stable trade key should be derived from:
 - CLOSED must also be updated when Alpaca position flattening is detected through a separate broker-side exit order that is not the original TP/SL child leg
 
 ### 9.5 Current status
-**Implemented with one remaining edge-case investigation**
+**Implemented with a narrower residual ambiguity still worth monitoring**
 - lifecycle write hooks are present in scan, sync, and close-related flows
 - historical lifecycle backfill and repair utilities exist
 - delayed broker-side close fills are now materially handled through sync, reconciliation, and repair flows
 - stale OPEN lifecycle rows caused by delayed Friday EOD/manual closes have been repaired in production data
 - auto-heal support now exists for leftover broker positions detected during sync
-- one remaining edge case still requires investigation: a newer trade can be locally closed while the corresponding broker-side exit order is not yet uniquely recoverable during reconciliation for that exact parent order
+- reconciliation now detects ambiguous external-exit candidates explicitly instead of silently guessing one matching broker-side exit order for the parent trade
 
 ### 9.6 Delayed broker-side close fills and leftover-position recovery
 
@@ -612,7 +612,7 @@ Implemented behavior now includes:
 
 Remaining investigation:
 - if multiple historical trades exist for the same symbol, the system must continue ensuring that a delayed broker-side exit is mapped to the correct parent trade
-- one observed AAPL case still remains as a reconciliation mismatch where the database records a local close but reconciliation cannot yet recover a unique broker-side exit order for that exact 1-share parent trade
+- AAPL-style same-symbol rapid re-entry cases are now surfaced as explicit `exit_not_resolved` ambiguity warnings when multiple external exits remain plausible for the same parent trade
 
 Primary implementation areas:
 - `alpaca_sync.py`
@@ -1056,13 +1056,14 @@ Reconciliation compares local trade data and broker-side order/exit data.
 - `broker_orders` does not contain a `broker` column in the current schema
 
 ### Current status
-**Implemented across storage, API, and UI, with one remaining operational edge case**
+**Implemented across storage, API, and UI, with a smaller residual ambiguity case still monitored**
 - reconciliation runs and mismatch detail APIs exist
 - reconciliation summary, detail, and history views exist in the dashboard UI
 - reconciliation is now database-first and no longer depends on operational CSV pairing for source-of-truth trade matching
 - external broker-side exits are materially recovered and compared correctly
 - `MANUAL_CLOSE` and `EXTERNAL_EXIT` are normalized as equivalent reconciliation outcomes
-- one remaining mismatch pattern has been observed where a local close exists but reconciliation cannot recover a unique broker-side exit order for the exact parent order
+- ambiguous external broker exits are now surfaced as explicit unresolved reconciliation warnings instead of being silently paired to a guessed exit order
+- deeper broker-order recovery for rare same-symbol rapid re-entry / rapid external-exit sequences is still worth monitoring
 
 ---
 
@@ -1147,10 +1148,10 @@ Reconciliation compares local trade data and broker-side order/exit data.
 - Artifact Registry retention hardening; a repository cleanup policy file now exists in `scripts/artifact_registry_cleanup_policy.json`, but production cleanup policy application and validation should be treated as an operational follow-up item
 
 ### Missing
-- volatility-based sizing (ATR)
+- deeper ATR-aware sizing beyond the current trade-quality filter
 - confidence calibration analytics
 - retention/cleanup policy for growing DB tables and exported artifacts
-- deeper verification/repair path for the rare case where a local close exists but reconciliation cannot recover a unique broker exit order for the exact parent trade
+- deeper verification/repair path for the rare case where multiple broker exits remain plausible for the exact parent trade even after ambiguity detection
 
 ---
 
@@ -1180,14 +1181,13 @@ Reconciliation compares local trade data and broker-side order/exit data.
 
 ## 20. Immediate Next Steps
 
-1. investigate and fix the final reconciliation edge case where a local close exists but no unique broker-side exit order is recovered for the exact parent trade
-2. monitor `trade_lifecycles`, `paper_trade_attempts`, and scheduler behavior through several real market sessions after the latest scheduler and late-session trading changes
-3. verify the consolidated `market-ops` and `daily-post-close` scheduler flow against delayed fills, close timing, and post-close sync/reconciliation ordering
-4. define and implement retention policy for large operational tables and exported snapshots, especially `alpaca_api_logs`
-5. finalize teardown of legacy Cloud SQL / migration resources once Neon has been stable long enough
-6. improve dashboard operational visibility further, especially placement/skip reasons by hour and scheduler/job health indicators
-7. document runtime environment variables, scheduler jobs, and deployment steps more clearly
-8. continue reducing remaining integration/orchestration complexity inside `app.py`
+1. monitor the new reconciliation ambiguity handling through several live market sessions and confirm no false-positive `exit_not_resolved` spikes appear
+2. verify the consolidated `market-ops` and `daily-post-close` scheduler flow against delayed fills, close timing, and post-close sync/reconciliation ordering
+3. define and implement retention policy for large operational tables and exported snapshots, especially `alpaca_api_logs`
+4. improve dashboard operational visibility further, especially placement/skip reasons by hour and scheduler/job health indicators
+5. document runtime environment variables, scheduler jobs, deployment steps, and the alert/test-alert flow more clearly
+6. continue reducing remaining integration/orchestration complexity inside `app.py`
+7. finalize teardown of any remaining legacy migration leftovers once the current stack has been stable long enough
 
 ---
 

@@ -156,7 +156,7 @@ def build_local_trade_pairs(rows: list[dict[str, Any]]) -> list[LocalTradePair]:
     return pairs
 
 
-def _find_external_exit_order(parent_order: dict[str, Any], all_orders: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _find_external_exit_order_candidates(parent_order: dict[str, Any], all_orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
     try:
         symbol = str(parent_order.get("symbol", "")).strip().upper()
         parent_id = str(parent_order.get("id", "")).strip()
@@ -210,31 +210,32 @@ def _find_external_exit_order(parent_order: dict[str, Any], all_orders: list[dic
             except Exception:
                 continue
 
-        if not candidates:
-            return None
-
         candidates.sort(key=lambda item: (item[0], item[1], item[2]))
-        return candidates[0][3]
+        return [item[3] for item in candidates]
 
     except Exception:
-        return None
+        return []
 
 
-def infer_alpaca_exit_from_order_set(order: dict[str, Any], all_orders: list[dict[str, Any]]) -> tuple[str, float | None, float | None, str]:
+def infer_alpaca_exit_from_order_set(order: dict[str, Any], all_orders: list[dict[str, Any]]) -> tuple[str, float | None, float | None, str, int]:
     exit_reason, exit_qty, exit_price, exit_order_id = infer_alpaca_exit(order)
     if exit_reason != "OPEN_ONLY":
-        return exit_reason, exit_qty, exit_price, exit_order_id
+        return exit_reason, exit_qty, exit_price, exit_order_id, 0
 
-    external = _find_external_exit_order(order, all_orders)
-    if external:
+    external_candidates = _find_external_exit_order_candidates(order, all_orders)
+    if len(external_candidates) == 1:
+        external = external_candidates[0]
         return (
             "EXTERNAL_EXIT",
             to_float(external.get("filled_qty")),
             to_float(external.get("filled_avg_price")),
             str(external.get("id", "")).strip(),
+            1,
         )
+    if len(external_candidates) > 1:
+        return "EXTERNAL_EXIT_AMBIGUOUS", None, None, "", len(external_candidates)
 
-    return exit_reason, exit_qty, exit_price, exit_order_id
+    return exit_reason, exit_qty, exit_price, exit_order_id, 0
 
 
 def infer_alpaca_exit(order: dict[str, Any]) -> tuple[str, float | None, float | None, str]:
@@ -335,7 +336,7 @@ def build_reconciliation_detail_row(pair: LocalTradePair, order: dict[str, Any] 
 
     alpaca_entry_price = to_float(order.get("filled_avg_price"))
     alpaca_entry_qty = to_float(order.get("filled_qty"))
-    alpaca_exit_reason, alpaca_exit_qty, alpaca_exit_price, alpaca_exit_order_id = infer_alpaca_exit_from_order_set(order, all_orders)
+    alpaca_exit_reason, alpaca_exit_qty, alpaca_exit_price, alpaca_exit_order_id, external_exit_candidate_count = infer_alpaca_exit_from_order_set(order, all_orders)
 
     entry_price_diff = (
         round((pair.entry_price or 0.0) - (alpaca_entry_price or 0.0), 6)
@@ -352,7 +353,9 @@ def build_reconciliation_detail_row(pair: LocalTradePair, order: dict[str, Any] 
     normalized_alpaca_exit_reason = normalize_exit_reason(alpaca_exit_reason)
 
     match_status = "matched"
-    if normalized_alpaca_exit_reason == "UNKNOWN":
+    if alpaca_exit_reason == "EXTERNAL_EXIT_AMBIGUOUS":
+        match_status = "exit_not_resolved"
+    elif normalized_alpaca_exit_reason == "UNKNOWN":
         match_status = "exit_not_resolved"
     elif normalized_local_exit_reason and normalized_alpaca_exit_reason and normalized_local_exit_reason != normalized_alpaca_exit_reason:
         match_status = "exit_reason_mismatch"
@@ -377,7 +380,7 @@ def build_reconciliation_detail_row(pair: LocalTradePair, order: dict[str, Any] 
         alpaca_exit_qty=alpaca_exit_qty,
         local_exit_reason=pair.exit_reason,
         alpaca_exit_reason=alpaca_exit_reason,
-        alpaca_exit_order_id=alpaca_exit_order_id,
+        alpaca_exit_order_id=alpaca_exit_order_id or (f"AMBIGUOUS:{external_exit_candidate_count}" if alpaca_exit_reason == "EXTERNAL_EXIT_AMBIGUOUS" else ""),
         entry_price_diff=entry_price_diff,
         exit_price_diff=exit_price_diff,
         match_status=match_status,
