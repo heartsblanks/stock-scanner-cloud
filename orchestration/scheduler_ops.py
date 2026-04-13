@@ -227,3 +227,88 @@ def execute_ibkr_vm_control(
         "skipped": False,
         "force": force,
     }
+
+
+def execute_ibkr_login_alert(
+    *,
+    now_ny: datetime,
+    get_ibkr_operational_status: Callable[[], dict[str, Any]],
+    signal_alerts_enabled: bool,
+    send_signal_alert: Callable[..., dict[str, Any]],
+) -> dict[str, Any]:
+    if not signal_alerts_enabled:
+        return {
+            "ok": True,
+            "scheduler": "ibkr-login-alert",
+            "current_new_york_time": now_ny.strftime("%Y-%m-%d %H:%M"),
+            "noop": True,
+            "reason": "signal_alerts_disabled",
+        }
+
+    if not is_weekday(now_ny):
+        return {
+            "ok": True,
+            "scheduler": "ibkr-login-alert",
+            "current_new_york_time": now_ny.strftime("%Y-%m-%d %H:%M"),
+            "noop": True,
+            "reason": "outside_trading_day",
+        }
+
+    total_minutes = (now_ny.hour * 60) + now_ny.minute
+    if total_minutes < (9 * 60) or total_minutes > ((16 * 60) + 5):
+        return {
+            "ok": True,
+            "scheduler": "ibkr-login-alert",
+            "current_new_york_time": now_ny.strftime("%Y-%m-%d %H:%M"),
+            "noop": True,
+            "reason": "outside_alert_window",
+        }
+
+    status = get_ibkr_operational_status() or {}
+    if not bool(status.get("enabled")):
+        return {
+            "ok": True,
+            "scheduler": "ibkr-login-alert",
+            "current_new_york_time": now_ny.strftime("%Y-%m-%d %H:%M"),
+            "noop": True,
+            "reason": "ibkr_disabled",
+            "ibkr_status": status,
+        }
+
+    if not bool(status.get("login_required")):
+        return {
+            "ok": True,
+            "scheduler": "ibkr-login-alert",
+            "current_new_york_time": now_ny.strftime("%Y-%m-%d %H:%M"),
+            "noop": True,
+            "reason": "login_not_required",
+            "ibkr_status": status,
+        }
+
+    state = str(status.get("state", "")).strip().upper() or "LOGIN_REQUIRED"
+    message = (
+        f"IBKR login required. "
+        f"State={state}. "
+        f"Cloud Run cannot use the Gateway until you log in."
+    )
+    alert_result = send_signal_alert(
+        alert_key="ibkr-login-required",
+        message=message,
+        payload={
+            "state": state,
+            "account_ok": bool(status.get("account_ok")),
+            "bridge_health_ok": bool(status.get("bridge_health_ok")),
+            "market_data_ok": bool(status.get("market_data_ok")),
+            "position_count": int(status.get("position_count", 0) or 0),
+            "errors": list(status.get("errors") or []),
+        },
+    )
+    return {
+        "ok": bool(alert_result.get("ok", False)),
+        "scheduler": "ibkr-login-alert",
+        "current_new_york_time": now_ny.strftime("%Y-%m-%d %H:%M"),
+        "noop": False,
+        "reason": "login_required_alert_attempted",
+        "ibkr_status": status,
+        "alert_result": alert_result,
+    }

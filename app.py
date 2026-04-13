@@ -94,12 +94,14 @@ from orchestration.app_orchestration import (
 )
 from orchestration.scheduler_ops import (
     execute_maintenance_ops as build_execute_maintenance_ops,
+    execute_ibkr_login_alert as build_execute_ibkr_login_alert,
     execute_ibkr_vm_control as build_execute_ibkr_vm_control,
     execute_market_ops as build_execute_market_ops,
     execute_post_close_ops as build_execute_post_close_ops,
 )
 
 from routes.sync import register_sync_routes
+from services.alert_service import send_signal_alert, signal_alert_webhook_enabled
 from services.sync_service import execute_sync_paper_trades
 from services.ibkr_repair_service import repair_ibkr_stale_closes
 from services.scan_service import execute_full_scan
@@ -1059,6 +1061,15 @@ def run_ibkr_vm_control_scheduler(*, now_ny: datetime, action: str, force: bool 
     )
 
 
+def run_ibkr_login_alert_scheduler(*, now_ny: datetime):
+    return build_execute_ibkr_login_alert(
+        now_ny=now_ny,
+        get_ibkr_operational_status=get_ibkr_operational_status,
+        signal_alerts_enabled=signal_alert_webhook_enabled(),
+        send_signal_alert=send_signal_alert,
+    )
+
+
 register_health_routes(
     app,
     db_healthcheck=db_healthcheck,
@@ -1146,6 +1157,7 @@ register_scheduler_routes(
     execute_post_close_ops=run_daily_post_close_scheduler,
     execute_maintenance_ops=run_maintenance_scheduler,
     execute_ibkr_vm_control=run_ibkr_vm_control_scheduler,
+    execute_ibkr_login_alert=run_ibkr_login_alert_scheduler,
 )
 register_legacy_reconcile_routes(
     app,

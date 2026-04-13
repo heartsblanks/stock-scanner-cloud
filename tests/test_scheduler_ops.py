@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 
 from orchestration.scheduler_ops import (
     build_market_ops_plan,
+    execute_ibkr_login_alert,
     execute_ibkr_vm_control,
     execute_post_close_ops,
     should_run_eod_close,
@@ -173,6 +174,58 @@ class SchedulerOpsTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertTrue(result["noop"])
         self.assertEqual(result["reason"], "IBKR VM is already stopped.")
+
+    def test_ibkr_login_alert_noops_when_signal_alerts_disabled(self):
+        now_ny = datetime(2026, 4, 8, 10, 0, tzinfo=NY_TZ)
+        result = execute_ibkr_login_alert(
+            now_ny=now_ny,
+            get_ibkr_operational_status=lambda: {"enabled": True, "login_required": True},
+            signal_alerts_enabled=False,
+            send_signal_alert=lambda **kwargs: {"unexpected": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["noop"])
+        self.assertEqual(result["reason"], "signal_alerts_disabled")
+
+    def test_ibkr_login_alert_sends_when_login_is_required(self):
+        now_ny = datetime(2026, 4, 8, 10, 0, tzinfo=NY_TZ)
+        captured = {}
+
+        result = execute_ibkr_login_alert(
+            now_ny=now_ny,
+            get_ibkr_operational_status=lambda: {
+                "enabled": True,
+                "login_required": True,
+                "state": "LOGIN_REQUIRED",
+                "account_ok": False,
+                "bridge_health_ok": True,
+                "market_data_ok": True,
+                "position_count": 0,
+                "errors": ["positions timeout"],
+            },
+            signal_alerts_enabled=True,
+            send_signal_alert=lambda **kwargs: captured.update(kwargs) or {"ok": True, "sent": True, "reason": "delivered"},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["noop"])
+        self.assertEqual(result["reason"], "login_required_alert_attempted")
+        self.assertEqual(captured["alert_key"], "ibkr-login-required")
+        self.assertIn("IBKR login required", captured["message"])
+
+    def test_ibkr_login_alert_noops_when_login_not_required(self):
+        now_ny = datetime(2026, 4, 8, 10, 0, tzinfo=NY_TZ)
+        result = execute_ibkr_login_alert(
+            now_ny=now_ny,
+            get_ibkr_operational_status=lambda: {"enabled": True, "login_required": False, "state": "READY"},
+            signal_alerts_enabled=True,
+            send_signal_alert=lambda **kwargs: {"unexpected": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["noop"])
+        self.assertEqual(result["reason"], "login_not_required")
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ def register_scheduler_routes(
     execute_post_close_ops,
     execute_maintenance_ops,
     execute_ibkr_vm_control,
+    execute_ibkr_login_alert,
 ):
     @app.post("/scheduler/market-ops")
     def scheduler_market_ops():
@@ -68,4 +69,14 @@ def register_scheduler_routes(
             return jsonify(result)
         except Exception as e:
             log_exception("scheduler ibkr vm control failed", e, route="/scheduler/ibkr-vm-control")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.post("/scheduler/ibkr-login-alert")
+    def scheduler_ibkr_login_alert():
+        now_ny = datetime.now(ny_tz)
+        try:
+            result = execute_ibkr_login_alert(now_ny=now_ny)
+            return jsonify(result)
+        except Exception as e:
+            log_exception("scheduler ibkr login alert failed", e, route="/scheduler/ibkr-login-alert")
             return jsonify({"ok": False, "error": str(e)}), 500
