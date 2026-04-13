@@ -149,6 +149,24 @@ def debug_to_dict(eval_result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _long_market_regime_allows_entry(eval_result: dict[str, Any], direction: str) -> bool:
+    if direction != "BUY":
+        return True
+
+    benchmark_directions = eval_result.get("benchmark_directions") or {}
+    required_benchmarks = ("SPY", "QQQ")
+    observed_directions = [
+        str(benchmark_directions.get(symbol, "")).strip().upper()
+        for symbol in required_benchmarks
+        if str(benchmark_directions.get(symbol, "")).strip()
+    ]
+
+    if not observed_directions:
+        return True
+
+    return all(signal_direction == "BUY" for signal_direction in observed_directions)
+
+
 def paper_candidate_from_evaluation(eval_result: dict[str, Any], paper_trade_min_confidence: float) -> dict[str, Any] | None:
     decision = str(eval_result.get("decision", "")).strip().upper()
     if decision != "VALID":
@@ -175,6 +193,13 @@ def paper_candidate_from_evaluation(eval_result: dict[str, Any], paper_trade_min
         confidence_value = None
 
     if confidence_value is None or confidence_value < paper_trade_min_confidence:
+        eval_result["final_reason"] = "below_paper_trade_confidence_threshold"
+        metrics["paper_eligible"] = False
+        return None
+
+    if not _long_market_regime_allows_entry(eval_result, direction):
+        eval_result["final_reason"] = "long_market_regime_blocked"
+        metrics["paper_eligible"] = False
         return None
 
     shares = metrics.get("shares")

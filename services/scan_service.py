@@ -595,7 +595,7 @@ def execute_full_scan(
                 "SCAN_REJECTED",
                 symbol=rejected_symbol,
                 metrics=ev_metrics,
-                final_reason="below_paper_trade_confidence_threshold",
+                final_reason=str(ev.get("final_reason", "") or "paper_candidate_rejected"),
                 placed=False,
             )
     paper_long_candidates = [t for t in paper_trade_candidates if t["metrics"].get("direction") == "BUY"]

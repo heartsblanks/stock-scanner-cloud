@@ -50,6 +50,7 @@ class ScanContextTests(unittest.TestCase):
         }
 
         self.assertIsNone(paper_candidate_from_evaluation(evaluation, 70))
+        self.assertEqual(evaluation["final_reason"], "below_paper_trade_confidence_threshold")
 
     def test_paper_candidate_normalizes_metrics_for_valid_setup(self):
         evaluation = {
@@ -85,6 +86,46 @@ class ScanContextTests(unittest.TestCase):
         self.assertTrue(candidate["metrics"]["paper_eligible"])
         self.assertTrue(candidate["metrics"]["manual_eligible"])
         self.assertEqual(candidate["info"], {"symbol": "AAPL"})
+
+    def test_paper_candidate_blocks_long_when_market_regime_disagrees(self):
+        evaluation = {
+            "name": "Apple",
+            "decision": "VALID",
+            "final_reason": "candidate",
+            "metrics": {
+                "symbol": "AAPL",
+                "direction": "BUY",
+                "entry": 100.0,
+                "stop": 99.0,
+                "target": 102.0,
+                "final_confidence": 88.0,
+            },
+            "benchmark_directions": {"SPY": "SELL", "QQQ": "BUY"},
+        }
+
+        self.assertIsNone(paper_candidate_from_evaluation(evaluation, 70))
+        self.assertEqual(evaluation["final_reason"], "long_market_regime_blocked")
+
+    def test_paper_candidate_allows_short_even_when_benchmarks_are_long(self):
+        evaluation = {
+            "name": "Apple",
+            "decision": "VALID",
+            "final_reason": "candidate",
+            "metrics": {
+                "symbol": "AAPL",
+                "direction": "SELL",
+                "entry": 100.0,
+                "stop": 101.0,
+                "target": 98.0,
+                "final_confidence": 88.0,
+            },
+            "benchmark_directions": {"SPY": "BUY", "QQQ": "BUY"},
+        }
+
+        candidate = paper_candidate_from_evaluation(evaluation, 70)
+
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate["metrics"]["direction"], "SELL")
 
 
 if __name__ == "__main__":
