@@ -299,44 +299,6 @@ code {
   gap: 8px;
 }
 
-.dashboard-admin-alert-control {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.dashboard-input {
-  min-height: 40px;
-  padding: 0 12px;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(4, 9, 7, 0.52);
-  color: #f3fff8;
-  outline: none;
-  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
-}
-
-.dashboard-input::placeholder {
-  color: rgba(242, 255, 248, 0.46);
-}
-
-.dashboard-input:focus {
-  border-color: rgba(64, 255, 152, 0.45);
-  box-shadow: 0 0 0 3px rgba(64, 255, 152, 0.12);
-}
-
-.dashboard-input-compact {
-  min-height: 34px;
-  padding: 0 10px;
-  font-size: 0.78rem;
-}
-
-.dashboard-input-secret {
-  width: 190px;
-  letter-spacing: 0.04em;
-}
-
 .dashboard-date-filter-inline {
   display: inline-flex;
   align-items: center;
@@ -1173,12 +1135,6 @@ code {
   color: #f7f1e3;
 }
 
-:root[data-theme="dark"] .dashboard-input {
-  background: rgba(3, 10, 8, 0.68);
-  border-color: rgba(102, 255, 176, 0.18);
-  color: #ebfff4;
-}
-
 :root[data-theme="dark"] .dashboard-panel,
 :root[data-theme="dark"] .dashboard-chart-card,
 :root[data-theme="dark"] .metric-card,
@@ -1352,18 +1308,8 @@ code {
     align-items: stretch;
   }
 
-  .dashboard-admin-alert-control {
-    width: 100%;
-    flex-direction: column;
-    align-items: stretch;
-  }
-
   .dashboard-toolbar,
   .dashboard-button {
-    width: 100%;
-  }
-
-  .dashboard-input-secret {
     width: 100%;
   }
 
