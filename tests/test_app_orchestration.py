@@ -1,55 +1,40 @@
 import unittest
+from datetime import UTC, datetime
 
-from orchestration.app_orchestration import handle_scan_request
+from orchestration.app_orchestration import build_reconcile_now_response
 
 
 class AppOrchestrationTests(unittest.TestCase):
-    def test_handle_scan_request_injects_risk_context_for_paper_trade(self):
-        captured = {}
+    def test_build_reconcile_now_response_uploads_with_positional_signature(self):
+        captured_upload_args = []
+        captured_run_args = []
 
-        def fake_execute_full_scan(scan_payload, **kwargs):
-            captured["payload"] = scan_payload
-            captured["kwargs"] = kwargs
-            return {"ok": True}
-
-        result = handle_scan_request(
-            {"mode": "primary", "paper_trade": True},
-            get_current_open_position_state=lambda: (2, 1234.56),
-            get_risk_exposure_summary=lambda: {
-                "daily_realized_pnl": -100.0,
-                "daily_unrealized_pnl": 25.5,
+        result = build_reconcile_now_response(
+            run_reconciliation=lambda: {
+                "ok": True,
+                "mismatch_count": 1,
+                "total_rows": 5,
+                "severity": "WARNING",
+                "file_path": "alpaca_reconciliation.csv",
             },
-            execute_full_scan=fake_execute_full_scan,
-            market_time_check=lambda: (True, "ok"),
-            build_scan_id=lambda ts, mode: "scan-1",
-            market_phase_from_timestamp=lambda ts: "MORNING",
-            append_signal_log=lambda row: None,
-            safe_insert_paper_trade_attempt=lambda **kwargs: None,
-            safe_insert_scan_run=lambda **kwargs: None,
-            parse_iso_utc=lambda ts: ts,
-            run_scan=lambda *args, **kwargs: ([], [], True, 0, {}, "PRIMARY"),
-            trade_to_dict=lambda trade: trade,
-            debug_to_dict=lambda trade: trade,
-            paper_candidate_from_evaluation=lambda ev: ev,
-            evaluate_symbol=lambda *args, **kwargs: {},
-            get_latest_open_paper_trade_for_symbol=lambda symbol: None,
-            is_symbol_in_paper_cooldown=lambda symbol, ts: (False, ""),
-            place_paper_orders_from_trade=lambda trade: [],
-            append_trade_log=lambda row: None,
-            safe_insert_trade_event=lambda **kwargs: None,
-            safe_insert_broker_order=lambda **kwargs: None,
-            to_float_or_none=lambda value: float(value) if value not in (None, "") else None,
-            min_confidence=70,
-            upsert_trade_lifecycle=lambda **kwargs: None,
-            resolve_account_size=lambda payload: 100000.0,
-            active_broker="ALPACA",
+            upload_file_to_gcs=lambda local_path, bucket_name, object_name: captured_upload_args.append(
+                (local_path, bucket_name, object_name)
+            ) or "gs://bucket/reconciliation.csv",
+            reconciliation_bucket="bucket-name",
+            reconciliation_object="reconciliation.csv",
+            safe_insert_reconciliation_run=lambda **kwargs: captured_run_args.append(kwargs),
         )
 
-        self.assertEqual(result, {"ok": True})
-        self.assertEqual(captured["payload"]["current_open_positions"], 2)
-        self.assertEqual(captured["payload"]["current_open_exposure"], 1234.56)
-        self.assertEqual(captured["payload"]["daily_realized_pnl"], -100.0)
-        self.assertEqual(captured["payload"]["daily_unrealized_pnl"], 25.5)
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            captured_upload_args,
+            [("alpaca_reconciliation.csv", "bucket-name", "reconciliation.csv")],
+        )
+        self.assertEqual(len(captured_run_args), 1)
+        self.assertEqual(captured_run_args[0]["matched_count"], 4)
+        self.assertEqual(captured_run_args[0]["unmatched_count"], 1)
+        self.assertIsInstance(captured_run_args[0]["run_time"], datetime)
+        self.assertEqual(captured_run_args[0]["run_time"].tzinfo, UTC)
 
 
 if __name__ == "__main__":

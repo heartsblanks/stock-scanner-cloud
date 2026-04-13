@@ -181,9 +181,9 @@ def build_reconcile_now_response(
 
     try:
         upload_file_to_gcs(
-            bucket_name=reconciliation_bucket,
-            source_file_path=result.get("file_path"),
-            destination_blob_name=reconciliation_object,
+            result.get("file_path"),
+            reconciliation_bucket,
+            reconciliation_object,
         )
     except Exception as upload_err:
         from core.logging_utils import log_warning
