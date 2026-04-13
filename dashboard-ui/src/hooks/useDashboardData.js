@@ -480,6 +480,10 @@ export function useDashboardData(activeView = "overview") {
     return () => clearTimeout(timeoutId);
   }, [toast]);
 
+  function pushToast(nextToast) {
+    setToast(nextToast);
+  }
+
   function handleApplyFilters(nextFilters) {
     const appliedFilters = nextFilters || { date: "" };
     setFilters(appliedFilters);
@@ -731,6 +735,7 @@ export function useDashboardData(activeView = "overview") {
     isRefreshing,
     isRunningSync,
     toast,
+    pushToast,
     lastReconciliationStatus,
     lastReconciliationAt,
     symbolPerformance,

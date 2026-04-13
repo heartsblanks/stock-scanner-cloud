@@ -10,6 +10,7 @@ import InsightCard from "../components/InsightCard";
 import ModePerformanceChart from "../components/ModePerformanceChart";
 import RefreshStatusPanel from "../components/dashboard/RefreshStatusPanel";
 import SymbolPerformanceChart from "../components/SymbolPerformanceChart";
+import { sendAdminTestAlert } from "../api/dashboard";
 import { useDashboardData } from "../hooks/useDashboardData";
 import { Component, Suspense, lazy, useEffect, useState } from "react";
 
@@ -102,10 +103,20 @@ function getInitialTradeBrokerView() {
   return "all";
 }
 
+function getStoredAdminToken() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  return window.localStorage.getItem("dashboard-admin-token") || "";
+}
+
 export default function DashboardPage() {
   const [activeView, setActiveView] = useState(getInitialView);
   const [drilldown, setDrilldown] = useState({ symbol: "", mode: "", hourUtc: "" });
   const [tradeBrokerView, setTradeBrokerView] = useState(getInitialTradeBrokerView);
+  const [adminToken, setAdminToken] = useState(getStoredAdminToken);
+  const [isSendingTestAlert, setIsSendingTestAlert] = useState(false);
   const [theme, setTheme] = useState(() => {
     if (typeof window === "undefined") {
       return "light";
@@ -142,6 +153,7 @@ export default function DashboardPage() {
     isRefreshing,
     isRunningSync,
     toast,
+    pushToast,
     lastReconciliationStatus,
     lastReconciliationAt,
     symbolPerformance,
@@ -264,10 +276,48 @@ export default function DashboardPage() {
     setDrilldown({ symbol: "", mode: "", hourUtc: "" });
   }
 
+  async function handleSendTestAlert() {
+    const trimmedToken = adminToken.trim();
+    if (!trimmedToken) {
+      pushToast({ type: "error", message: "Add the admin token before sending a test alert." });
+      return;
+    }
+
+    try {
+      setIsSendingTestAlert(true);
+      const data = await sendAdminTestAlert(
+        trimmedToken,
+        `Dashboard test alert at ${new Date().toLocaleString()}`
+      );
+
+      if (data?.ok) {
+        pushToast({ type: "success", message: "Telegram test alert sent." });
+      } else {
+        pushToast({ type: "error", message: `Alert failed: ${data?.error || "Unknown error"}` });
+      }
+    } catch (err) {
+      pushToast({ type: "error", message: err?.message || "Failed to send Telegram test alert" });
+    } finally {
+      setIsSendingTestAlert(false);
+    }
+  }
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem("dashboard-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (adminToken) {
+      window.localStorage.setItem("dashboard-admin-token", adminToken);
+    } else {
+      window.localStorage.removeItem("dashboard-admin-token");
+    }
+  }, [adminToken]);
 
   const visibleViews = DASHBOARD_VIEWS;
 
@@ -367,6 +417,23 @@ export default function DashboardPage() {
 
               <div className="dashboard-hero-controls">
                 <DashboardFilters onApply={handleApplyFilters} />
+                <div className="dashboard-admin-alert-control">
+                  <input
+                    type="password"
+                    value={adminToken}
+                    onChange={(event) => setAdminToken(event.target.value)}
+                    placeholder="Admin token"
+                    className="dashboard-input dashboard-input-compact dashboard-input-secret"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSendTestAlert}
+                    disabled={isSendingTestAlert}
+                    className="dashboard-button dashboard-button-secondary dashboard-button-compact"
+                  >
+                    {isSendingTestAlert ? "Sending..." : "Test Alert"}
+                  </button>
+                </div>
                 <button
                   onClick={refreshData}
                   disabled={isRefreshing}

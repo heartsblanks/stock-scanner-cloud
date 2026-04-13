@@ -79,6 +79,20 @@ export async function fetchIbkrStatus() {
   return response.data || {};
 }
 
+export async function sendAdminTestAlert(adminToken, message) {
+  const response = await apiClient.post(
+    "/admin/test-alert",
+    { message },
+    {
+      headers: {
+        "X-Admin-Token": adminToken,
+      },
+    }
+  );
+
+  return response.data || {};
+}
+
 export async function fetchPaperTradeAttemptRecent(limit = 25, broker, decisionStage) {
   const params = { limit };
   if (broker) {
