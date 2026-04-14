@@ -438,6 +438,35 @@ class IbkrGatewayClient:
             )
         return list(getattr(ib, "fills", lambda: [])() or [])
 
+    def _fetch_completed_trades(self, ib) -> list[Any]:
+        fetch_fn = getattr(ib, "reqCompletedOrders", None)
+        if fetch_fn is None:
+            return []
+        try:
+            completed = list(fetch_fn(False) or [])
+            if completed:
+                return completed
+        except TypeError:
+            try:
+                completed = list(fetch_fn() or [])
+                if completed:
+                    return completed
+            except Exception as exc:
+                log_exception(
+                    "IBKR bridge completed-order fetch failed",
+                    exc,
+                    component="ibkr_bridge",
+                    operation="fetch_completed_trades",
+                )
+        except Exception as exc:
+            log_exception(
+                "IBKR bridge completed-order fetch failed",
+                exc,
+                component="ibkr_bridge",
+                operation="fetch_completed_trades",
+            )
+        return []
+
     def _execution_time_value(self, fill: Any) -> str:
         execution = getattr(fill, "execution", None)
         execution_time = getattr(execution, "time", None)
@@ -519,6 +548,105 @@ class IbkrGatewayClient:
 
         return result
 
+    def _trade_fill_snapshot(self, trade: Any) -> dict[str, Any]:
+        fills = list(getattr(trade, "fills", []) or [])
+        latest_fill = fills[-1] if fills else None
+        execution = getattr(latest_fill, "execution", None)
+        order_status = getattr(trade, "orderStatus", None)
+        last_price = _to_float(getattr(execution, "price", 0.0))
+        avg_price = _to_float(getattr(execution, "avgPrice", 0.0), last_price)
+        filled_qty = _to_float(getattr(execution, "shares", 0.0), _to_float(getattr(order_status, "filled", 0.0)))
+        order_status_avg_fill_price = _to_float(getattr(order_status, "avgFillPrice", None), avg_price)
+        order_status_last_fill_price = _to_float(getattr(order_status, "lastFillPrice", None), last_price)
+        return {
+            "filled_qty": filled_qty,
+            "avg_fill_price": order_status_avg_fill_price if order_status_avg_fill_price > 0 else avg_price,
+            "last_fill_price": order_status_last_fill_price if order_status_last_fill_price > 0 else last_price,
+            "filled_at": self._execution_time_value(latest_fill) if latest_fill is not None else "",
+        }
+
+    def _sync_order_from_completed_trades(self, ib, order_id: str) -> dict[str, Any]:
+        trades = self._fetch_completed_trades(ib)
+        if not trades:
+            return {
+                "id": str(order_id).strip(),
+                "status": "unknown",
+                "message": "Order was not found in completed IBKR trades.",
+            }
+
+        order_id_text = str(order_id).strip()
+        entry_trades = [
+            trade
+            for trade in trades
+            if str(getattr(getattr(trade, "order", None), "orderId", "")).strip() == order_id_text
+        ]
+        if not entry_trades:
+            return {
+                "id": order_id_text,
+                "status": "unknown",
+                "message": "Order was not found in completed IBKR trades.",
+            }
+
+        entry_trade = entry_trades[-1]
+        entry_order = getattr(entry_trade, "order", None)
+        entry_contract = getattr(entry_trade, "contract", None)
+        entry_status = getattr(entry_trade, "orderStatus", None)
+        entry_order_ref = str(getattr(entry_order, "orderRef", "")).strip()
+        related_trades = trades
+        if entry_order_ref:
+            related_trades = [
+                trade
+                for trade in trades
+                if str(getattr(getattr(trade, "order", None), "orderRef", "")).strip() == entry_order_ref
+            ] or entry_trades
+
+        def _trade_sort_key(trade: Any) -> tuple[str, str]:
+            fill_snapshot = self._trade_fill_snapshot(trade)
+            order = getattr(trade, "order", None)
+            return (
+                str(fill_snapshot.get("filled_at", "") or ""),
+                str(getattr(order, "orderId", "") or ""),
+            )
+
+        related_trades = sorted(related_trades, key=_trade_sort_key)
+        latest_trade = related_trades[-1]
+        latest_order = getattr(latest_trade, "order", None)
+        latest_status = getattr(latest_trade, "orderStatus", None)
+        latest_snapshot = self._trade_fill_snapshot(latest_trade)
+        latest_order_id = str(getattr(latest_order, "orderId", "")).strip()
+        latest_action = str(getattr(latest_order, "action", "")).strip().upper()
+
+        entry_snapshot = self._trade_fill_snapshot(entry_trade)
+        result = {
+            "id": order_id_text,
+            "status": str(getattr(entry_status, "status", "") or "filled"),
+            "parent_order_id": order_id_text,
+            "parent_status": str(getattr(entry_status, "status", "") or "Filled"),
+            "entry_filled": True,
+            "entry_filled_qty": entry_snapshot["filled_qty"],
+            "entry_filled_avg_price": entry_snapshot["avg_fill_price"] or entry_snapshot["last_fill_price"],
+            "client_order_id": entry_order_ref,
+            "symbol": str(getattr(entry_contract, "symbol", "")).strip().upper(),
+        }
+
+        if latest_order_id and latest_order_id != order_id_text and latest_action:
+            result.update(
+                {
+                    "status": "closed",
+                    "exit_event": "MANUAL_CLOSE",
+                    "exit_order_id": latest_order_id,
+                    "exit_status": str(getattr(latest_status, "status", "") or "Filled"),
+                    "exit_price": round(latest_snapshot["last_fill_price"], 4) if latest_snapshot["last_fill_price"] > 0 else "",
+                    "exit_filled_qty": round(latest_snapshot["filled_qty"], 4) if latest_snapshot["filled_qty"] > 0 else "",
+                    "exit_filled_avg_price": round(latest_snapshot["avg_fill_price"], 4) if latest_snapshot["avg_fill_price"] > 0 else "",
+                    "exit_reason": "BROKER_FILLED_EXIT",
+                    "exit_side": latest_action,
+                    "exit_filled_at": str(latest_snapshot["filled_at"] or ""),
+                }
+            )
+
+        return result
+
     def _fetch_open_trades(self, ib) -> list[Any]:
         trades = list(ib.openTrades() or [])
         if trades:
@@ -592,6 +720,10 @@ class IbkrGatewayClient:
         if str(fills_result.get("status", "")).strip().lower() != "unknown":
             return fills_result
 
+        completed_result = self._sync_order_from_completed_trades(ib, normalized_order_id)
+        if str(completed_result.get("status", "")).strip().lower() != "unknown":
+            return completed_result
+
         for trade in self._fetch_open_trades(ib):
             trade_order_id = str(getattr(getattr(trade, "order", None), "orderId", "")).strip()
             if trade_order_id == normalized_order_id:
@@ -605,7 +737,7 @@ class IbkrGatewayClient:
                     "client_order_id": normalized_trade.get("client_order_id", ""),
                 }
 
-        return fills_result
+        return completed_result
 
     def place_paper_bracket_order(self, trade: dict[str, Any], max_notional: float | None = None) -> dict[str, Any]:
         metrics = trade.get("metrics", {}) if isinstance(trade, dict) else {}

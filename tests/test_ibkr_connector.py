@@ -43,6 +43,7 @@ class _FakeTrade:
             order_type=order_type,
         )
         self.orderStatus = _FakeStatus(status=status, remaining=remaining)
+        self.fills = []
 
 
 class _FakeExecution:
@@ -194,12 +195,76 @@ class IbkrConnectorTests(unittest.TestCase):
             _FakeTrade(symbol="NIO", order_id=64, status="Submitted", remaining=1.0),
         ]
         client._fetch_recent_fills = lambda ib: []
+        client._fetch_completed_trades = lambda ib: []
 
         result = client.sync_order("64")
 
         self.assertEqual(result["id"], "64")
         self.assertEqual(result["status"], "Submitted")
         self.assertEqual(result["parent_status"], "Submitted")
+
+    def test_sync_order_uses_completed_trades_when_recent_fills_are_unavailable(self):
+        client = IbkrGatewayClient.__new__(IbkrGatewayClient)
+        client._connect = lambda: object()
+        client._fetch_open_trades = lambda ib: []
+        client._fetch_recent_fills = lambda ib: []
+
+        entry_trade = _FakeTrade(
+            symbol="SOFI",
+            order_id=76,
+            status="Filled",
+            remaining=0.0,
+            action="BUY",
+            order_ref="scanner-SOFI-BUY-166800-299",
+        )
+        entry_trade.orderStatus.filled = 299
+        entry_trade.orderStatus.avgFillPrice = 16.68
+        entry_trade.fills = [
+            _FakeFill(
+                symbol="SOFI",
+                execution=_FakeExecution(
+                    order_id=76,
+                    order_ref="scanner-SOFI-BUY-166800-299",
+                    price=16.68,
+                    shares=299,
+                    side="BOT",
+                    time="2026-04-13T16:45:14+00:00",
+                ),
+            )
+        ]
+
+        exit_trade = _FakeTrade(
+            symbol="SOFI",
+            order_id=78,
+            status="Filled",
+            remaining=0.0,
+            action="SELL",
+            order_ref="scanner-SOFI-BUY-166800-299",
+        )
+        exit_trade.orderStatus.filled = 299
+        exit_trade.orderStatus.avgFillPrice = 16.52
+        exit_trade.fills = [
+            _FakeFill(
+                symbol="SOFI",
+                execution=_FakeExecution(
+                    order_id=78,
+                    order_ref="scanner-SOFI-BUY-166800-299",
+                    price=16.52,
+                    shares=299,
+                    side="SLD",
+                    time="2026-04-13T19:55:00+00:00",
+                ),
+            )
+        ]
+
+        client._fetch_completed_trades = lambda ib: [entry_trade, exit_trade]
+
+        result = client.sync_order("76")
+
+        self.assertEqual(result["parent_order_id"], "76")
+        self.assertEqual(result["exit_order_id"], "78")
+        self.assertEqual(result["exit_price"], 16.52)
+        self.assertEqual(result["exit_reason"], "BROKER_FILLED_EXIT")
 
     def test_get_positions_skips_ticker_enrichment_by_default(self):
         fake_ib = _FakeIbForPositions([
