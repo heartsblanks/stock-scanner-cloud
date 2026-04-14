@@ -37,13 +37,15 @@ def should_run_market_sync(now_ny: datetime) -> bool:
         return False
     if now_ny.hour == 9:
         return now_ny.minute in {35, 45, 55}
+    if now_ny.hour == 15:
+        return now_ny.minute in {5, 15, 25, 35, 45, 50}
     return 10 <= now_ny.hour <= 15 and now_ny.minute in {5, 15, 25, 35, 45, 55}
 
 
 def should_run_market_scan(now_ny: datetime) -> bool:
     if not is_weekday(now_ny):
         return False
-    if now_ny.hour == 15 and now_ny.minute == 55:
+    if now_ny.hour == 15 and now_ny.minute in {50, 55}:
         return False
     if now_ny.hour == 9:
         return now_ny.minute in {35, 45, 55}
@@ -54,9 +56,15 @@ def should_run_eod_close(now_ny: datetime) -> bool:
     return is_weekday(now_ny) and now_ny.hour == 15 and now_ny.minute == 55
 
 
+def should_run_pre_close_prep(now_ny: datetime) -> bool:
+    return is_weekday(now_ny) and now_ny.hour == 15 and now_ny.minute == 50
+
+
 def build_market_ops_plan(now_ny: datetime) -> list[str]:
     if should_run_eod_close(now_ny):
         return ["close"]
+    if should_run_pre_close_prep(now_ny):
+        return ["sync", "pre_close_prep"]
 
     actions: list[str] = []
     if should_run_market_sync(now_ny):
@@ -72,6 +80,7 @@ def execute_market_ops(
     run_sync: Callable[[], Any],
     run_scan: Callable[[dict[str, Any]], Any],
     run_close: Callable[[], Any],
+    run_pre_close_prep: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
     actions = build_market_ops_plan(now_ny)
     results: dict[str, Any] = {}
@@ -83,6 +92,8 @@ def execute_market_ops(
             results[action] = _normalize_handler_result(run_scan({}))
         elif action == "close":
             results[action] = _normalize_handler_result(run_close())
+        elif action == "pre_close_prep" and run_pre_close_prep is not None:
+            results[action] = _normalize_handler_result(run_pre_close_prep())
 
     return {
         "ok": all(item.get("ok", False) for item in results.values()) if results else True,
@@ -92,6 +103,21 @@ def execute_market_ops(
         "action_count": len(actions),
         "results": results,
         "noop": not actions,
+    }
+
+
+def execute_pre_close_prep(
+    *,
+    now_ny: datetime,
+    get_ibkr_operational_status: Callable[[], dict[str, Any]],
+) -> dict[str, Any]:
+    status = get_ibkr_operational_status() or {}
+    return {
+        "ok": bool(status.get("ok", False)),
+        "scheduler": "pre-close-prep",
+        "current_new_york_time": now_ny.strftime("%Y-%m-%d %H:%M"),
+        "ready_for_close": bool(status.get("enabled")) and not bool(status.get("login_required")) and str(status.get("state", "")).strip().upper() == "READY",
+        "ibkr_status": status,
     }
 
 

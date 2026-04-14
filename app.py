@@ -76,6 +76,7 @@ from orchestration.app_runtime import (
 from orchestration.scheduler_ops import (
     execute_maintenance_ops as build_execute_maintenance_ops,
     execute_ibkr_login_alert as build_execute_ibkr_login_alert,
+    execute_pre_close_prep as build_execute_pre_close_prep,
     execute_ibkr_vm_control as build_execute_ibkr_vm_control,
     execute_market_ops as build_execute_market_ops,
     execute_post_close_ops as build_execute_post_close_ops,
@@ -352,6 +353,10 @@ def run_market_ops_scheduler(*, now_ny: datetime):
         run_sync=handle_sync_paper_trades,
         run_scan=run_scheduled_paper_scan_wrapper,
         run_close=close_all_paper_positions,
+        run_pre_close_prep=lambda: build_execute_pre_close_prep(
+            now_ny=now_ny,
+            get_ibkr_operational_status=get_ibkr_operational_status,
+        ),
     )
 
 

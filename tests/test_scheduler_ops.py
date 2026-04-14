@@ -6,10 +6,12 @@ from orchestration.scheduler_ops import (
     build_market_ops_plan,
     execute_maintenance_ops,
     execute_ibkr_login_alert,
+    execute_pre_close_prep,
     execute_ibkr_vm_control,
     execute_post_close_ops,
     should_run_eod_close,
     should_run_market_scan,
+    should_run_pre_close_prep,
     should_run_market_sync,
 )
 
@@ -29,8 +31,17 @@ class SchedulerOpsTests(unittest.TestCase):
         now_ny = datetime(2026, 4, 1, 15, 55, tzinfo=NY_TZ)
         self.assertFalse(should_run_market_sync(now_ny))
         self.assertFalse(should_run_market_scan(now_ny))
+        self.assertFalse(should_run_pre_close_prep(now_ny))
         self.assertTrue(should_run_eod_close(now_ny))
         self.assertEqual(build_market_ops_plan(now_ny), ["close"])
+
+    def test_market_ops_plan_at_1550_runs_pre_close_prep(self):
+        now_ny = datetime(2026, 4, 1, 15, 50, tzinfo=NY_TZ)
+        self.assertTrue(should_run_market_sync(now_ny))
+        self.assertFalse(should_run_market_scan(now_ny))
+        self.assertTrue(should_run_pre_close_prep(now_ny))
+        self.assertFalse(should_run_eod_close(now_ny))
+        self.assertEqual(build_market_ops_plan(now_ny), ["sync", "pre_close_prep"])
 
     def test_market_ops_plan_at_1005_runs_sync_and_scan(self):
         now_ny = datetime(2026, 4, 1, 10, 5, tzinfo=NY_TZ)
@@ -72,6 +83,23 @@ class SchedulerOpsTests(unittest.TestCase):
         self.assertIn("analyze_signals", result["results"])
         self.assertIn("export_daily_snapshot", result["results"])
         self.assertIn("refresh_mode_rankings", result["results"])
+
+    def test_pre_close_prep_reports_ibkr_readiness(self):
+        now_ny = datetime(2026, 4, 1, 15, 50, tzinfo=NY_TZ)
+        result = execute_pre_close_prep(
+            now_ny=now_ny,
+            get_ibkr_operational_status=lambda: {
+                "ok": True,
+                "enabled": True,
+                "login_required": False,
+                "state": "READY",
+                "position_count": 3,
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["ready_for_close"])
+        self.assertEqual(result["ibkr_status"]["state"], "READY")
 
     def test_post_close_ops_accepts_non_http_tuple_results(self):
         now_ny = datetime(2026, 4, 2, 16, 30, tzinfo=NY_TZ)

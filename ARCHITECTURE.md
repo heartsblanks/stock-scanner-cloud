@@ -862,9 +862,12 @@ Cloud Scheduler triggers operational HTTP endpoints on Cloud Run.
 
 #### `market-ops`
 - single intraday scheduler endpoint: `POST /scheduler/market-ops`
-- current cron: `5,15,25,35,45,55 9-15 * * 1-5 (America/New_York)`
+- target cron: `5,15,25,35,45,50,55 9-15 * * 1-5 (America/New_York)`
 - intentionally no-ops on the early `9:05`, `9:15`, and `9:25` ticks
 - from `9:35` through `15:45`, including every `:55` tick, runs intraday sync and scheduled scans on a 10-minute offset cadence
+- at `15:50`, runs intraday sync plus an IBKR pre-close prep step
+  - intended to warm the bridge path, capture an IBKR readiness snapshot, and surface whether the broker is actually ready before the close window
+  - intentionally does not shift the actual strategy exit earlier
 - at `15:55`, runs end-of-day close only
 
 #### `daily-post-close`
@@ -885,6 +888,7 @@ Cloud Scheduler triggers operational HTTP endpoints on Cloud Run.
 ### Scheduler responsibilities
 - scan market during session windows
 - sync paper trade state
+- run a short pre-close operational check before EOD submission
 - close positions near end of day before market close
 - reconcile broker vs local records after market close
 - produce analysis outputs
@@ -896,8 +900,13 @@ Cloud Scheduler triggers operational HTTP endpoints on Cloud Run.
 - the production design now uses three Scheduler jobs total in order to stay within the Cloud Scheduler free tier
 - orchestration logic lives in backend scheduler endpoints instead of many separate Scheduler jobs
 - end-of-day flow is explicitly split into:
-  - pre-close forced close in `market-ops`
+  - pre-close prep and readiness check in `market-ops` at `15:50 ET`
+  - forced close in `market-ops` at `15:55 ET`
   - post-close sync, reconciliation, analysis, and export in `daily-post-close`
+
+### Future option
+- if IBKR request-bound orchestration remains fragile after bounded timeout and pre-close hardening, move IBKR EOD close, sync, and stale-state repair into a durable async worker/job model
+- that future model should be treated as an escalation path, not the default design, because it adds job persistence, idempotency, retry semantics, and worker monitoring complexity
 
 ---
 
