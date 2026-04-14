@@ -387,17 +387,18 @@ def execute_sync_paper_trades(
             skipped_count += 1
             continue
 
-        if paper_trade_exit_already_logged(parent_order_id, exit_event):
-            results.append({
-                "symbol": symbol,
-                "broker": broker_name,
-                "parent_order_id": parent_order_id,
-                "synced": False,
-                "reason": "exit_already_logged",
-                "exit_event": exit_event,
-            })
-            skipped_count += 1
-            continue
+        exit_already_logged = paper_trade_exit_already_logged(parent_order_id, exit_event)
+        if exit_already_logged:
+            log_info(
+                "Paper trade exit event already logged; proceeding with lifecycle repair only",
+                component="sync_service",
+                operation="execute_sync_paper_trades",
+                symbol=symbol,
+                parent_order_id=parent_order_id,
+                broker=broker_name,
+                exit_event=exit_event,
+                stale_reconciled=stale_reconciled,
+            )
 
         timestamp_utc = datetime.now(timezone.utc).isoformat()
 
@@ -413,65 +414,66 @@ def execute_sync_paper_trades(
             lifecycle_side = resolve_lifecycle_side(open_row, direction)
             trade_source = str(open_row.get("trade_source", f"{broker_name}_PAPER")).strip().upper() or f"{broker_name}_PAPER"
 
-            append_trade_log({
-                "timestamp_utc": exit_timestamp_utc,
-                "event_type": exit_event,
-                "symbol": symbol,
-                "name": open_row.get("name", ""),
-                "mode": open_row.get("mode", ""),
-                "trade_source": trade_source,
-                "broker": broker_name,
-                "broker_order_id": parent_order_id,
-                "broker_parent_order_id": parent_order_id,
-                "broker_status": sync_result.get("exit_status", sync_result.get("parent_status", "")),
-                "broker_filled_qty": sync_result.get("exit_filled_qty", ""),
-                "broker_filled_avg_price": sync_result.get("exit_filled_avg_price", ""),
-                "broker_exit_order_id": sync_result.get("exit_order_id", ""),
-                "shares": open_row.get("shares", ""),
-                "entry_price": open_row.get("entry_price", ""),
-                "stop_price": open_row.get("stop_price", ""),
-                "target_price": open_row.get("target_price", ""),
-                "exit_price": sync_result.get("exit_price", ""),
-                "exit_reason": sync_result.get("exit_reason", exit_event),
-                "status": "CLOSED",
-                "notes": f"Paper trade exit synced from {broker_name}. exit_event={exit_event}",
-                "linked_signal_timestamp_utc": open_row.get("linked_signal_timestamp_utc", ""),
-                "linked_signal_entry": open_row.get("linked_signal_entry", ""),
-                "linked_signal_stop": open_row.get("linked_signal_stop", ""),
-                "linked_signal_target": open_row.get("linked_signal_target", ""),
-                "linked_signal_confidence": open_row.get("linked_signal_confidence", ""),
-                "inferred_stop_hit": "",
-                "inferred_target_hit": "",
-                "inferred_first_level_hit": "",
-                "inferred_analysis_start_utc": "",
-                "inferred_analysis_end_utc": "",
-            })
-            safe_insert_trade_event(
-                event_time=exit_timestamp,
-                event_type=exit_event,
-                symbol=symbol,
-                side=lifecycle_side,
-                shares=to_float_or_none(open_row.get("shares", "")),
-                price=to_float_or_none(sync_result.get("exit_price", "")),
-                mode=str(open_row.get("mode", "") or ""),
-                broker=broker_name,
-                order_id=str(sync_result.get("exit_order_id", "") or parent_order_id),
-                parent_order_id=parent_order_id,
-                status="CLOSED",
-            )
-            safe_insert_broker_order(
-                order_id=str(sync_result.get("exit_order_id", "") or parent_order_id),
-                broker=broker_name,
-                symbol=symbol,
-                side=lifecycle_side,
-                order_type="exit",
-                status=str(sync_result.get("exit_status", sync_result.get("parent_status", "")) or ""),
-                qty=to_float_or_none(open_row.get("shares", "")),
-                filled_qty=to_float_or_none(sync_result.get("exit_filled_qty", "")),
-                avg_fill_price=to_float_or_none(sync_result.get("exit_filled_avg_price", "")),
-                submitted_at=exit_timestamp,
-                filled_at=exit_timestamp,
-            )
+            if not exit_already_logged:
+                append_trade_log({
+                    "timestamp_utc": exit_timestamp_utc,
+                    "event_type": exit_event,
+                    "symbol": symbol,
+                    "name": open_row.get("name", ""),
+                    "mode": open_row.get("mode", ""),
+                    "trade_source": trade_source,
+                    "broker": broker_name,
+                    "broker_order_id": parent_order_id,
+                    "broker_parent_order_id": parent_order_id,
+                    "broker_status": sync_result.get("exit_status", sync_result.get("parent_status", "")),
+                    "broker_filled_qty": sync_result.get("exit_filled_qty", ""),
+                    "broker_filled_avg_price": sync_result.get("exit_filled_avg_price", ""),
+                    "broker_exit_order_id": sync_result.get("exit_order_id", ""),
+                    "shares": open_row.get("shares", ""),
+                    "entry_price": open_row.get("entry_price", ""),
+                    "stop_price": open_row.get("stop_price", ""),
+                    "target_price": open_row.get("target_price", ""),
+                    "exit_price": sync_result.get("exit_price", ""),
+                    "exit_reason": sync_result.get("exit_reason", exit_event),
+                    "status": "CLOSED",
+                    "notes": f"Paper trade exit synced from {broker_name}. exit_event={exit_event}",
+                    "linked_signal_timestamp_utc": open_row.get("linked_signal_timestamp_utc", ""),
+                    "linked_signal_entry": open_row.get("linked_signal_entry", ""),
+                    "linked_signal_stop": open_row.get("linked_signal_stop", ""),
+                    "linked_signal_target": open_row.get("linked_signal_target", ""),
+                    "linked_signal_confidence": open_row.get("linked_signal_confidence", ""),
+                    "inferred_stop_hit": "",
+                    "inferred_target_hit": "",
+                    "inferred_first_level_hit": "",
+                    "inferred_analysis_start_utc": "",
+                    "inferred_analysis_end_utc": "",
+                })
+                safe_insert_trade_event(
+                    event_time=exit_timestamp,
+                    event_type=exit_event,
+                    symbol=symbol,
+                    side=lifecycle_side,
+                    shares=to_float_or_none(open_row.get("shares", "")),
+                    price=to_float_or_none(sync_result.get("exit_price", "")),
+                    mode=str(open_row.get("mode", "") or ""),
+                    broker=broker_name,
+                    order_id=str(sync_result.get("exit_order_id", "") or parent_order_id),
+                    parent_order_id=parent_order_id,
+                    status="CLOSED",
+                )
+                safe_insert_broker_order(
+                    order_id=str(sync_result.get("exit_order_id", "") or parent_order_id),
+                    broker=broker_name,
+                    symbol=symbol,
+                    side=lifecycle_side,
+                    order_type="exit",
+                    status=str(sync_result.get("exit_status", sync_result.get("parent_status", "")) or ""),
+                    qty=to_float_or_none(open_row.get("shares", "")),
+                    filled_qty=to_float_or_none(sync_result.get("exit_filled_qty", "")),
+                    avg_fill_price=to_float_or_none(sync_result.get("exit_filled_avg_price", "")),
+                    submitted_at=exit_timestamp,
+                    filled_at=exit_timestamp,
+                )
 
             shares_value = open_row.get("shares", "")
             entry_timestamp_utc = str(open_row.get("timestamp_utc", "")).strip()
@@ -544,6 +546,7 @@ def execute_sync_paper_trades(
             "parent_status": sync_result.get("parent_status", ""),
             "exit_status": sync_result.get("exit_status", sync_result.get("parent_status", "")),
             "stale_reconciled": stale_reconciled,
+            "exit_already_logged": exit_already_logged,
         })
 
     auto_healed_positions: list[dict[str, Any]] = []

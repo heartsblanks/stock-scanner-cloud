@@ -187,6 +187,58 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(captured_lifecycle["status"], "CLOSED")
         self.assertEqual(captured_lifecycle["exit_reason"], "STALE_OPEN_RECONCILED")
 
+    def test_ibkr_stale_reconcile_repairs_lifecycle_when_exit_event_already_logged(self):
+        captured_lifecycle = {}
+        append_calls = []
+        trade_event_calls = []
+        broker_order_calls = []
+
+        def upsert_trade_lifecycle(**kwargs):
+            captured_lifecycle.update(kwargs)
+
+        result = execute_sync_paper_trades(
+            get_open_paper_trades=lambda: [
+                {
+                    "timestamp_utc": "2026-04-13T16:45:14+00:00",
+                    "symbol": "SOFI",
+                    "name": "SoFi",
+                    "mode": "primary",
+                    "side": "BUY",
+                    "shares": "299",
+                    "entry_price": "16.68",
+                    "stop_price": "16.4945",
+                    "target_price": "17.051",
+                    "broker_order_id": "76",
+                    "broker_parent_order_id": "76",
+                    "broker": "IBKR",
+                }
+            ],
+            sync_order_by_id_for_broker=lambda broker, parent_id: (_ for _ in ()).throw(
+                RuntimeError("IBKR bridge timeout during GET /orders/76/sync after 8s")
+            ),
+            paper_trade_exit_already_logged=lambda parent_order_id, exit_event: True,
+            append_trade_log=lambda row: append_calls.append(row),
+            safe_insert_trade_event=lambda **kwargs: trade_event_calls.append(kwargs),
+            safe_insert_broker_order=lambda **kwargs: broker_order_calls.append(kwargs),
+            upsert_trade_lifecycle=upsert_trade_lifecycle,
+            parse_iso_utc=parse_iso_utc,
+            to_float_or_none=to_float_or_none,
+            get_open_positions_for_broker=lambda broker: [],
+            close_position_for_broker=lambda broker, symbol: {"ok": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["synced_count"], 1)
+        self.assertTrue(result["results"][0]["stale_reconciled"])
+        self.assertTrue(result["results"][0]["exit_already_logged"])
+        self.assertEqual(captured_lifecycle["symbol"], "SOFI")
+        self.assertEqual(captured_lifecycle["broker"], "IBKR")
+        self.assertEqual(captured_lifecycle["status"], "CLOSED")
+        self.assertEqual(captured_lifecycle["exit_reason"], "STALE_OPEN_RECONCILED")
+        self.assertEqual(append_calls, [])
+        self.assertEqual(trade_event_calls, [])
+        self.assertEqual(broker_order_calls, [])
+
     def test_ibkr_sync_stops_after_batch_time_budget(self):
         with patch("services.sync_service.time.monotonic", side_effect=[0.0, 1.0, 91.0, 91.0]):
             result = execute_sync_paper_trades(
