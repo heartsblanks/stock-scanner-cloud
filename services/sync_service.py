@@ -71,6 +71,81 @@ def _read_broker_open_symbols(
     return {str(position.get("symbol", "")).strip().upper() for position in positions if str(position.get("symbol", "")).strip()}
 
 
+def _build_ibkr_stale_reconciled_sync_result(
+    *,
+    open_row: dict[str, Any],
+    parent_order_id: str,
+    sync_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    source = sync_result or {}
+    return {
+        **source,
+        "exit_event": "MANUAL_CLOSE",
+        "exit_reason": str(source.get("exit_reason", "") or "STALE_OPEN_RECONCILED"),
+        "exit_status": str(source.get("exit_status", "") or "reconciled_closed"),
+        "exit_order_id": str(source.get("exit_order_id", "") or parent_order_id),
+        "exit_filled_qty": str(source.get("exit_filled_qty", "") or open_row.get("shares", "")),
+        "exit_price": str(source.get("exit_price", "") or open_row.get("entry_price", "")),
+        "exit_filled_avg_price": str(
+            source.get("exit_filled_avg_price", "")
+            or source.get("exit_price", "")
+            or open_row.get("entry_price", "")
+        ),
+    }
+
+
+def _reconcile_ibkr_stale_open_trade(
+    *,
+    broker_name: str,
+    symbol: str,
+    parent_order_id: str,
+    open_row: dict[str, Any],
+    cached_open_symbols_by_broker: dict[str, set[str]],
+    get_open_positions: Callable[[], list[dict[str, Any]]] | None,
+    get_open_positions_for_broker: Callable[[str], list[dict[str, Any]]] | None,
+    sync_result: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    if broker_name != "IBKR":
+        return sync_result or {}, False
+
+    try:
+        if broker_name not in cached_open_symbols_by_broker:
+            cached_open_symbols_by_broker[broker_name] = _read_broker_open_symbols(
+                broker_name=broker_name,
+                get_open_positions=get_open_positions,
+                get_open_positions_for_broker=get_open_positions_for_broker,
+            )
+        broker_open_symbols = cached_open_symbols_by_broker[broker_name]
+    except Exception as e:
+        log_exception(
+            "IBKR open position read failed during stale reconciliation",
+            e,
+            component="sync_service",
+            operation="execute_sync_paper_trades",
+            symbol=symbol,
+            parent_order_id=parent_order_id,
+        )
+        broker_open_symbols = {symbol}
+
+    if symbol in broker_open_symbols:
+        return sync_result or {}, False
+
+    reconciled_sync_result = _build_ibkr_stale_reconciled_sync_result(
+        open_row=open_row,
+        parent_order_id=parent_order_id,
+        sync_result=sync_result,
+    )
+    log_info(
+        "IBKR stale open trade reconciled closed from broker state",
+        component="sync_service",
+        operation="execute_sync_paper_trades",
+        symbol=symbol,
+        broker=broker_name,
+        parent_order_id=parent_order_id,
+    )
+    return reconciled_sync_result, True
+
+
 
 def execute_sync_paper_trades(
     *,
@@ -150,82 +225,68 @@ def execute_sync_paper_trades(
                 sync_result = sync_order_by_id(parent_order_id)
             else:
                 raise RuntimeError("sync_order_by_id is not configured")
+            stale_reconciled = False
         except Exception as e:
             failure_reason, bridge_issue = _classify_ibkr_bridge_issue(e, broker_name=broker_name)
-            log_exception(
-                "Paper trade sync failed",
-                e,
-                component="sync_service",
-                operation="execute_sync_paper_trades",
-                symbol=symbol,
-                parent_order_id=parent_order_id,
-                broker=broker_name,
-                failure_reason=failure_reason,
-                bridge_issue=bridge_issue,
-            )
-            results.append({
-                "symbol": symbol,
-                "broker": broker_name,
-                "parent_order_id": parent_order_id,
-                "synced": False,
-                "reason": failure_reason,
-                "details": str(e),
-                "bridge_issue": bridge_issue,
-            })
-            skipped_count += 1
-            continue
+            recovered_from_timeout = False
+            stale_reconciled = False
+            if broker_name == "IBKR" and failure_reason == "bridge_timeout":
+                reconciled_sync_result, stale_reconciled = _reconcile_ibkr_stale_open_trade(
+                    broker_name=broker_name,
+                    symbol=symbol,
+                    parent_order_id=parent_order_id,
+                    open_row=open_row,
+                    cached_open_symbols_by_broker=cached_open_symbols_by_broker,
+                    get_open_positions=get_open_positions,
+                    get_open_positions_for_broker=get_open_positions_for_broker,
+                    sync_result={},
+                )
+                if stale_reconciled:
+                    sync_result = reconciled_sync_result
+                    recovered_from_timeout = bool(str(sync_result.get("exit_event", "")).strip().upper())
+
+            if not recovered_from_timeout:
+                log_exception(
+                    "Paper trade sync failed",
+                    e,
+                    component="sync_service",
+                    operation="execute_sync_paper_trades",
+                    symbol=symbol,
+                    parent_order_id=parent_order_id,
+                    broker=broker_name,
+                    failure_reason=failure_reason,
+                    bridge_issue=bridge_issue,
+                )
+                results.append({
+                    "symbol": symbol,
+                    "broker": broker_name,
+                    "parent_order_id": parent_order_id,
+                    "synced": False,
+                    "reason": failure_reason,
+                    "details": str(e),
+                    "bridge_issue": bridge_issue,
+                })
+                skipped_count += 1
+                continue
 
         exit_event = str(sync_result.get("exit_event", "")).strip().upper()
-        stale_reconciled = False
         if not exit_event and broker_name == "IBKR":
             sync_status = str(sync_result.get("status", "")).strip().lower()
             parent_status = str(sync_result.get("parent_status", "")).strip().lower()
             is_unknown_parent = sync_status == "unknown" or parent_status == "unknown"
             if is_unknown_parent:
-                try:
-                    if broker_name not in cached_open_symbols_by_broker:
-                        cached_open_symbols_by_broker[broker_name] = _read_broker_open_symbols(
-                            broker_name=broker_name,
-                            get_open_positions=get_open_positions,
-                            get_open_positions_for_broker=get_open_positions_for_broker,
-                        )
-                    broker_open_symbols = cached_open_symbols_by_broker[broker_name]
-                except Exception as e:
-                    log_exception(
-                        "IBKR open position read failed during stale reconciliation",
-                        e,
-                        component="sync_service",
-                        operation="execute_sync_paper_trades",
-                        symbol=symbol,
-                        parent_order_id=parent_order_id,
-                    )
-                    broker_open_symbols = {symbol}
-
-                if symbol not in broker_open_symbols:
-                    sync_result = {
-                        **sync_result,
-                        "exit_event": "MANUAL_CLOSE",
-                        "exit_reason": str(sync_result.get("exit_reason", "") or "STALE_OPEN_RECONCILED"),
-                        "exit_status": str(sync_result.get("exit_status", "") or "reconciled_closed"),
-                        "exit_order_id": str(sync_result.get("exit_order_id", "") or parent_order_id),
-                        "exit_filled_qty": str(sync_result.get("exit_filled_qty", "") or open_row.get("shares", "")),
-                        "exit_price": str(sync_result.get("exit_price", "") or open_row.get("entry_price", "")),
-                        "exit_filled_avg_price": str(
-                            sync_result.get("exit_filled_avg_price", "")
-                            or sync_result.get("exit_price", "")
-                            or open_row.get("entry_price", "")
-                        ),
-                    }
+                sync_result, stale_reconciled = _reconcile_ibkr_stale_open_trade(
+                    broker_name=broker_name,
+                    symbol=symbol,
+                    parent_order_id=parent_order_id,
+                    open_row=open_row,
+                    cached_open_symbols_by_broker=cached_open_symbols_by_broker,
+                    get_open_positions=get_open_positions,
+                    get_open_positions_for_broker=get_open_positions_for_broker,
+                    sync_result=sync_result,
+                )
+                if stale_reconciled:
                     exit_event = "MANUAL_CLOSE"
-                    stale_reconciled = True
-                    log_info(
-                        "IBKR stale open trade reconciled closed from broker state",
-                        component="sync_service",
-                        operation="execute_sync_paper_trades",
-                        symbol=symbol,
-                        broker=broker_name,
-                        parent_order_id=parent_order_id,
-                    )
 
         if not exit_event:
             if broker_name == "IBKR":

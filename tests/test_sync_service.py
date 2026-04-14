@@ -131,7 +131,7 @@ class SyncServiceTests(unittest.TestCase):
             upsert_trade_lifecycle=lambda **kwargs: None,
             parse_iso_utc=parse_iso_utc,
             to_float_or_none=to_float_or_none,
-            get_open_positions_for_broker=lambda broker: [],
+            get_open_positions_for_broker=lambda broker: [{"symbol": "PLTR"}],
             close_position_for_broker=lambda broker, symbol: {"ok": True},
         )
 
@@ -140,6 +140,52 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(result["results"][0]["reason"], "bridge_timeout")
         self.assertIn("IBKR bridge timeout", result["results"][0]["details"])
         self.assertIn("IBKR bridge timeout", result["results"][0]["bridge_issue"])
+
+    def test_ibkr_sync_timeout_reconciles_closed_when_symbol_missing_from_live_positions(self):
+        captured_lifecycle = {}
+
+        def upsert_trade_lifecycle(**kwargs):
+            captured_lifecycle.update(kwargs)
+
+        result = execute_sync_paper_trades(
+            get_open_paper_trades=lambda: [
+                {
+                    "timestamp_utc": "2026-04-13T16:45:14+00:00",
+                    "symbol": "SOFI",
+                    "name": "SoFi",
+                    "mode": "primary",
+                    "side": "BUY",
+                    "shares": "299",
+                    "entry_price": "16.68",
+                    "stop_price": "16.4945",
+                    "target_price": "17.051",
+                    "broker_order_id": "76",
+                    "broker_parent_order_id": "76",
+                    "broker": "IBKR",
+                }
+            ],
+            sync_order_by_id_for_broker=lambda broker, parent_id: (_ for _ in ()).throw(
+                RuntimeError("IBKR bridge timeout during GET /orders/76/sync after 8s")
+            ),
+            paper_trade_exit_already_logged=lambda parent_order_id, exit_event: False,
+            append_trade_log=lambda row: None,
+            safe_insert_trade_event=lambda **kwargs: None,
+            safe_insert_broker_order=lambda **kwargs: None,
+            upsert_trade_lifecycle=upsert_trade_lifecycle,
+            parse_iso_utc=parse_iso_utc,
+            to_float_or_none=to_float_or_none,
+            get_open_positions_for_broker=lambda broker: [],
+            close_position_for_broker=lambda broker, symbol: {"ok": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["synced_count"], 1)
+        self.assertTrue(result["results"][0]["stale_reconciled"])
+        self.assertEqual(result["results"][0]["exit_event"], "MANUAL_CLOSE")
+        self.assertEqual(captured_lifecycle["symbol"], "SOFI")
+        self.assertEqual(captured_lifecycle["broker"], "IBKR")
+        self.assertEqual(captured_lifecycle["status"], "CLOSED")
+        self.assertEqual(captured_lifecycle["exit_reason"], "STALE_OPEN_RECONCILED")
 
     def test_ibkr_sync_stops_after_batch_time_budget(self):
         with patch("services.sync_service.time.monotonic", side_effect=[0.0, 1.0, 91.0, 91.0]):
