@@ -110,6 +110,14 @@ def _reconcile_ibkr_stale_open_trade(
 
     try:
         if broker_name not in cached_open_symbols_by_broker:
+            log_info(
+                "Reading IBKR broker open symbols for stale reconciliation",
+                component="sync_service",
+                operation="execute_sync_paper_trades",
+                symbol=symbol,
+                broker=broker_name,
+                parent_order_id=parent_order_id,
+            )
             cached_open_symbols_by_broker[broker_name] = _read_broker_open_symbols(
                 broker_name=broker_name,
                 get_open_positions=get_open_positions,
@@ -127,7 +135,27 @@ def _reconcile_ibkr_stale_open_trade(
         )
         broker_open_symbols = {symbol}
 
+    log_info(
+        "Evaluated IBKR stale reconciliation broker snapshot",
+        component="sync_service",
+        operation="execute_sync_paper_trades",
+        symbol=symbol,
+        broker=broker_name,
+        parent_order_id=parent_order_id,
+        broker_open_symbol_count=len(broker_open_symbols),
+        broker_has_symbol=symbol in broker_open_symbols,
+        broker_open_symbols_sample=",".join(sorted(list(broker_open_symbols))[:10]),
+    )
+
     if symbol in broker_open_symbols:
+        log_info(
+            "IBKR stale reconciliation skipped because symbol still appears open on broker snapshot",
+            component="sync_service",
+            operation="execute_sync_paper_trades",
+            symbol=symbol,
+            broker=broker_name,
+            parent_order_id=parent_order_id,
+        )
         return sync_result or {}, False
 
     reconciled_sync_result = _build_ibkr_stale_reconciled_sync_result(
@@ -230,6 +258,17 @@ def execute_sync_paper_trades(
             failure_reason, bridge_issue = _classify_ibkr_bridge_issue(e, broker_name=broker_name)
             recovered_from_timeout = False
             stale_reconciled = False
+            if broker_name == "IBKR":
+                log_info(
+                    "IBKR sync exception classified",
+                    component="sync_service",
+                    operation="execute_sync_paper_trades",
+                    symbol=symbol,
+                    parent_order_id=parent_order_id,
+                    broker=broker_name,
+                    failure_reason=failure_reason,
+                    bridge_issue=bridge_issue,
+                )
             if broker_name == "IBKR" and failure_reason == "bridge_timeout":
                 reconciled_sync_result, stale_reconciled = _reconcile_ibkr_stale_open_trade(
                     broker_name=broker_name,
@@ -244,6 +283,18 @@ def execute_sync_paper_trades(
                 if stale_reconciled:
                     sync_result = reconciled_sync_result
                     recovered_from_timeout = bool(str(sync_result.get("exit_event", "")).strip().upper())
+                    log_info(
+                        "IBKR timeout recovery attempted via stale reconciliation",
+                        component="sync_service",
+                        operation="execute_sync_paper_trades",
+                        symbol=symbol,
+                        parent_order_id=parent_order_id,
+                        broker=broker_name,
+                        stale_reconciled=stale_reconciled,
+                        recovered_from_timeout=recovered_from_timeout,
+                        recovered_exit_event=sync_result.get("exit_event", ""),
+                        recovered_exit_reason=sync_result.get("exit_reason", ""),
+                    )
 
             if not recovered_from_timeout:
                 log_exception(
@@ -274,6 +325,19 @@ def execute_sync_paper_trades(
             sync_status = str(sync_result.get("status", "")).strip().lower()
             parent_status = str(sync_result.get("parent_status", "")).strip().lower()
             is_unknown_parent = sync_status == "unknown" or parent_status == "unknown"
+            log_info(
+                "IBKR sync returned without exit event",
+                component="sync_service",
+                operation="execute_sync_paper_trades",
+                symbol=symbol,
+                parent_order_id=parent_order_id,
+                broker=broker_name,
+                sync_status=sync_status,
+                parent_status=parent_status,
+                take_profit_status=str(sync_result.get("take_profit_status", "")).strip().lower(),
+                stop_loss_status=str(sync_result.get("stop_loss_status", "")).strip().lower(),
+                is_unknown_parent=is_unknown_parent,
+            )
             if is_unknown_parent:
                 sync_result, stale_reconciled = _reconcile_ibkr_stale_open_trade(
                     broker_name=broker_name,
@@ -287,6 +351,16 @@ def execute_sync_paper_trades(
                 )
                 if stale_reconciled:
                     exit_event = "MANUAL_CLOSE"
+                    log_info(
+                        "IBKR unknown-parent recovery succeeded via stale reconciliation",
+                        component="sync_service",
+                        operation="execute_sync_paper_trades",
+                        symbol=symbol,
+                        parent_order_id=parent_order_id,
+                        broker=broker_name,
+                        exit_event=exit_event,
+                        exit_reason=sync_result.get("exit_reason", ""),
+                    )
 
         if not exit_event:
             if broker_name == "IBKR":
