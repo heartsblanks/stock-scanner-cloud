@@ -178,6 +178,65 @@ def get_closed_trade_events(limit: int = 100, broker: Optional[str] = None) -> l
     )
 
 
+def _normalize_lifecycle_symbol(symbol: Optional[str]) -> str:
+    return normalize_text(symbol).upper() if symbol else ""
+
+
+def _normalize_lifecycle_broker(broker: Optional[str]) -> str:
+    return normalize_text(broker).upper() if broker else ""
+
+
+def _trade_lifecycle_identity_matches(
+    existing: dict[str, Any],
+    *,
+    symbol: Optional[str],
+    broker: Optional[str],
+    order_id: Optional[str],
+    parent_order_id: Optional[str],
+) -> bool:
+    incoming_symbol = _normalize_lifecycle_symbol(symbol)
+    incoming_broker = _normalize_lifecycle_broker(broker)
+    incoming_order_id = normalize_text(order_id)
+    incoming_parent_order_id = normalize_text(parent_order_id)
+
+    existing_symbol = _normalize_lifecycle_symbol(existing.get("symbol"))
+    existing_broker = _normalize_lifecycle_broker(existing.get("broker"))
+    existing_order_id = normalize_text(existing.get("order_id"))
+    existing_parent_order_id = normalize_text(existing.get("parent_order_id"))
+
+    if incoming_symbol and existing_symbol and incoming_symbol != existing_symbol:
+        return False
+    if incoming_broker and existing_broker and incoming_broker != existing_broker:
+        return False
+    if incoming_order_id and existing_order_id and incoming_order_id != existing_order_id:
+        return False
+    if incoming_parent_order_id and existing_parent_order_id and incoming_parent_order_id != existing_parent_order_id:
+        return False
+    return True
+
+
+def _disambiguated_trade_key(
+    trade_key: str,
+    *,
+    symbol: Optional[str],
+    broker: Optional[str],
+    order_id: Optional[str],
+    parent_order_id: Optional[str],
+) -> str:
+    parts = []
+    normalized_broker = _normalize_lifecycle_broker(broker)
+    normalized_symbol = _normalize_lifecycle_symbol(symbol)
+    normalized_parent_order_id = normalize_text(parent_order_id)
+    normalized_order_id = normalize_text(order_id)
+
+    if normalized_broker:
+        parts.append(normalized_broker)
+    if normalized_symbol:
+        parts.append(normalized_symbol)
+    parts.append(normalized_parent_order_id or normalized_order_id or trade_key)
+    return ":".join(parts)
+
+
 def upsert_trade_lifecycle(
     trade_key: str,
     symbol: Optional[str] = None,
@@ -209,9 +268,41 @@ def upsert_trade_lifecycle(
     normalized_trade_key = normalize_text(trade_key)
     if not normalized_trade_key:
         raise ValueError("trade_key is required")
-    existing = fetch_one("SELECT id FROM trade_lifecycles WHERE trade_key = %(trade_key)s LIMIT 1", {"trade_key": normalized_trade_key})
+    existing = fetch_one(
+        """
+        SELECT id, trade_key, symbol, broker, order_id, parent_order_id
+        FROM trade_lifecycles
+        WHERE trade_key = %(trade_key)s
+        LIMIT 1
+        """,
+        {"trade_key": normalized_trade_key},
+    )
+    resolved_trade_key = normalized_trade_key
+    if existing and not _trade_lifecycle_identity_matches(
+        existing,
+        symbol=symbol,
+        broker=broker,
+        order_id=order_id,
+        parent_order_id=parent_order_id,
+    ):
+        resolved_trade_key = _disambiguated_trade_key(
+            normalized_trade_key,
+            symbol=symbol,
+            broker=broker,
+            order_id=order_id,
+            parent_order_id=parent_order_id,
+        )
+        existing = fetch_one(
+            """
+            SELECT id, trade_key, symbol, broker, order_id, parent_order_id
+            FROM trade_lifecycles
+            WHERE trade_key = %(trade_key)s
+            LIMIT 1
+            """,
+            {"trade_key": resolved_trade_key},
+        )
     params = {
-        "trade_key": normalized_trade_key,
+        "trade_key": resolved_trade_key,
         "symbol": symbol,
         "mode": mode,
         "side": side,

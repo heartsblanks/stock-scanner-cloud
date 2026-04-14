@@ -54,6 +54,76 @@ class TradeLifecyclePersistenceTests(unittest.TestCase):
         self.assertEqual(params["broker"], "")
         self.assertEqual(params["id"], 42)
 
+    @patch("repositories.trades_repo.execute")
+    @patch("repositories.trades_repo.fetch_one")
+    def test_trade_key_collision_inserts_disambiguated_row_when_identity_mismatches(self, mock_fetch_one, mock_execute):
+        mock_fetch_one.side_effect = [
+            {
+                "id": 211,
+                "trade_key": "76",
+                "symbol": "TSLA",
+                "broker": "IBKR",
+                "order_id": "76",
+                "parent_order_id": "76",
+            },
+            None,
+        ]
+
+        upsert_trade_lifecycle(
+            trade_key="76",
+            symbol="SOFI",
+            broker="IBKR",
+            order_id="76",
+            parent_order_id="76",
+            status="CLOSED",
+            exit_reason="STALE_OPEN_RECONCILED",
+        )
+
+        query = mock_execute.call_args.args[0]
+        params = mock_execute.call_args.args[1]
+
+        self.assertIn("INSERT INTO trade_lifecycles", query)
+        self.assertEqual(params["trade_key"], "IBKR:SOFI:76")
+        self.assertEqual(params["symbol"], "SOFI")
+
+    @patch("repositories.trades_repo.execute")
+    @patch("repositories.trades_repo.fetch_one")
+    def test_trade_key_collision_updates_existing_disambiguated_row_when_present(self, mock_fetch_one, mock_execute):
+        mock_fetch_one.side_effect = [
+            {
+                "id": 211,
+                "trade_key": "76",
+                "symbol": "TSLA",
+                "broker": "IBKR",
+                "order_id": "76",
+                "parent_order_id": "76",
+            },
+            {
+                "id": 312,
+                "trade_key": "IBKR:SOFI:76",
+                "symbol": "SOFI",
+                "broker": "IBKR",
+                "order_id": "76",
+                "parent_order_id": "76",
+            },
+        ]
+
+        upsert_trade_lifecycle(
+            trade_key="76",
+            symbol="SOFI",
+            broker="IBKR",
+            order_id="76",
+            parent_order_id="76",
+            status="CLOSED",
+        )
+
+        query = mock_execute.call_args.args[0]
+        params = mock_execute.call_args.args[1]
+
+        self.assertIn("UPDATE trade_lifecycles", query)
+        self.assertEqual(params["id"], 312)
+        self.assertEqual(params["trade_key"], "IBKR:SOFI:76")
+
 
 class DashboardSummaryDateScopeTests(unittest.TestCase):
     @patch("repositories.trades_repo.get_equity_curve")
