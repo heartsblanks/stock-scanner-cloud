@@ -588,6 +588,10 @@ class IbkrGatewayClient:
             return {"id": "", "status": "unknown", "message": "order_id is required"}
 
         ib = self._connect()
+        fills_result = self._sync_order_from_fills(ib, normalized_order_id)
+        if str(fills_result.get("status", "")).strip().lower() != "unknown":
+            return fills_result
+
         for trade in self._fetch_open_trades(ib):
             trade_order_id = str(getattr(getattr(trade, "order", None), "orderId", "")).strip()
             if trade_order_id == normalized_order_id:
@@ -601,7 +605,7 @@ class IbkrGatewayClient:
                     "client_order_id": normalized_trade.get("client_order_id", ""),
                 }
 
-        return self._sync_order_from_fills(ib, normalized_order_id)
+        return fills_result
 
     def place_paper_bracket_order(self, trade: dict[str, Any], max_notional: float | None = None) -> dict[str, Any]:
         metrics = trade.get("metrics", {}) if isinstance(trade, dict) else {}

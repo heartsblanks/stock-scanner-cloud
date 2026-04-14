@@ -159,6 +159,48 @@ class IbkrConnectorTests(unittest.TestCase):
         self.assertEqual(result["exit_price"], 15.47)
         self.assertEqual(result["exit_reason"], "BROKER_FILLED_EXIT")
 
+    def test_sync_order_prefers_execution_fills_before_open_trade_lookup(self):
+        client = IbkrGatewayClient.__new__(IbkrGatewayClient)
+        client._connect = lambda: object()
+        open_trade_calls = []
+
+        def fake_fetch_open_trades(ib):
+            open_trade_calls.append(True)
+            return [
+                _FakeTrade(symbol="RIVN", order_id=34, status="Submitted", remaining=317.0),
+            ]
+
+        client._fetch_open_trades = fake_fetch_open_trades
+        client._fetch_recent_fills = lambda ib: [
+            _FakeFill(
+                symbol="RIVN",
+                execution=_FakeExecution(order_id=34, order_ref="scanner-RIVN-BUY-157100-317", price=15.71, shares=317, side="BOT", time="2026-04-10T15:35:13+00:00"),
+            ),
+            _FakeFill(
+                symbol="RIVN",
+                execution=_FakeExecution(order_id=36, order_ref="scanner-RIVN-BUY-157100-317", price=15.47, shares=317, side="SLD", time="2026-04-10T16:01:09+00:00"),
+            ),
+        ]
+
+        result = client.sync_order("34")
+
+        self.assertEqual(result["exit_order_id"], "36")
+        self.assertEqual(open_trade_calls, [])
+
+    def test_sync_order_falls_back_to_open_trade_lookup_when_fills_are_unknown(self):
+        client = IbkrGatewayClient.__new__(IbkrGatewayClient)
+        client._connect = lambda: object()
+        client._fetch_open_trades = lambda ib: [
+            _FakeTrade(symbol="NIO", order_id=64, status="Submitted", remaining=1.0),
+        ]
+        client._fetch_recent_fills = lambda ib: []
+
+        result = client.sync_order("64")
+
+        self.assertEqual(result["id"], "64")
+        self.assertEqual(result["status"], "Submitted")
+        self.assertEqual(result["parent_status"], "Submitted")
+
     def test_get_positions_skips_ticker_enrichment_by_default(self):
         fake_ib = _FakeIbForPositions([
             _FakePositionRow(symbol="NVDA", qty=52, avg_cost=189.60923075, con_id=4815747),
