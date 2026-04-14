@@ -111,6 +111,35 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(captured_lifecycle["status"], "CLOSED")
         self.assertEqual(captured_lifecycle["exit_reason"], "STALE_OPEN_RECONCILED")
 
+    def test_ibkr_sync_timeout_is_classified_explicitly(self):
+        result = execute_sync_paper_trades(
+            get_open_paper_trades=lambda: [
+                {
+                    "symbol": "PLTR",
+                    "broker_parent_order_id": "136",
+                    "broker": "IBKR",
+                }
+            ],
+            sync_order_by_id_for_broker=lambda broker, parent_id: (_ for _ in ()).throw(
+                RuntimeError("IBKR bridge timeout during GET /orders/136/sync after 8s")
+            ),
+            paper_trade_exit_already_logged=lambda parent_order_id, exit_event: False,
+            append_trade_log=lambda row: None,
+            safe_insert_trade_event=lambda **kwargs: None,
+            safe_insert_broker_order=lambda **kwargs: None,
+            upsert_trade_lifecycle=lambda **kwargs: None,
+            parse_iso_utc=parse_iso_utc,
+            to_float_or_none=to_float_or_none,
+            get_open_positions_for_broker=lambda broker: [],
+            close_position_for_broker=lambda broker, symbol: {"ok": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["synced_count"], 0)
+        self.assertEqual(result["results"][0]["reason"], "bridge_timeout")
+        self.assertIn("IBKR bridge timeout", result["results"][0]["details"])
+        self.assertIn("IBKR bridge timeout", result["results"][0]["bridge_issue"])
+
 
 if __name__ == "__main__":
     unittest.main()

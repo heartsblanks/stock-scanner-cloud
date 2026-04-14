@@ -15,6 +15,19 @@ from core.trade_math import (
 )
 
 
+def _classify_ibkr_bridge_issue(exc: Exception, *, broker_name: str) -> tuple[str, str | None]:
+    if str(broker_name or "").strip().upper() != "IBKR":
+        return "close_exception", None
+
+    message = str(exc)
+    lowered = message.lower()
+    if "ibkr bridge timeout" in lowered:
+        return "bridge_timeout", message
+    if "ibkr bridge request failed" in lowered:
+        return "bridge_request_failed", message
+    return "close_exception", None
+
+
 def execute_close_all_paper_positions(
     *,
     get_open_positions: Callable[[], list[dict[str, Any]]],
@@ -90,19 +103,24 @@ def execute_close_all_paper_positions(
         try:
             close_response = close_position(symbol, cancel_orders=True)
         except Exception as e:
+            failure_reason, bridge_issue = _classify_ibkr_bridge_issue(e, broker_name=position.get("broker", ""))
             log_exception(
                 "Paper position close failed",
                 e,
                 component="trade_service",
                 operation="execute_close_all_paper_positions",
                 symbol=symbol,
+                broker=position.get("broker", ""),
+                failure_reason=failure_reason,
+                bridge_issue=bridge_issue,
             )
             skipped_count += 1
             results.append({
                 "symbol": symbol,
                 "closed": False,
-                "reason": "close_exception",
+                "reason": failure_reason,
                 "details": str(e),
+                "bridge_issue": bridge_issue,
             })
             continue
 

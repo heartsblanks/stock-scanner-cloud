@@ -15,6 +15,19 @@ from core.trade_math import (
 )
 
 
+def _classify_ibkr_bridge_issue(exc: Exception, *, broker_name: str) -> tuple[str, str | None]:
+    if str(broker_name or "").strip().upper() != "IBKR":
+        return "sync_exception", None
+
+    message = str(exc)
+    lowered = message.lower()
+    if "ibkr bridge timeout" in lowered:
+        return "bridge_timeout", message
+    if "ibkr bridge request failed" in lowered:
+        return "bridge_request_failed", message
+    return "sync_exception", None
+
+
 def _resolve_exit_timestamp(sync_result: dict[str, Any], timestamp_utc: str, parse_iso_utc: Callable[[str], Any]):
     for key in ("exit_filled_at", "exit_time", "filled_at", "updated_at"):
         raw_value = str(sync_result.get(key, "") or "").strip()
@@ -93,6 +106,7 @@ def execute_sync_paper_trades(
             else:
                 raise RuntimeError("sync_order_by_id is not configured")
         except Exception as e:
+            failure_reason, bridge_issue = _classify_ibkr_bridge_issue(e, broker_name=broker_name)
             log_exception(
                 "Paper trade sync failed",
                 e,
@@ -100,14 +114,18 @@ def execute_sync_paper_trades(
                 operation="execute_sync_paper_trades",
                 symbol=symbol,
                 parent_order_id=parent_order_id,
+                broker=broker_name,
+                failure_reason=failure_reason,
+                bridge_issue=bridge_issue,
             )
             results.append({
                 "symbol": symbol,
                 "broker": broker_name,
                 "parent_order_id": parent_order_id,
                 "synced": False,
-                "reason": "sync_exception",
+                "reason": failure_reason,
                 "details": str(e),
+                "bridge_issue": bridge_issue,
             })
             skipped_count += 1
             continue

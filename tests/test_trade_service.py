@@ -177,6 +177,52 @@ class TradeServiceTests(unittest.TestCase):
         self.assertEqual(result["results"][0]["reason"], "broker_close_unresolved")
         self.assertEqual(result["results"][0]["order_id"], "65")
 
+    def test_ibkr_eod_close_timeout_is_classified_explicitly(self):
+        result = execute_close_all_paper_positions(
+            get_open_positions=lambda: [
+                {
+                    "symbol": "PLTR",
+                    "qty": 75,
+                    "side": "long",
+                    "current_price": "133.36",
+                    "broker": "IBKR",
+                }
+            ],
+            get_managed_open_paper_trades_for_eod_close=lambda: [
+                {
+                    "timestamp_utc": "2026-04-13T16:59:31+00:00",
+                    "symbol": "PLTR",
+                    "name": "Palantir",
+                    "mode": "core_one",
+                    "side": "BUY",
+                    "shares": "75",
+                    "entry_price": "132.97",
+                    "stop_price": "130.723",
+                    "target_price": "137.464",
+                    "broker": "IBKR",
+                    "broker_order_id": "136",
+                    "broker_parent_order_id": "136",
+                }
+            ],
+            cancel_open_orders_for_symbol=lambda symbol: [],
+            close_position=lambda symbol, cancel_orders=True: (_ for _ in ()).throw(
+                RuntimeError("IBKR bridge timeout during POST /positions/close after 20s")
+            ),
+            get_order_by_id=lambda order_id, nested=False: {"status": "unknown"},
+            safe_insert_broker_order=lambda **kwargs: None,
+            append_trade_log=lambda row: None,
+            safe_insert_trade_event=lambda **kwargs: None,
+            upsert_trade_lifecycle=lambda **kwargs: None,
+            to_float_or_none=to_float_or_none,
+            parse_iso_utc=parse_iso_utc,
+        )
+
+        self.assertEqual(result["closed_count"], 0)
+        self.assertEqual(result["skipped_count"], 1)
+        self.assertEqual(result["results"][0]["reason"], "bridge_timeout")
+        self.assertIn("IBKR bridge timeout", result["results"][0]["details"])
+        self.assertIn("IBKR bridge timeout", result["results"][0]["bridge_issue"])
+
 
 if __name__ == "__main__":
     unittest.main()
