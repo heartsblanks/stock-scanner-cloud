@@ -739,6 +739,68 @@ class IbkrGatewayClient:
 
         return completed_result
 
+    def _open_orders_for_symbol(self, ib, symbol: str) -> list[Any]:
+        normalized_symbol = str(symbol or "").strip().upper()
+        if not normalized_symbol:
+            return []
+
+        trades: list[Any] = []
+        for trade in self._fetch_open_trades(ib):
+            contract = getattr(trade, "contract", None)
+            if str(getattr(contract, "symbol", "")).strip().upper() != normalized_symbol:
+                continue
+
+            order_status = str(getattr(getattr(trade, "orderStatus", None), "status", "")).strip()
+            remaining_qty = _to_float(getattr(getattr(trade, "orderStatus", None), "remaining", 0.0))
+            if self._is_open_order_status(order_status) and remaining_qty > 0:
+                trades.append(trade)
+        return trades
+
+    def _cancel_settle_config(self) -> tuple[int, float]:
+        try:
+            attempts = max(1, int(os.getenv("IBKR_CANCEL_SETTLE_POLL_ATTEMPTS", "8")))
+        except Exception:
+            attempts = 8
+        try:
+            interval_seconds = max(0.25, float(os.getenv("IBKR_CANCEL_SETTLE_POLL_INTERVAL_SECONDS", "0.5")))
+        except Exception:
+            interval_seconds = 0.5
+        return attempts, interval_seconds
+
+    def _wait_for_symbol_open_orders_to_clear(self, ib, symbol: str) -> list[dict[str, Any]]:
+        normalized_symbol = str(symbol or "").strip().upper()
+        poll_attempts, poll_interval_seconds = self._cancel_settle_config()
+        snapshots: list[dict[str, Any]] = []
+
+        for attempt in range(0, poll_attempts + 1):
+            open_trades = self._open_orders_for_symbol(ib, normalized_symbol)
+            snapshot = {
+                "attempt": attempt,
+                "open_order_count": len(open_trades),
+                "order_ids": [
+                    str(getattr(getattr(trade, "order", None), "orderId", "")).strip()
+                    for trade in open_trades
+                ],
+            }
+            snapshots.append(snapshot)
+            log_info(
+                "IBKR bridge cancel-settle snapshot",
+                component="ibkr_bridge",
+                operation="close_position",
+                symbol=normalized_symbol,
+                **snapshot,
+            )
+            if not open_trades:
+                return snapshots
+            if attempt == poll_attempts:
+                break
+            try:
+                ib.sleep(poll_interval_seconds)
+            except Exception:
+                time.sleep(poll_interval_seconds)
+
+        return snapshots
+
     def place_paper_bracket_order(self, trade: dict[str, Any], max_notional: float | None = None) -> dict[str, Any]:
         metrics = trade.get("metrics", {}) if isinstance(trade, dict) else {}
         symbol = str(metrics.get("symbol", "")).strip().upper()
@@ -932,11 +994,7 @@ class IbkrGatewayClient:
 
         ib = self._connect()
         canceled_order_ids: list[str] = []
-        for trade in ib.openTrades() or []:
-            contract = getattr(trade, "contract", None)
-            if str(getattr(contract, "symbol", "")).strip().upper() != normalized_symbol:
-                continue
-
+        for trade in self._open_orders_for_symbol(ib, normalized_symbol):
             order = getattr(trade, "order", None)
             order_id = str(getattr(order, "orderId", "")).strip()
             ib.cancelOrder(order)
@@ -977,6 +1035,14 @@ class IbkrGatewayClient:
             ib.qualifyContracts(contract)
 
         action = "SELL" if qty > 0 else "BUY"
+        canceled_order_ids: list[str] = []
+        for trade in self._open_orders_for_symbol(ib, normalized_symbol):
+            order = getattr(trade, "order", None)
+            order_id = str(getattr(order, "orderId", "")).strip()
+            ib.cancelOrder(order)
+            if order_id:
+                canceled_order_ids.append(order_id)
+        cancel_settle_transitions = self._wait_for_symbol_open_orders_to_clear(ib, normalized_symbol)
         order = MarketOrder(action, abs(qty))
         order.orderRef = f"scanner-close-{normalized_symbol}"
         trade = ib.placeOrder(contract, order)
@@ -1052,6 +1118,8 @@ class IbkrGatewayClient:
             "position_closed": not broker_position_open,
             "close_failed": close_failed,
             "reason": result_reason,
+            "canceled_order_ids": canceled_order_ids,
+            "cancel_settle_transitions": cancel_settle_transitions,
             "status_transitions": status_transitions,
         }
 

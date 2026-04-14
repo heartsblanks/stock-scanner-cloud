@@ -110,6 +110,39 @@ class _FakeIbForPositions:
         return []
 
 
+class _FakeIbForCloseFlow:
+    def __init__(self, *, open_trades_sequence, close_trade):
+        self._open_trades_sequence = list(open_trades_sequence)
+        self._last_open_trades = self._open_trades_sequence[-1] if self._open_trades_sequence else []
+        self._close_trade = close_trade
+        self.cancelled_order_ids = []
+        self.placed_orders = []
+
+    def _current_open_trades(self):
+        if self._open_trades_sequence:
+            self._last_open_trades = self._open_trades_sequence.pop(0)
+        return self._last_open_trades
+
+    def openTrades(self):
+        return self._current_open_trades()
+
+    def reqOpenOrders(self):
+        return self._current_open_trades()
+
+    def cancelOrder(self, order):
+        self.cancelled_order_ids.append(str(getattr(order, "orderId", "")))
+
+    def placeOrder(self, contract, order):
+        self.placed_orders.append({"symbol": getattr(contract, "symbol", ""), "action": getattr(order, "action", ""), "qty": getattr(order, "totalQuantity", 0)})
+        return self._close_trade
+
+    def sleep(self, _seconds):
+        return None
+
+    def qualifyContracts(self, contract):
+        return [contract]
+
+
 class IbkrConnectorTests(unittest.TestCase):
     def test_get_open_orders_filters_cancelled_rows(self):
         client = IbkrGatewayClient.__new__(IbkrGatewayClient)
@@ -287,11 +320,20 @@ class IbkrConnectorTests(unittest.TestCase):
         fake_trade = _FakeCloseTrade(symbol="NVDA", order_id=65, status="Submitted", remaining=52.0)
 
         class _FakeIb:
+            def openTrades(self):
+                return []
+
             def qualifyContracts(self, contract):
                 return [contract]
 
+            def cancelOrder(self, order):
+                return None
+
             def placeOrder(self, contract, order):
                 return fake_trade
+
+            def sleep(self, _seconds):
+                return None
 
         client._connect = lambda: _FakeIb()
         client._find_position_row = lambda ib, symbol: fake_position
@@ -314,6 +356,43 @@ class IbkrConnectorTests(unittest.TestCase):
         self.assertFalse(result["position_closed"])
         self.assertEqual(result["reason"], "broker_close_not_confirmed")
         self.assertEqual(result["status"], "Submitted")
+        self.assertEqual(result["canceled_order_ids"], [])
+
+    def test_close_position_waits_for_symbol_open_orders_to_clear_before_submitting_close(self):
+        client = IbkrGatewayClient.__new__(IbkrGatewayClient)
+        fake_position = _FakePositionRow(symbol="NVDA", qty=52, avg_cost=189.60923075, con_id=4815747)
+        child_trade = _FakeTrade(symbol="NVDA", order_id=41, status="Submitted", remaining=52.0, action="SELL", order_type="STP")
+        fake_close_trade = _FakeCloseTrade(symbol="NVDA", order_id=65, status="Submitted", remaining=52.0)
+        fake_ib = _FakeIbForCloseFlow(
+            open_trades_sequence=[
+                [child_trade],
+                [child_trade],
+                [],
+            ],
+            close_trade=fake_close_trade,
+        )
+
+        client._connect = lambda: fake_ib
+        client._find_position_row = lambda ib, symbol: fake_position
+        client._load_order_classes = lambda: (None, _FakeMarketOrder, None, _FakeContract)
+        client._normalize_trade = lambda trade: {"id": "65", "status": "Submitted"}
+        client._close_poll_config = lambda: (1, 0.0)
+        client._cancel_settle_config = lambda: (2, 0.0)
+        client._order_status_snapshot = lambda trade: {
+            "order_id": "65",
+            "status": "Submitted",
+            "filled_qty": 0.0,
+            "avg_fill_price": 0.0,
+            "filled_at": "",
+        }
+        client._position_is_open = lambda ib, symbol: True
+
+        result = client.close_position("NVDA")
+
+        self.assertEqual(fake_ib.cancelled_order_ids, ["41"])
+        self.assertEqual(fake_ib.placed_orders[0]["symbol"], "NVDA")
+        self.assertEqual(result["cancel_settle_transitions"][0]["open_order_count"], 1)
+        self.assertEqual(result["cancel_settle_transitions"][-1]["open_order_count"], 0)
 
 
 if __name__ == "__main__":
