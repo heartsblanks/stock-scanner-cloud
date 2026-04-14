@@ -903,6 +903,8 @@ Cloud Scheduler triggers operational HTTP endpoints on Cloud Run.
   - pre-close prep and readiness check in `market-ops` at `15:50 ET`
   - forced close in `market-ops` at `15:55 ET`
   - post-close sync, reconciliation, analysis, and export in `daily-post-close`
+- IBKR sync and EOD close processing now use broker-specific batch time budgets so one stuck symbol cannot consume the full request window
+- when an IBKR batch budget is exceeded, the backend returns partial results and a stop reason instead of continuing blindly toward a worker timeout
 
 ### Future option
 - if IBKR request-bound orchestration remains fragile after bounded timeout and pre-close hardening, move IBKR EOD close, sync, and stale-state repair into a durable async worker/job model

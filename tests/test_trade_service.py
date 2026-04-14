@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from orchestration.scan_context import parse_iso_utc, to_float_or_none
 from services.trade_service import execute_close_all_paper_positions
@@ -222,6 +223,70 @@ class TradeServiceTests(unittest.TestCase):
         self.assertEqual(result["results"][0]["reason"], "bridge_timeout")
         self.assertIn("IBKR bridge timeout", result["results"][0]["details"])
         self.assertIn("IBKR bridge timeout", result["results"][0]["bridge_issue"])
+
+    def test_ibkr_eod_close_stops_after_batch_time_budget(self):
+        with patch("services.trade_service.time.monotonic", side_effect=[0.0, 1.0, 121.0, 121.0]):
+            result = execute_close_all_paper_positions(
+                get_open_positions=lambda: [
+                    {"symbol": "PLTR", "qty": 75, "side": "long", "current_price": "133.36", "broker": "IBKR"},
+                    {"symbol": "SMCI", "qty": 386, "side": "long", "current_price": "25.92", "broker": "IBKR"},
+                ],
+                get_managed_open_paper_trades_for_eod_close=lambda: [
+                    {
+                        "timestamp_utc": "2026-04-13T16:59:31+00:00",
+                        "symbol": "PLTR",
+                        "name": "Palantir",
+                        "mode": "core_one",
+                        "side": "BUY",
+                        "shares": "75",
+                        "entry_price": "132.97",
+                        "stop_price": "130.723",
+                        "target_price": "137.464",
+                        "broker": "IBKR",
+                        "broker_order_id": "136",
+                        "broker_parent_order_id": "136",
+                    },
+                    {
+                        "timestamp_utc": "2026-04-13T16:48:53+00:00",
+                        "symbol": "SMCI",
+                        "name": "Super Micro",
+                        "mode": "core_three",
+                        "side": "BUY",
+                        "shares": "386",
+                        "entry_price": "25.88",
+                        "stop_price": "25.348",
+                        "target_price": "26.944",
+                        "broker": "IBKR",
+                        "broker_order_id": "112",
+                        "broker_parent_order_id": "112",
+                    },
+                ],
+                cancel_open_orders_for_symbol=lambda symbol: [],
+                close_position=lambda symbol, cancel_orders=True: {
+                    "id": f"close-{symbol}",
+                    "status": "Filled",
+                    "position_closed": True,
+                    "filled_qty": 1,
+                    "filled_avg_price": "1.0",
+                    "status_transitions": [],
+                },
+                get_order_by_id=lambda order_id, nested=False: {
+                    "status": "Filled",
+                    "filled_qty": 1,
+                    "filled_avg_price": "1.0",
+                },
+                safe_insert_broker_order=lambda **kwargs: None,
+                append_trade_log=lambda row: None,
+                safe_insert_trade_event=lambda **kwargs: None,
+                upsert_trade_lifecycle=lambda **kwargs: None,
+                to_float_or_none=to_float_or_none,
+                parse_iso_utc=parse_iso_utc,
+            )
+
+        self.assertTrue(result["partial"])
+        self.assertEqual(result["stopped_reason"], "ibkr_batch_time_budget_exceeded")
+        self.assertEqual(result["closed_count"], 1)
+        self.assertEqual(result["results"][-1]["reason"], "batch_time_budget_exceeded")
 
 
 if __name__ == "__main__":

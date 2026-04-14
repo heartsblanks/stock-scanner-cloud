@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable
 from core.logging_utils import log_exception
@@ -26,6 +28,21 @@ def _classify_ibkr_bridge_issue(exc: Exception, *, broker_name: str) -> tuple[st
     if "ibkr bridge request failed" in lowered:
         return "bridge_request_failed", message
     return "close_exception", None
+
+
+def _close_time_budget_seconds(*, broker_name: str) -> float | None:
+    normalized = str(broker_name or "").strip().upper()
+    env_name = "IBKR_CLOSE_BATCH_TIME_BUDGET_SECONDS" if normalized == "IBKR" else "PAPER_CLOSE_BATCH_TIME_BUDGET_SECONDS"
+    raw_value = str(os.getenv(env_name, "")).strip()
+    if not raw_value:
+        return 120.0 if normalized == "IBKR" else None
+    try:
+        value = float(raw_value)
+    except Exception:
+        return 120.0 if normalized == "IBKR" else None
+    if value <= 0:
+        return None
+    return value
 
 
 def execute_close_all_paper_positions(
@@ -63,12 +80,39 @@ def execute_close_all_paper_positions(
     results: list[dict[str, Any]] = []
     closed_count = 0
     skipped_count = 0
+    batch_started_at = time.monotonic()
+    partial = False
+    stopped_reason: str | None = None
 
     for position in positions:
         symbol = str(position.get("symbol", "")).strip().upper()
         qty = str(position.get("qty", "")).strip()
         side = str(position.get("side", "")).strip().lower()
         current_price = position.get("current_price", "")
+        broker_name = str(position.get("broker", "") or "").strip().upper() or "ALPACA"
+        time_budget_seconds = _close_time_budget_seconds(broker_name=broker_name)
+
+        if time_budget_seconds is not None and (time.monotonic() - batch_started_at) >= time_budget_seconds:
+            partial = True
+            stopped_reason = f"{broker_name.lower()}_batch_time_budget_exceeded"
+            log_warning(
+                "Paper EOD close stopped after broker batch time budget was exceeded",
+                component="trade_service",
+                operation="execute_close_all_paper_positions",
+                broker=broker_name,
+                time_budget_seconds=time_budget_seconds,
+                elapsed_seconds=round(time.monotonic() - batch_started_at, 3),
+                symbol=symbol,
+            )
+            results.append({
+                "symbol": symbol,
+                "closed": False,
+                "reason": "batch_time_budget_exceeded",
+                "details": f"{broker_name} close batch stopped after {time_budget_seconds:.1f}s",
+                "broker": broker_name,
+            })
+            skipped_count += 1
+            break
 
         if not symbol:
             skipped_count += 1
@@ -417,4 +461,6 @@ def execute_close_all_paper_positions(
         "closed_count": closed_count,
         "skipped_count": skipped_count,
         "results": results,
+        "partial": partial,
+        "stopped_reason": stopped_reason,
     }

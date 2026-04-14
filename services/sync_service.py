@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable
 from core.logging_utils import log_exception
@@ -37,6 +39,21 @@ def _resolve_exit_timestamp(sync_result: dict[str, Any], timestamp_utc: str, par
             except Exception:
                 pass
     return parse_iso_utc(timestamp_utc)
+
+
+def _sync_time_budget_seconds(*, broker_name: str) -> float | None:
+    normalized = str(broker_name or "").strip().upper()
+    env_name = "IBKR_SYNC_BATCH_TIME_BUDGET_SECONDS" if normalized == "IBKR" else "PAPER_SYNC_BATCH_TIME_BUDGET_SECONDS"
+    raw_value = str(os.getenv(env_name, "")).strip()
+    if not raw_value:
+        return 90.0 if normalized == "IBKR" else None
+    try:
+        value = float(raw_value)
+    except Exception:
+        return 90.0 if normalized == "IBKR" else None
+    if value <= 0:
+        return None
+    return value
 
 
 def _read_broker_open_symbols(
@@ -82,11 +99,39 @@ def execute_sync_paper_trades(
     synced_count = 0
     skipped_count = 0
     cached_open_symbols_by_broker: dict[str, set[str]] = {}
+    batch_started_at = time.monotonic()
+    partial = False
+    stopped_reason: str | None = None
 
     for open_row in open_rows:
         parent_order_id = str(open_row.get("broker_parent_order_id", "")).strip()
         symbol = str(open_row.get("symbol", "")).strip().upper()
         broker_name = str(open_row.get("broker", "") or "ALPACA").strip().upper() or "ALPACA"
+        time_budget_seconds = _sync_time_budget_seconds(broker_name=broker_name)
+
+        if time_budget_seconds is not None and (time.monotonic() - batch_started_at) >= time_budget_seconds:
+            partial = True
+            stopped_reason = f"{broker_name.lower()}_batch_time_budget_exceeded"
+            log_warning(
+                "Paper trade sync stopped after broker batch time budget was exceeded",
+                component="sync_service",
+                operation="execute_sync_paper_trades",
+                broker=broker_name,
+                time_budget_seconds=time_budget_seconds,
+                elapsed_seconds=round(time.monotonic() - batch_started_at, 3),
+                symbol=symbol,
+                parent_order_id=parent_order_id,
+            )
+            results.append({
+                "symbol": symbol,
+                "broker": broker_name,
+                "parent_order_id": parent_order_id,
+                "synced": False,
+                "reason": "batch_time_budget_exceeded",
+                "details": f"{broker_name} sync batch stopped after {time_budget_seconds:.1f}s",
+            })
+            skipped_count += 1
+            break
 
         if not parent_order_id:
             results.append({
@@ -441,6 +486,8 @@ def execute_sync_paper_trades(
         "synced_count": synced_count,
         "skipped_count": skipped_count,
         "results": results,
+        "partial": partial,
+        "stopped_reason": stopped_reason,
         "auto_healed_count": len(auto_healed_positions),
         "auto_healed_positions": auto_healed_positions,
         "auto_heal_error_count": len(auto_heal_errors),

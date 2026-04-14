@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from orchestration.scan_context import parse_iso_utc, to_float_or_none
 from services.sync_service import execute_sync_paper_trades
@@ -139,6 +140,41 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(result["results"][0]["reason"], "bridge_timeout")
         self.assertIn("IBKR bridge timeout", result["results"][0]["details"])
         self.assertIn("IBKR bridge timeout", result["results"][0]["bridge_issue"])
+
+    def test_ibkr_sync_stops_after_batch_time_budget(self):
+        with patch("services.sync_service.time.monotonic", side_effect=[0.0, 1.0, 91.0, 91.0]):
+            result = execute_sync_paper_trades(
+                get_open_paper_trades=lambda: [
+                    {"symbol": "PLTR", "broker_parent_order_id": "136", "broker": "IBKR"},
+                    {"symbol": "SMCI", "broker_parent_order_id": "112", "broker": "IBKR"},
+                ],
+                sync_order_by_id_for_broker=lambda broker, parent_id: {
+                    "exit_event": "TARGET_HIT",
+                    "exit_price": "1.0",
+                    "exit_status": "filled",
+                    "exit_filled_qty": "1",
+                    "exit_filled_avg_price": "1.0",
+                    "exit_order_id": f"exit-{parent_id}",
+                    "exit_reason": "TARGET_HIT",
+                    "parent_status": "filled",
+                    "exit_filled_at": "2026-04-14T14:25:02+00:00",
+                },
+                paper_trade_exit_already_logged=lambda parent_order_id, exit_event: False,
+                append_trade_log=lambda row: None,
+                safe_insert_trade_event=lambda **kwargs: None,
+                safe_insert_broker_order=lambda **kwargs: None,
+                upsert_trade_lifecycle=lambda **kwargs: None,
+                parse_iso_utc=parse_iso_utc,
+                to_float_or_none=to_float_or_none,
+                get_open_positions_for_broker=lambda broker: [],
+                close_position_for_broker=lambda broker, symbol: {"ok": True},
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["partial"])
+        self.assertEqual(result["stopped_reason"], "ibkr_batch_time_budget_exceeded")
+        self.assertEqual(result["synced_count"], 1)
+        self.assertEqual(result["results"][-1]["reason"], "batch_time_budget_exceeded")
 
 
 if __name__ == "__main__":
