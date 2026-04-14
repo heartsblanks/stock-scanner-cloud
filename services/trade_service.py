@@ -313,7 +313,7 @@ def execute_close_all_paper_positions(
             realized_pnl = compute_realized_pnl(entry_price, exit_price, shares_value, direction)
             realized_pnl_percent = compute_realized_pnl_percent(entry_price, exit_price, direction)
             duration_minutes = compute_duration_minutes(entry_timestamp, event_timestamp)
-            trade_key = normalize_trade_key(symbol, broker_parent_order_id, broker_order_id)
+            trade_key = normalize_trade_key(symbol, broker_parent_order_id, broker_order_id, broker_name)
 
             append_trade_log({
                 "timestamp_utc": timestamp_utc,
@@ -393,7 +393,7 @@ def execute_close_all_paper_positions(
             )
         if not open_row and close_filled:
             event_timestamp = parse_iso_utc(timestamp_utc)
-            orphan_trade_key = normalize_trade_key(symbol, close_order_id, close_order_id)
+            orphan_trade_key = normalize_trade_key(symbol, close_order_id, close_order_id, broker_name)
             inferred_exit_reason = "EXTERNAL_EXIT"
 
             safe_insert_trade_event(

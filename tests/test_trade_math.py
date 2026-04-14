@@ -36,6 +36,7 @@ class TradeMathTests(unittest.TestCase):
         self.assertEqual(resolve_lifecycle_side({}, "SHORT"), "SELL")
         self.assertEqual(normalize_trade_key("AAPL", "parent-1", "order-1"), "parent-1")
         self.assertEqual(normalize_trade_key("AAPL", "", "order-1"), "order-1")
+        self.assertEqual(normalize_trade_key("SOFI", "76", "76", "IBKR"), "IBKR:SOFI:76")
 
 
 if __name__ == "__main__":

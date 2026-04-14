@@ -97,5 +97,11 @@ def compute_duration_minutes(entry_timestamp, exit_timestamp):
         return None
 
 
-def normalize_trade_key(symbol: str, broker_parent_order_id: str, broker_order_id: str) -> str:
-    return broker_parent_order_id or broker_order_id or symbol
+def normalize_trade_key(symbol: str, broker_parent_order_id: str, broker_order_id: str, broker: str | None = None) -> str:
+    normalized_broker = str(broker or "").strip().upper()
+    base_key = broker_parent_order_id or broker_order_id or symbol
+    if normalized_broker == "IBKR":
+        normalized_symbol = str(symbol or "").strip().upper()
+        if normalized_symbol and base_key:
+            return f"{normalized_broker}:{normalized_symbol}:{base_key}"
+    return base_key

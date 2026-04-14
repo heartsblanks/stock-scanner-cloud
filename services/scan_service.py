@@ -23,8 +23,14 @@ def get_recent_closed_trades_for_symbol(symbol: str, limit: int = 5) -> list[dic
         return []
 
 
-def _normalize_trade_key(symbol: str, broker_parent_order_id: str, broker_order_id: str) -> str:
-    return broker_parent_order_id or broker_order_id or symbol
+def _normalize_trade_key(symbol: str, broker_parent_order_id: str, broker_order_id: str, broker: str | None = None) -> str:
+    normalized_broker = str(broker or "").strip().upper()
+    base_key = broker_parent_order_id or broker_order_id or symbol
+    if normalized_broker == "IBKR":
+        normalized_symbol = str(symbol or "").strip().upper()
+        if normalized_symbol and base_key:
+            return f"{normalized_broker}:{normalized_symbol}:{base_key}"
+    return base_key
 
 
 def _to_upper_or_none(value: Any) -> str | None:
@@ -1085,6 +1091,7 @@ def execute_full_scan(
                                 str(paper_metrics.get("symbol", "") or ""),
                                 broker_parent_order_id,
                                 broker_order_id,
+                                broker_name,
                             )
 
                             upsert_trade_lifecycle(

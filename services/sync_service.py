@@ -484,7 +484,7 @@ def execute_sync_paper_trades(
             realized_pnl = compute_realized_pnl(entry_price, exit_price, shares_value, direction)
             realized_pnl_percent = compute_realized_pnl_percent(entry_price, exit_price, direction)
             duration_minutes = compute_duration_minutes(entry_timestamp, exit_timestamp)
-            trade_key = normalize_trade_key(symbol, broker_parent_order_id, broker_order_id)
+            trade_key = normalize_trade_key(symbol, broker_parent_order_id, broker_order_id, broker_name)
 
             upsert_trade_lifecycle(
                 trade_key=trade_key,
