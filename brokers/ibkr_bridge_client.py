@@ -43,15 +43,25 @@ def ibkr_bridge_request(
 
     base_url = _require_bridge_base_url()
     normalized_path = "/" + str(path).lstrip("/")
-    response = requests.request(
-        method=method.upper(),
-        url=f"{base_url}{normalized_path}",
-        headers=_ibkr_bridge_headers(),
-        params=params,
-        json=json_body,
-        timeout=timeout or int(os.getenv("IBKR_BRIDGE_TIMEOUT_SECONDS", "30")),
-    )
-    response.raise_for_status()
+    resolved_timeout = timeout or int(os.getenv("IBKR_BRIDGE_TIMEOUT_SECONDS", "30"))
+    try:
+        response = requests.request(
+            method=method.upper(),
+            url=f"{base_url}{normalized_path}",
+            headers=_ibkr_bridge_headers(),
+            params=params,
+            json=json_body,
+            timeout=resolved_timeout,
+        )
+        response.raise_for_status()
+    except requests.Timeout as exc:
+        raise RuntimeError(
+            f"IBKR bridge timeout during {method.upper()} {normalized_path} after {resolved_timeout}s"
+        ) from exc
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            f"IBKR bridge request failed during {method.upper()} {normalized_path}: {exc}"
+        ) from exc
 
     if not response.text.strip():
         return None
@@ -71,4 +81,3 @@ def ibkr_bridge_post(
     timeout: int | None = None,
 ) -> Any:
     return ibkr_bridge_request("POST", path, params=params, json_body=json_body, timeout=timeout)
-

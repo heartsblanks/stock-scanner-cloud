@@ -74,7 +74,11 @@ class IbkrPaperBroker:
 
     def cancel_open_orders_for_symbol(self, symbol: str) -> list[str]:
         self._ensure_bridge_enabled()
-        result = ibkr_bridge_post("/orders/cancel-by-symbol", json_body={"symbol": symbol})
+        result = ibkr_bridge_post(
+            "/orders/cancel-by-symbol",
+            json_body={"symbol": symbol},
+            timeout=_bridge_timeout("IBKR_BRIDGE_CANCEL_TIMEOUT_SECONDS", 8),
+        )
         return list(result.get("canceled_order_ids") or [])
 
     def close_position(self, symbol: str, cancel_orders: bool = True) -> dict[str, Any]:
@@ -82,6 +86,7 @@ class IbkrPaperBroker:
         return ibkr_bridge_post(
             "/positions/close",
             json_body={"symbol": symbol, "cancel_orders": bool(cancel_orders)},
+            timeout=_bridge_timeout("IBKR_BRIDGE_CLOSE_TIMEOUT_SECONDS", 20),
         )
 
     def place_paper_bracket_order_from_trade(
@@ -97,8 +102,15 @@ class IbkrPaperBroker:
 
     def sync_order_by_id(self, order_id: str) -> dict[str, Any]:
         self._ensure_bridge_enabled()
-        return ibkr_bridge_get(f"/orders/{order_id}/sync")
+        return ibkr_bridge_get(
+            f"/orders/{order_id}/sync",
+            timeout=_bridge_timeout("IBKR_BRIDGE_ORDER_SYNC_TIMEOUT_SECONDS", 8),
+        )
 
     def get_order_by_id(self, order_id: str, nested: bool = False) -> dict[str, Any]:
         self._ensure_bridge_enabled()
-        return ibkr_bridge_get(f"/orders/{order_id}", params={"nested": str(bool(nested)).lower()})
+        return ibkr_bridge_get(
+            f"/orders/{order_id}",
+            params={"nested": str(bool(nested)).lower()},
+            timeout=_bridge_timeout("IBKR_BRIDGE_ORDER_STATUS_TIMEOUT_SECONDS", 8),
+        )
