@@ -1,7 +1,7 @@
 [Unit]
 Description=IBKR Bridge API
-After=network-online.target ibkr-gateway.service
-Wants=network-online.target ibkr-gateway.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple

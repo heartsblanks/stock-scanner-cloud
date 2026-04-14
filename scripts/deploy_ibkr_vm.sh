@@ -14,9 +14,8 @@ gcloud compute ssh "$INSTANCE_NAME" \
 && sudo cp /opt/stock-scanner-cloud/ibkr_bridge/systemd/ibkr-gateway.service /etc/systemd/system/ibkr-gateway.service \
 && sudo cp /opt/stock-scanner-cloud/ibkr_bridge/systemd/ibkr-bridge.service /etc/systemd/system/ibkr-bridge.service \
 && sudo systemctl daemon-reload \
-&& sudo systemctl restart ibkr-gateway \
+&& sudo systemctl disable --now ibkr-gateway || true \
 && sudo systemctl restart ibkr-bridge \
 && sleep 3 \
-&& sudo systemctl is-active ibkr-gateway \
 && sudo systemctl is-active ibkr-bridge \
 && curl -sf http://127.0.0.1:8090/health || true"

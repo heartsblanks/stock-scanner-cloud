@@ -9,6 +9,13 @@ NY_TZ = ZoneInfo("America/New_York")
 
 
 class ScanContextTests(unittest.TestCase):
+    def test_build_scheduled_scan_payload_allows_first_opening_range_slot(self):
+        now_ny = datetime(2026, 4, 1, 9, 45, tzinfo=NY_TZ)
+
+        payload = build_scheduled_scan_payload({}, now_ny=now_ny, mode_order=["core_three", "core_one"])
+
+        self.assertEqual(payload["mode"], "core_three")
+
     def test_build_scheduled_scan_payload_uses_provided_mode_order(self):
         now_ny = datetime(2026, 4, 1, 9, 50, tzinfo=NY_TZ)
 
