@@ -72,6 +72,10 @@ class IbkrPaperBroker:
         self._ensure_bridge_enabled()
         return ibkr_bridge_get("/orders/open", timeout=_bridge_timeout("IBKR_BRIDGE_ORDERS_TIMEOUT_SECONDS", 8)) or []
 
+    def get_open_state(self) -> dict[str, Any]:
+        self._ensure_bridge_enabled()
+        return ibkr_bridge_get("/open-state", timeout=_bridge_timeout("IBKR_BRIDGE_OPEN_STATE_TIMEOUT_SECONDS", 12)) or {}
+
     def cancel_open_orders_for_symbol(self, symbol: str) -> list[str]:
         self._ensure_bridge_enabled()
         result = ibkr_bridge_post(

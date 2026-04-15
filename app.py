@@ -124,6 +124,8 @@ from orchestration.runtime_context import (
     fetch_ibkr_intraday,
     get_current_open_position_state_for_broker,
     get_latest_open_paper_trade_for_symbol_for_broker,
+    get_open_orders_for_broker_name,
+    get_open_state_for_broker_name,
     get_open_positions,
     get_open_positions_for_broker_name,
     get_risk_exposure_summary_for_broker,
@@ -516,6 +518,9 @@ register_trade_routes(
     get_latest_scan_summary=get_latest_scan_summary,
     get_trade_lifecycles=get_trade_lifecycles,
     get_trade_lifecycle_summary_from_table=get_trade_lifecycle_summary_from_table,
+    get_open_positions_for_broker_name=get_open_positions_for_broker_name,
+    get_open_orders_for_broker_name=get_open_orders_for_broker_name,
+    get_open_state_for_broker_name=get_open_state_for_broker_name,
     upsert_trade_lifecycle=upsert_trade_lifecycle,
 )
 

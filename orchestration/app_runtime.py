@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any, Callable
@@ -195,6 +196,14 @@ def handle_scan_request(
     ibkr_bridge_enabled: bool,
     run_ibkr_shadow_scans: Callable[[dict[str, Any]], dict[str, Any]],
 ):
+    alpaca_execution_enabled = str(os.getenv("ENABLE_ALPACA_EXECUTION", "true")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+        "on",
+    }
+
     def run_broker_scan(
         broker_name: str,
         broker_scan_fn: Callable[[dict[str, Any]], Any],
@@ -220,12 +229,56 @@ def handle_scan_request(
         )
         return response, timing
 
+    paper_trade_requested = bool(isinstance(payload, dict) and payload.get("paper_trade"))
     should_run_parallel_ibkr = bool(
-        isinstance(payload, dict)
-        and payload.get("paper_trade")
+        paper_trade_requested
+        and alpaca_execution_enabled
         and shadow_mode_enabled
         and ibkr_bridge_enabled
     )
+    should_run_ibkr_only = bool(
+        paper_trade_requested
+        and not alpaca_execution_enabled
+        and shadow_mode_enabled
+        and ibkr_bridge_enabled
+    )
+
+    if should_run_ibkr_only:
+        ibkr_response, ibkr_timing = run_broker_scan("IBKR", run_ibkr_shadow_scans)
+        if isinstance(ibkr_response, dict):
+            ibkr_response.setdefault("paper_trade", True)
+            ibkr_response["alpaca_execution_enabled"] = False
+            ibkr_response["alpaca_skipped"] = {
+                "enabled": False,
+                "reason": "alpaca_execution_disabled",
+            }
+            ibkr_response["parallel_runs"] = {
+                "alpaca": {
+                    "ok": False,
+                    "skipped": True,
+                    "reason": "alpaca_execution_disabled",
+                },
+                "ibkr": {
+                    "ok": bool(ibkr_response.get("ok", False)),
+                    **(ibkr_timing or {}),
+                },
+                "cross_broker_start_delta_ms": None,
+                "cross_broker_finish_delta_ms": None,
+            }
+        return ibkr_response
+
+    if paper_trade_requested and not alpaca_execution_enabled and not (shadow_mode_enabled and ibkr_bridge_enabled):
+        return {
+            "ok": True,
+            "paper_trade": True,
+            "alpaca_execution_enabled": False,
+            "placed_count": 0,
+            "candidate_count": 0,
+            "skipped_count": 0,
+            "results": [],
+            "reason": "alpaca_execution_disabled",
+            "details": "Alpaca execution is disabled and IBKR execution is not active for this request.",
+        }
 
     if should_run_parallel_ibkr:
         with ThreadPoolExecutor(max_workers=2) as executor:

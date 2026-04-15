@@ -54,6 +54,22 @@ def get_open_positions_for_broker_name(broker_name: str) -> list[dict[str, Any]]
     return broker.get_open_positions()
 
 
+def get_open_orders_for_broker_name(broker_name: str) -> list[dict[str, Any]]:
+    broker = _broker_instance_by_name(broker_name)
+    return broker.get_open_orders()
+
+
+def get_open_state_for_broker_name(broker_name: str) -> dict[str, Any]:
+    broker = _broker_instance_by_name(broker_name)
+    get_open_state = getattr(broker, "get_open_state", None)
+    if callable(get_open_state):
+        return get_open_state() or {}
+    return {
+        "positions": broker.get_open_positions(),
+        "orders": broker.get_open_orders(),
+    }
+
+
 def close_position_for_broker_name(broker_name: str, symbol: str):
     broker = _broker_instance_by_name(broker_name)
     return broker.close_position(symbol)

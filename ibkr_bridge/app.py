@@ -161,6 +161,25 @@ def get_positions():
     return _run_bridge_operation("get_positions", fetch_positions)
 
 
+@app.get("/open-state")
+@require_auth
+def get_open_state():
+    def fetch_open_state():
+        payload = get_ibkr_client().get_open_state()
+        _audit_success(
+            "IBKR bridge open state fetched",
+            operation="get_open_state",
+            payload=payload,
+            summary={
+                "position_count": len(payload.get("positions") or []),
+                "order_count": len(payload.get("orders") or []),
+            },
+        )
+        return payload
+
+    return _run_bridge_operation("get_open_state", fetch_open_state)
+
+
 @app.get("/market-data/intraday")
 @require_auth
 def get_intraday_market_data():

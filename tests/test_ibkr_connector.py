@@ -146,7 +146,8 @@ class _FakeIbForCloseFlow:
 class IbkrConnectorTests(unittest.TestCase):
     def test_get_open_orders_filters_cancelled_rows(self):
         client = IbkrGatewayClient.__new__(IbkrGatewayClient)
-        client._connect = lambda: object()
+        client._connect_inspection = lambda: object()
+        client._disconnect_ib = lambda ib: None
         client._fetch_open_trades = lambda ib: [
             _FakeTrade(symbol="NIO", order_id=64, status="PreSubmitted", remaining=1.0),
             _FakeTrade(symbol="NIO", order_id=65, status="Cancelled", remaining=0.0, action="SELL", order_type="LMT"),
@@ -160,7 +161,8 @@ class IbkrConnectorTests(unittest.TestCase):
 
     def test_get_order_keeps_non_open_status_for_direct_lookup(self):
         client = IbkrGatewayClient.__new__(IbkrGatewayClient)
-        client._connect = lambda: object()
+        client._connect_inspection = lambda: object()
+        client._disconnect_ib = lambda ib: None
         client._fetch_open_trades = lambda ib: [
             _FakeTrade(symbol="NIO", order_id=64, status="Cancelled", remaining=0.0),
         ]
@@ -170,6 +172,26 @@ class IbkrConnectorTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result["status"], "Cancelled")
         self.assertEqual(result["id"], "64")
+
+    def test_get_open_orders_uses_inspection_connection(self):
+        client = IbkrGatewayClient.__new__(IbkrGatewayClient)
+        captured = {"inspection": 0, "disconnect": 0}
+
+        def fake_connect_inspection():
+            captured["inspection"] += 1
+            return object()
+
+        client._connect_inspection = fake_connect_inspection
+        client._disconnect_ib = lambda ib: captured.__setitem__("disconnect", captured["disconnect"] + 1)
+        client._fetch_open_trades = lambda ib: [
+            _FakeTrade(symbol="QBTS", order_id=88, status="Submitted", remaining=345.0),
+        ]
+
+        result = client.get_open_orders()
+
+        self.assertEqual(captured["inspection"], 1)
+        self.assertEqual(captured["disconnect"], 1)
+        self.assertEqual(result[0]["id"], "88")
 
     def test_sync_order_uses_completed_execution_fills_when_order_is_no_longer_open(self):
         client = IbkrGatewayClient.__new__(IbkrGatewayClient)
@@ -304,8 +326,9 @@ class IbkrConnectorTests(unittest.TestCase):
             _FakePositionRow(symbol="NVDA", qty=52, avg_cost=189.60923075, con_id=4815747),
         ])
         client = IbkrGatewayClient.__new__(IbkrGatewayClient)
-        client._connect = lambda: fake_ib
-        client.config = type("Cfg", (), {"account_id": "", "host": "127.0.0.1", "port": 4002, "client_id": 101, "readonly": False})()
+        client._connect_inspection = lambda: fake_ib
+        client._disconnect_ib = lambda ib: None
+        client.config = type("Cfg", (), {"account_id": "", "host": "127.0.0.1", "port": 4002, "client_id": 101, "inspection_client_id": 1101, "readonly": False})()
 
         with patch.dict(os.environ, {}, clear=False):
             result = client.get_positions()

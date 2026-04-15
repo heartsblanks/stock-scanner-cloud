@@ -27,16 +27,19 @@ class IbkrConnectionConfig:
     host: str
     port: int
     client_id: int
+    inspection_client_id: int
     account_id: str
     readonly: bool
     timeout_seconds: int
 
 
 def get_ibkr_connection_config() -> IbkrConnectionConfig:
+    client_id = int(os.getenv("IBKR_CLIENT_ID", "101"))
     return IbkrConnectionConfig(
         host=str(os.getenv("IBKR_HOST", "127.0.0.1")).strip() or "127.0.0.1",
         port=int(os.getenv("IBKR_PORT", "4002")),
-        client_id=int(os.getenv("IBKR_CLIENT_ID", "101")),
+        client_id=client_id,
+        inspection_client_id=int(os.getenv("IBKR_INSPECTION_CLIENT_ID", str(client_id + 1000))),
         account_id=str(os.getenv("IBKR_ACCOUNT_ID", "")).strip(),
         readonly=str(os.getenv("IBKR_READONLY", "false")).strip().lower() == "true",
         timeout_seconds=int(os.getenv("IBKR_TIMEOUT_SECONDS", "10")),
@@ -81,21 +84,28 @@ class IbkrGatewayClient:
         if self._ib is not None and self._ib.isConnected():
             return self._ib
 
+        return self._connect_with_client_id(self.config.client_id, use_cache=True)
+
+    def _connect_with_client_id(self, client_id: int, *, use_cache: bool):
         ib_class = self._load_ib_class()
         ib = ib_class()
         ib.connect(
             self.config.host,
             self.config.port,
-            clientId=self.config.client_id,
+            clientId=client_id,
             readonly=self.config.readonly,
             timeout=self.config.timeout_seconds,
         )
-        self._ib = ib
+        if use_cache:
+            self._ib = ib
         return ib
 
-    def _disconnect(self) -> None:
-        ib = self._ib
-        self._ib = None
+    def _connect_inspection(self):
+        self._ensure_event_loop()
+        inspection_client_id = int(getattr(self.config, "inspection_client_id", getattr(self.config, "client_id", 101) + 1000))
+        return self._connect_with_client_id(inspection_client_id, use_cache=False)
+
+    def _disconnect_ib(self, ib) -> None:
         if ib is None:
             return
         try:
@@ -103,6 +113,11 @@ class IbkrGatewayClient:
                 ib.disconnect()
         except Exception:
             pass
+
+    def _disconnect(self) -> None:
+        ib = self._ib
+        self._ib = None
+        self._disconnect_ib(ib)
 
     def _reset_connection(self):
         self._disconnect()
@@ -204,6 +219,7 @@ class IbkrGatewayClient:
             "host": self.config.host,
             "port": self.config.port,
             "client_id": self.config.client_id,
+            "inspection_client_id": self.config.inspection_client_id,
             "readonly": self.config.readonly,
         }
         try:
@@ -233,7 +249,13 @@ class IbkrGatewayClient:
         }
 
     def get_positions(self) -> list[dict[str, Any]]:
-        ib = self._connect()
+        ib = self._connect_inspection()
+        try:
+            return self._get_positions_from_ib(ib)
+        finally:
+            self._disconnect_ib(ib)
+
+    def _get_positions_from_ib(self, ib) -> list[dict[str, Any]]:
         account_id = self._resolve_account_id(ib)
         positions = [
             row
@@ -689,7 +711,13 @@ class IbkrGatewayClient:
         return fallback_trades
 
     def get_open_orders(self) -> list[dict[str, Any]]:
-        ib = self._connect()
+        ib = self._connect_inspection()
+        try:
+            return self._get_open_orders_from_ib(ib)
+        finally:
+            self._disconnect_ib(ib)
+
+    def _get_open_orders_from_ib(self, ib) -> list[dict[str, Any]]:
         trades = self._fetch_open_trades(ib)
         normalized_trades = [self._normalize_trade(trade) for trade in trades]
         return [
@@ -698,17 +726,30 @@ class IbkrGatewayClient:
             if self._is_open_order_status(trade.get("status", "")) and _to_float(trade.get("remaining_qty", 0.0)) > 0
         ]
 
+    def get_open_state(self) -> dict[str, Any]:
+        ib = self._connect_inspection()
+        try:
+            return {
+                "positions": self._get_positions_from_ib(ib),
+                "orders": self._get_open_orders_from_ib(ib),
+            }
+        finally:
+            self._disconnect_ib(ib)
+
     def get_order(self, order_id: str) -> dict[str, Any] | None:
         normalized_order_id = str(order_id).strip()
         if not normalized_order_id:
             return None
 
-        ib = self._connect()
-        for trade in self._fetch_open_trades(ib):
-            trade_order_id = str(getattr(getattr(trade, "order", None), "orderId", "")).strip()
-            if trade_order_id == normalized_order_id:
-                return self._normalize_trade(trade)
-        return None
+        ib = self._connect_inspection()
+        try:
+            for trade in self._fetch_open_trades(ib):
+                trade_order_id = str(getattr(getattr(trade, "order", None), "orderId", "")).strip()
+                if trade_order_id == normalized_order_id:
+                    return self._normalize_trade(trade)
+            return None
+        finally:
+            self._disconnect_ib(ib)
 
     def sync_order(self, order_id: str) -> dict[str, Any]:
         normalized_order_id = str(order_id).strip()

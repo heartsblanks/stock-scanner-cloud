@@ -944,6 +944,30 @@ code {
   color: var(--text-muted);
 }
 
+.dashboard-stored-live {
+  display: grid;
+  gap: 4px;
+}
+
+.dashboard-stored-live-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.dashboard-stored-live-line-mismatch {
+  color: #b4412f;
+}
+
+.dashboard-stored-live-label {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .dashboard-cell-positive {
   color: var(--success);
   font-weight: 700;
