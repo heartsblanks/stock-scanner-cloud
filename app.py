@@ -278,6 +278,7 @@ def handle_sync_paper_trades():
         get_open_positions=get_open_positions,
         close_position=close_position,
         get_open_positions_for_broker_name=get_open_positions_for_broker_name,
+        get_open_state_for_broker_name=get_open_state_for_broker_name,
         close_position_for_broker_name=close_position_for_broker_name,
     )
 

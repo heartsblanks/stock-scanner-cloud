@@ -175,6 +175,7 @@ class SyncServiceTests(unittest.TestCase):
             parse_iso_utc=parse_iso_utc,
             to_float_or_none=to_float_or_none,
             get_open_positions_for_broker=lambda broker: [],
+            get_open_state_for_broker=lambda broker: {"positions": [], "orders": []},
             close_position_for_broker=lambda broker, symbol: {"ok": True},
         )
 
@@ -186,6 +187,48 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(captured_lifecycle["broker"], "IBKR")
         self.assertEqual(captured_lifecycle["status"], "CLOSED")
         self.assertEqual(captured_lifecycle["exit_reason"], "STALE_OPEN_RECONCILED")
+
+    def test_ibkr_sync_timeout_does_not_reconcile_when_related_order_still_open(self):
+        result = execute_sync_paper_trades(
+            get_open_paper_trades=lambda: [
+                {
+                    "timestamp_utc": "2026-04-15T16:37:54+00:00",
+                    "symbol": "INTC",
+                    "name": "Intel",
+                    "mode": "core_three",
+                    "side": "BUY",
+                    "shares": "152",
+                    "entry_price": "65.37",
+                    "stop_price": "64.467",
+                    "target_price": "67.176",
+                    "broker_order_id": "166",
+                    "broker_parent_order_id": "166",
+                    "broker": "IBKR",
+                }
+            ],
+            sync_order_by_id_for_broker=lambda broker, parent_id: (_ for _ in ()).throw(
+                RuntimeError("IBKR bridge timeout during GET /orders/166/sync after 8s")
+            ),
+            paper_trade_exit_already_logged=lambda parent_order_id, exit_event: False,
+            append_trade_log=lambda row: None,
+            safe_insert_trade_event=lambda **kwargs: None,
+            safe_insert_broker_order=lambda **kwargs: None,
+            upsert_trade_lifecycle=lambda **kwargs: None,
+            parse_iso_utc=parse_iso_utc,
+            to_float_or_none=to_float_or_none,
+            get_open_positions_for_broker=lambda broker: [],
+            get_open_state_for_broker=lambda broker: {
+                "positions": [],
+                "orders": [
+                    {"id": "167", "parent_id": "166", "symbol": "INTC", "status": "Submitted"},
+                ],
+            },
+            close_position_for_broker=lambda broker, symbol: {"ok": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["synced_count"], 0)
+        self.assertEqual(result["results"][0]["reason"], "bridge_timeout")
 
     def test_ibkr_stale_reconcile_repairs_lifecycle_when_exit_event_already_logged(self):
         captured_lifecycle = {}

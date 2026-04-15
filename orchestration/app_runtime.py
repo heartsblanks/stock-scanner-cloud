@@ -387,6 +387,7 @@ def handle_sync_paper_trades(
     get_open_positions: Callable[..., Any],
     close_position: Callable[..., Any],
     get_open_positions_for_broker_name: Callable[..., Any],
+    get_open_state_for_broker_name: Callable[..., Any],
     close_position_for_broker_name: Callable[..., Any],
 ):
     return run_handle_sync_paper_trades(
@@ -404,6 +405,7 @@ def handle_sync_paper_trades(
         get_open_positions=get_open_positions,
         close_position=close_position,
         get_open_positions_for_broker=get_open_positions_for_broker_name,
+        get_open_state_for_broker=get_open_state_for_broker_name,
         close_position_for_broker=close_position_for_broker_name,
     )
 

@@ -71,6 +71,31 @@ def _read_broker_open_symbols(
     return {str(position.get("symbol", "")).strip().upper() for position in positions if str(position.get("symbol", "")).strip()}
 
 
+def _read_broker_open_state(
+    *,
+    broker_name: str,
+    get_open_positions: Callable[[], list[dict[str, Any]]] | None,
+    get_open_positions_for_broker: Callable[[str], list[dict[str, Any]]] | None,
+    get_open_state_for_broker: Callable[[str], dict[str, Any]] | None,
+) -> dict[str, Any]:
+    if get_open_state_for_broker is not None:
+        open_state = get_open_state_for_broker(broker_name) or {}
+        if isinstance(open_state, dict):
+            return {
+                "positions": list(open_state.get("positions") or []),
+                "orders": list(open_state.get("orders") or []),
+            }
+    positions = []
+    if get_open_positions_for_broker is not None:
+        positions = get_open_positions_for_broker(broker_name) or []
+    elif get_open_positions is not None:
+        positions = get_open_positions() or []
+    return {
+        "positions": list(positions or []),
+        "orders": [],
+    }
+
+
 def _build_ibkr_stale_reconciled_sync_result(
     *,
     open_row: dict[str, Any],
@@ -100,40 +125,61 @@ def _reconcile_ibkr_stale_open_trade(
     symbol: str,
     parent_order_id: str,
     open_row: dict[str, Any],
-    cached_open_symbols_by_broker: dict[str, set[str]],
+    cached_open_state_by_broker: dict[str, dict[str, Any]],
     get_open_positions: Callable[[], list[dict[str, Any]]] | None,
     get_open_positions_for_broker: Callable[[str], list[dict[str, Any]]] | None,
+    get_open_state_for_broker: Callable[[str], dict[str, Any]] | None,
     sync_result: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     if broker_name != "IBKR":
         return sync_result or {}, False
 
     try:
-        if broker_name not in cached_open_symbols_by_broker:
+        if broker_name not in cached_open_state_by_broker:
             log_info(
-                "Reading IBKR broker open symbols for stale reconciliation",
+                "Reading IBKR broker open state for stale reconciliation",
                 component="sync_service",
                 operation="execute_sync_paper_trades",
                 symbol=symbol,
                 broker=broker_name,
                 parent_order_id=parent_order_id,
             )
-            cached_open_symbols_by_broker[broker_name] = _read_broker_open_symbols(
+            cached_open_state_by_broker[broker_name] = _read_broker_open_state(
                 broker_name=broker_name,
                 get_open_positions=get_open_positions,
                 get_open_positions_for_broker=get_open_positions_for_broker,
+                get_open_state_for_broker=get_open_state_for_broker,
             )
-        broker_open_symbols = cached_open_symbols_by_broker[broker_name]
+        broker_open_state = cached_open_state_by_broker[broker_name]
     except Exception as e:
         log_exception(
-            "IBKR open position read failed during stale reconciliation",
+            "IBKR open-state read failed during stale reconciliation",
             e,
             component="sync_service",
             operation="execute_sync_paper_trades",
             symbol=symbol,
             parent_order_id=parent_order_id,
         )
-        broker_open_symbols = {symbol}
+        broker_open_state = {
+            "positions": [{"symbol": symbol}],
+            "orders": [],
+        }
+
+    broker_open_positions = list(broker_open_state.get("positions") or [])
+    broker_open_orders = list(broker_open_state.get("orders") or [])
+    broker_open_symbols = {
+        str(position.get("symbol", "")).strip().upper()
+        for position in broker_open_positions
+        if str(position.get("symbol", "")).strip()
+    }
+    related_orders = [
+        order for order in broker_open_orders
+        if (
+            str(order.get("symbol", "")).strip().upper() == symbol
+            or str(order.get("id", "")).strip() == parent_order_id
+            or str(order.get("parent_id", "")).strip() == parent_order_id
+        )
+    ]
 
     log_info(
         "Evaluated IBKR stale reconciliation broker snapshot",
@@ -144,17 +190,20 @@ def _reconcile_ibkr_stale_open_trade(
         parent_order_id=parent_order_id,
         broker_open_symbol_count=len(broker_open_symbols),
         broker_has_symbol=symbol in broker_open_symbols,
+        broker_related_order_count=len(related_orders),
         broker_open_symbols_sample=",".join(sorted(list(broker_open_symbols))[:10]),
     )
 
-    if symbol in broker_open_symbols:
+    if symbol in broker_open_symbols or related_orders:
         log_info(
-            "IBKR stale reconciliation skipped because symbol still appears open on broker snapshot",
+            "IBKR stale reconciliation skipped because symbol or related orders still appear open on broker snapshot",
             component="sync_service",
             operation="execute_sync_paper_trades",
             symbol=symbol,
             broker=broker_name,
             parent_order_id=parent_order_id,
+            broker_has_symbol=symbol in broker_open_symbols,
+            broker_related_order_count=len(related_orders),
         )
         return sync_result or {}, False
 
@@ -189,6 +238,7 @@ def execute_sync_paper_trades(
     to_float_or_none: Callable[[Any], float | None],
     get_open_positions: Callable[[], list[dict[str, Any]]] | None = None,
     get_open_positions_for_broker: Callable[[str], list[dict[str, Any]]] | None = None,
+    get_open_state_for_broker: Callable[[str], dict[str, Any]] | None = None,
     close_position: Callable[[str], Any] | None = None,
     close_position_for_broker: Callable[[str, str], Any] | None = None,
 ) -> dict[str, Any] | tuple[dict[str, Any], int]:
@@ -201,7 +251,7 @@ def execute_sync_paper_trades(
     results: list[dict[str, Any]] = []
     synced_count = 0
     skipped_count = 0
-    cached_open_symbols_by_broker: dict[str, set[str]] = {}
+    cached_open_state_by_broker: dict[str, dict[str, Any]] = {}
     batch_started_at = time.monotonic()
     partial = False
     stopped_reason: str | None = None
@@ -275,9 +325,10 @@ def execute_sync_paper_trades(
                     symbol=symbol,
                     parent_order_id=parent_order_id,
                     open_row=open_row,
-                    cached_open_symbols_by_broker=cached_open_symbols_by_broker,
+                    cached_open_state_by_broker=cached_open_state_by_broker,
                     get_open_positions=get_open_positions,
                     get_open_positions_for_broker=get_open_positions_for_broker,
+                    get_open_state_for_broker=get_open_state_for_broker,
                     sync_result={},
                 )
                 if stale_reconciled:
@@ -344,9 +395,10 @@ def execute_sync_paper_trades(
                     symbol=symbol,
                     parent_order_id=parent_order_id,
                     open_row=open_row,
-                    cached_open_symbols_by_broker=cached_open_symbols_by_broker,
+                    cached_open_state_by_broker=cached_open_state_by_broker,
                     get_open_positions=get_open_positions,
                     get_open_positions_for_broker=get_open_positions_for_broker,
+                    get_open_state_for_broker=get_open_state_for_broker,
                     sync_result=sync_result,
                 )
                 if stale_reconciled:

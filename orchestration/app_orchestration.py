@@ -21,6 +21,7 @@ def handle_sync_paper_trades(
     upsert_trade_lifecycle: Callable[..., None],
     get_open_positions: Callable[[], list[dict[str, Any]]] | None = None,
     get_open_positions_for_broker: Callable[[str], list[dict[str, Any]]] | None = None,
+    get_open_state_for_broker: Callable[[str], dict[str, Any]] | None = None,
     close_position: Callable[[str], Any] | None = None,
     close_position_for_broker: Callable[[str, str], Any] | None = None,
 ):
@@ -38,6 +39,7 @@ def handle_sync_paper_trades(
         get_open_positions=get_open_positions,
         close_position=close_position,
         get_open_positions_for_broker=get_open_positions_for_broker,
+        get_open_state_for_broker=get_open_state_for_broker,
         close_position_for_broker=close_position_for_broker,
     )
 
