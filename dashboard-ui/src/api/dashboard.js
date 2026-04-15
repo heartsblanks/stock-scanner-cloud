@@ -96,6 +96,23 @@ export async function sendAdminTestAlert(message) {
   return data || {};
 }
 
+export async function runIbkrStaleCloseRepair(targetDate) {
+  const response = await fetch("/api/ibkr-stale-close-repair", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(targetDate ? { target_date: targetDate } : {}),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.error || "Failed to run IBKR stale close repair");
+  }
+
+  return data || {};
+}
+
 export async function fetchPaperTradeAttemptRecent(limit = 25, broker, decisionStage) {
   const params = { limit };
   if (broker) {

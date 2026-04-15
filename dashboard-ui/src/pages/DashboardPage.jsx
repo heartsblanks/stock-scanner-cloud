@@ -11,7 +11,7 @@ import InsightCard from "../components/InsightCard";
 import ModePerformanceChart from "../components/ModePerformanceChart";
 import RefreshStatusPanel from "../components/dashboard/RefreshStatusPanel";
 import SymbolPerformanceChart from "../components/SymbolPerformanceChart";
-import { sendAdminTestAlert } from "../api/dashboard";
+import { runIbkrStaleCloseRepair, sendAdminTestAlert } from "../api/dashboard";
 import { useDashboardData } from "../hooks/useDashboardData";
 import { Component, Suspense, lazy, useEffect, useState } from "react";
 
@@ -104,11 +104,17 @@ function getInitialTradeBrokerView() {
   return "all";
 }
 
+function todayDateInputValue() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export default function DashboardPage() {
   const [activeView, setActiveView] = useState(getInitialView);
   const [drilldown, setDrilldown] = useState({ symbol: "", mode: "", hourUtc: "" });
   const [tradeBrokerView, setTradeBrokerView] = useState(getInitialTradeBrokerView);
   const [isSendingTestAlert, setIsSendingTestAlert] = useState(false);
+  const [isRunningIbkrRepair, setIsRunningIbkrRepair] = useState(false);
+  const [ibkrRepairDate, setIbkrRepairDate] = useState(todayDateInputValue);
   const [theme, setTheme] = useState(() => {
     if (typeof window === "undefined") {
       return "light";
@@ -286,6 +292,26 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleRunIbkrRepair() {
+    try {
+      setIsRunningIbkrRepair(true);
+      const data = await runIbkrStaleCloseRepair(ibkrRepairDate);
+      const repairedCount = Number(data?.repaired_count || 0);
+      const skippedCount = Number(data?.skipped_count || 0);
+      const staleRowCount = Number(data?.stale_row_count || 0);
+
+      pushToast({
+        type: "success",
+        message: `IBKR repair finished for ${ibkrRepairDate}: repaired ${repairedCount}, skipped ${skippedCount}, stale rows ${staleRowCount}.`,
+      });
+      refreshData();
+    } catch (err) {
+      pushToast({ type: "error", message: err?.message || "Failed to run IBKR stale close repair" });
+    } finally {
+      setIsRunningIbkrRepair(false);
+    }
+  }
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem("dashboard-theme", theme);
@@ -389,6 +415,24 @@ export default function DashboardPage() {
 
               <div className="dashboard-hero-controls">
                 <DashboardFilters onApply={handleApplyFilters} />
+                <div className="dashboard-date-filter-inline">
+                  <label htmlFor="ibkr-repair-date">IBKR Repair</label>
+                  <input
+                    id="ibkr-repair-date"
+                    type="date"
+                    value={ibkrRepairDate}
+                    onChange={(event) => setIbkrRepairDate(event.target.value)}
+                    className="dashboard-input dashboard-input-inline-date"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRunIbkrRepair}
+                  disabled={isRunningIbkrRepair || !ibkrRepairDate}
+                  className="dashboard-button dashboard-button-neutral dashboard-button-compact"
+                >
+                  {isRunningIbkrRepair ? "Repairing..." : "Repair IBKR"}
+                </button>
                 <button
                   type="button"
                   onClick={handleSendTestAlert}
