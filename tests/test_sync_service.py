@@ -323,7 +323,7 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(result["synced_count"], 1)
         self.assertEqual(result["results"][-1]["reason"], "batch_time_budget_exceeded")
 
-    def test_ibkr_sync_prioritizes_oldest_rows_before_time_budget_is_hit(self):
+    def test_ibkr_sync_prioritizes_rows_missing_from_live_broker_state_before_time_budget_is_hit(self):
         synced_parent_ids = []
 
         def sync_order_by_id_for_broker(broker, parent_id):
@@ -344,15 +344,21 @@ class SyncServiceTests(unittest.TestCase):
             result = execute_sync_paper_trades(
                 get_open_paper_trades=lambda: [
                     {
-                        "timestamp_utc": "2026-04-15T14:16:34+00:00",
-                        "symbol": "JOBY",
-                        "broker_parent_order_id": "64",
+                        "timestamp_utc": "2026-04-10T15:36:53+00:00",
+                        "symbol": "NVDA",
+                        "broker_parent_order_id": "40",
                         "broker": "IBKR",
                     },
                     {
-                        "timestamp_utc": "2026-04-15T16:57:10+00:00",
-                        "symbol": "SOUN",
-                        "broker_parent_order_id": "172",
+                        "timestamp_utc": "2026-04-13T16:46:08+00:00",
+                        "symbol": "QBTS",
+                        "broker_parent_order_id": "88",
+                        "broker": "IBKR",
+                    },
+                    {
+                        "timestamp_utc": "2026-04-15T14:16:34+00:00",
+                        "symbol": "JOBY",
+                        "broker_parent_order_id": "64",
                         "broker": "IBKR",
                     },
                 ],
@@ -364,7 +370,13 @@ class SyncServiceTests(unittest.TestCase):
                 upsert_trade_lifecycle=lambda **kwargs: None,
                 parse_iso_utc=parse_iso_utc,
                 to_float_or_none=to_float_or_none,
-                get_open_positions_for_broker=lambda broker: [],
+                get_open_state_for_broker=lambda broker: {
+                    "positions": [
+                        {"symbol": "NVDA"},
+                        {"symbol": "QBTS"},
+                    ],
+                    "orders": [],
+                },
                 close_position_for_broker=lambda broker, symbol: {"ok": True},
             )
 

@@ -80,6 +80,66 @@ def _sort_open_rows_for_sync(open_rows: list[dict[str, Any]]) -> list[dict[str, 
     return non_ibkr_rows + sorted(ibkr_rows, key=ibkr_sort_key)
 
 
+def _sort_open_rows_for_sync_with_broker_state(
+    *,
+    open_rows: list[dict[str, Any]],
+    get_open_positions: Callable[[], list[dict[str, Any]]] | None,
+    get_open_positions_for_broker: Callable[[str], list[dict[str, Any]]] | None,
+    get_open_state_for_broker: Callable[[str], dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    sorted_rows = _sort_open_rows_for_sync(open_rows)
+    ibkr_rows = [
+        row for row in sorted_rows
+        if (str(row.get("broker", "") or "ALPACA").strip().upper() or "ALPACA") == "IBKR"
+    ]
+    if not ibkr_rows:
+        return sorted_rows
+
+    try:
+        broker_open_state = _read_broker_open_state(
+            broker_name="IBKR",
+            get_open_positions=get_open_positions,
+            get_open_positions_for_broker=get_open_positions_for_broker,
+            get_open_state_for_broker=get_open_state_for_broker,
+        )
+    except Exception:
+        return sorted_rows
+
+    broker_open_symbols = {
+        str(position.get("symbol", "")).strip().upper()
+        for position in list(broker_open_state.get("positions") or [])
+        if str(position.get("symbol", "")).strip()
+    }
+    broker_open_orders = list(broker_open_state.get("orders") or [])
+
+    def ibkr_priority_key(row: dict[str, Any]) -> tuple[int, int, str, str]:
+        symbol = str(row.get("symbol", "")).strip().upper()
+        parent_order_id = str(row.get("broker_parent_order_id", "") or row.get("parent_order_id", "") or "").strip()
+        has_related_order = any(
+            str(order.get("symbol", "")).strip().upper() == symbol
+            or str(order.get("id", "")).strip() == parent_order_id
+            or str(order.get("parent_id", "")).strip() == parent_order_id
+            for order in broker_open_orders
+        )
+        likely_missing_from_broker = symbol not in broker_open_symbols and not has_related_order
+        timestamp = str(
+            row.get("timestamp_utc")
+            or row.get("entry_time")
+            or row.get("created_at")
+            or ""
+        ).strip()
+        return (
+            0 if likely_missing_from_broker else 1,
+            0 if timestamp else 1,
+            timestamp,
+            parent_order_id,
+        )
+
+    prioritized_ibkr_rows = sorted(ibkr_rows, key=ibkr_priority_key)
+    non_ibkr_rows = [row for row in sorted_rows if row not in ibkr_rows]
+    return non_ibkr_rows + prioritized_ibkr_rows
+
+
 def _read_broker_open_symbols(
     *,
     broker_name: str,
@@ -266,7 +326,12 @@ def execute_sync_paper_trades(
     close_position_for_broker: Callable[[str, str], Any] | None = None,
 ) -> dict[str, Any] | tuple[dict[str, Any], int]:
     try:
-        open_rows = _sort_open_rows_for_sync(get_open_paper_trades())
+        open_rows = _sort_open_rows_for_sync_with_broker_state(
+            open_rows=get_open_paper_trades(),
+            get_open_positions=get_open_positions,
+            get_open_positions_for_broker=get_open_positions_for_broker,
+            get_open_state_for_broker=get_open_state_for_broker,
+        )
     except Exception as e:
         log_exception("Open paper trade read failed", e, component="sync_service", operation="execute_sync_paper_trades")
         return {"ok": False, "error": f"open paper trade read failed: {e}"}, 500
