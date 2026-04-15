@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime
 
 from flask import jsonify, request
@@ -16,7 +17,17 @@ def register_scheduler_routes(
     execute_maintenance_ops,
     execute_ibkr_vm_control,
     execute_ibkr_login_alert,
+    execute_ibkr_stale_close_repair,
 ):
+    def _require_admin_token():
+        admin_token = str(os.getenv("ADMIN_API_TOKEN", "")).strip()
+        request_token = str(request.headers.get("X-Admin-Token", "")).strip()
+        if not admin_token:
+            return jsonify({"ok": False, "error": "admin_token_disabled"}), 503
+        if request_token != admin_token:
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
+        return None
+
     @app.post("/scheduler/market-ops")
     def scheduler_market_ops():
         now_ny = datetime.now(ny_tz)
@@ -79,4 +90,21 @@ def register_scheduler_routes(
             return jsonify(result)
         except Exception as e:
             log_exception("scheduler ibkr login alert failed", e, route="/scheduler/ibkr-login-alert")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.post("/scheduler/ibkr-stale-close-repair")
+    def scheduler_ibkr_stale_close_repair():
+        auth_error = _require_admin_token()
+        if auth_error is not None:
+            return auth_error
+
+        now_ny = datetime.now(ny_tz)
+        payload = request.get_json(silent=True) or {}
+        target_date = str(payload.get("target_date", "")).strip() or now_ny.date().isoformat()
+
+        try:
+            result = execute_ibkr_stale_close_repair(target_date=target_date)
+            return jsonify(result)
+        except Exception as e:
+            log_exception("scheduler ibkr stale close repair failed", e, route="/scheduler/ibkr-stale-close-repair")
             return jsonify({"ok": False, "error": str(e)}), 500

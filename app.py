@@ -391,6 +391,19 @@ def run_daily_post_close_scheduler(*, now_ny: datetime):
     )
 
 
+def run_ibkr_stale_close_repair(*, target_date: str):
+    return repair_ibkr_stale_closes(
+        target_date=target_date,
+        get_stale_ibkr_closed_trade_lifecycles=get_stale_ibkr_closed_trade_lifecycles,
+        sync_order_by_id_for_broker=sync_order_by_id_for_broker,
+        get_latest_exit_trade_event_for_parent_order_id=get_latest_exit_trade_event_for_parent_order_id,
+        upsert_trade_lifecycle=upsert_trade_lifecycle,
+        safe_insert_broker_order=safe_insert_broker_order,
+        parse_iso_utc=parse_iso_utc,
+        to_float_or_none=to_float_or_none,
+    )
+
+
 def run_maintenance_scheduler(*, now_ny: datetime, retention_days: int = 30):
     return build_execute_maintenance_ops(
         now_ny=now_ny,
@@ -552,6 +565,7 @@ register_scheduler_routes(
     execute_maintenance_ops=run_maintenance_scheduler,
     execute_ibkr_vm_control=run_ibkr_vm_control_scheduler,
     execute_ibkr_login_alert=run_ibkr_login_alert_scheduler,
+    execute_ibkr_stale_close_repair=run_ibkr_stale_close_repair,
 )
 register_legacy_reconcile_routes(
     app,

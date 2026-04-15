@@ -69,6 +69,7 @@ def register_health_routes(
                 "/scheduler/maintenance",
                 "/scheduler/ibkr-vm-control",
                 "/scheduler/ibkr-login-alert",
+                "/scheduler/ibkr-stale-close-repair",
                 "/admin/test-alert",
             ],
         })
