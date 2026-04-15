@@ -111,6 +111,8 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(captured_lifecycle["broker"], "IBKR")
         self.assertEqual(captured_lifecycle["status"], "CLOSED")
         self.assertEqual(captured_lifecycle["exit_reason"], "STALE_OPEN_RECONCILED")
+        self.assertIsNone(captured_lifecycle["exit_price"])
+        self.assertIsNone(captured_lifecycle["realized_pnl"])
 
     def test_ibkr_sync_timeout_is_classified_explicitly(self):
         result = execute_sync_paper_trades(
@@ -187,6 +189,8 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(captured_lifecycle["broker"], "IBKR")
         self.assertEqual(captured_lifecycle["status"], "CLOSED")
         self.assertEqual(captured_lifecycle["exit_reason"], "STALE_OPEN_RECONCILED")
+        self.assertIsNone(captured_lifecycle["exit_price"])
+        self.assertIsNone(captured_lifecycle["realized_pnl"])
 
     def test_ibkr_sync_timeout_does_not_reconcile_when_related_order_still_open(self):
         result = execute_sync_paper_trades(
@@ -278,6 +282,8 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(captured_lifecycle["broker"], "IBKR")
         self.assertEqual(captured_lifecycle["status"], "CLOSED")
         self.assertEqual(captured_lifecycle["exit_reason"], "STALE_OPEN_RECONCILED")
+        self.assertIsNone(captured_lifecycle["exit_price"])
+        self.assertIsNone(captured_lifecycle["realized_pnl"])
         self.assertEqual(append_calls, [])
         self.assertEqual(trade_event_calls, [])
         self.assertEqual(broker_order_calls, [])

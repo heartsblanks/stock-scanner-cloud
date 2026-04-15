@@ -103,19 +103,18 @@ def _build_ibkr_stale_reconciled_sync_result(
     sync_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     source = sync_result or {}
+    exit_price = str(source.get("exit_price", "") or "").strip()
+    exit_filled_avg_price = str(source.get("exit_filled_avg_price", "") or "").strip()
+    exit_reason = str(source.get("exit_reason", "") or "STALE_OPEN_RECONCILED").strip() or "STALE_OPEN_RECONCILED"
     return {
         **source,
         "exit_event": "MANUAL_CLOSE",
-        "exit_reason": str(source.get("exit_reason", "") or "STALE_OPEN_RECONCILED"),
+        "exit_reason": exit_reason,
         "exit_status": str(source.get("exit_status", "") or "reconciled_closed"),
         "exit_order_id": str(source.get("exit_order_id", "") or parent_order_id),
         "exit_filled_qty": str(source.get("exit_filled_qty", "") or open_row.get("shares", "")),
-        "exit_price": str(source.get("exit_price", "") or open_row.get("entry_price", "")),
-        "exit_filled_avg_price": str(
-            source.get("exit_filled_avg_price", "")
-            or source.get("exit_price", "")
-            or open_row.get("entry_price", "")
-        ),
+        "exit_price": exit_price,
+        "exit_filled_avg_price": exit_filled_avg_price or exit_price,
     }
 
 
