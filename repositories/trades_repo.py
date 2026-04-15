@@ -91,6 +91,32 @@ def get_trade_event_by_order_id(order_id: str) -> Optional[dict]:
     return fetch_one("SELECT * FROM trade_events WHERE order_id = %(order_id)s ORDER BY event_time DESC, id DESC LIMIT 1", {"order_id": order_id})
 
 
+def get_latest_exit_trade_event_for_parent_order_id(parent_order_id: str, broker: Optional[str] = None) -> Optional[dict]:
+    normalized_parent_order_id = normalize_text(parent_order_id)
+    normalized_broker = normalize_text(broker).upper() if broker else ""
+    if not normalized_parent_order_id:
+        return None
+
+    params: dict[str, Any] = {"parent_order_id": normalized_parent_order_id}
+    broker_clause = ""
+    if normalized_broker:
+        broker_clause = "AND UPPER(COALESCE(broker, '')) = %(broker)s"
+        params["broker"] = normalized_broker
+
+    return fetch_one(
+        f"""
+        SELECT *
+        FROM trade_events
+        WHERE COALESCE(parent_order_id, '') = %(parent_order_id)s
+          AND UPPER(COALESCE(event_type, '')) IN ('MANUAL_CLOSE', 'EOD_CLOSE', 'STOP_HIT', 'TARGET_HIT')
+          {broker_clause}
+        ORDER BY event_time DESC, id DESC
+        LIMIT 1
+        """,
+        params,
+    )
+
+
 def get_recent_trade_event_rows(limit: int = 100, broker: Optional[str] = None) -> list[dict]:
     normalized_broker = normalize_text(broker).upper() if broker else ""
     if normalized_broker:

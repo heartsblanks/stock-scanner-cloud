@@ -29,7 +29,7 @@ export default function OpenTradesTable({ trades }) {
   const sortedTrades = sortRowsByLatest(trades, ["entry_time", "timestamp_utc", "created_at"]);
   const showLiveComparison = sortedTrades.some((trade) => String(trade.broker || "").trim().toUpperCase() === "IBKR");
 
-  function renderStoredLiveCurrency(storedValue, liveValue, mismatch, liveLabel = "Live") {
+  function renderStoredLiveCurrency(storedValue, liveValue, mismatch, liveLabel = "Live", liveFallbackText = "-") {
     const hasStored = storedValue !== null && storedValue !== undefined && storedValue !== "";
     const hasLive = liveValue !== null && liveValue !== undefined && liveValue !== "";
     if (!hasStored && !hasLive) {
@@ -43,10 +43,22 @@ export default function OpenTradesTable({ trades }) {
         </div>
         <div className={`dashboard-stored-live-line ${mismatch ? "dashboard-stored-live-line-mismatch" : ""}`}>
           <span className="dashboard-stored-live-label">{liveLabel}</span>
-          <span>{hasLive ? formatCurrency(liveValue) : "-"}</span>
+          <span>{hasLive ? formatCurrency(liveValue) : liveFallbackText}</span>
         </div>
       </div>
     );
+  }
+
+  function getIbkrLiveExitLabel(trade) {
+    const hasLivePosition = Boolean(trade.live_position_detected);
+    const liveSyncReady = Boolean(trade.live_sync_available);
+    const liveOrdersKnown = Boolean(trade.live_orders_available);
+    const liveOrdersDetected = Number(trade.live_orders_detected || 0);
+
+    if (hasLivePosition && liveSyncReady && liveOrdersKnown && liveOrdersDetected === 0) {
+      return "Strategy on position";
+    }
+    return "-";
   }
 
   function renderStoredLiveNumber(storedValue, liveValue, mismatch) {
@@ -115,12 +127,24 @@ export default function OpenTradesTable({ trades }) {
               </td>
               <td data-label="Stop" className="dashboard-cell-number">
                 {String(trade.broker || "").trim().toUpperCase() === "IBKR"
-                  ? renderStoredLiveCurrency(trade.stored_stop_price ?? trade.stop_price, trade.live_stop_price, trade.stop_price_mismatch)
+                  ? renderStoredLiveCurrency(
+                      trade.stored_stop_price ?? trade.stop_price,
+                      trade.live_stop_price,
+                      trade.stop_price_mismatch,
+                      "Live",
+                      getIbkrLiveExitLabel(trade),
+                    )
                   : formatCurrency(trade.stop_price)}
               </td>
               <td data-label="Target" className="dashboard-cell-number">
                 {String(trade.broker || "").trim().toUpperCase() === "IBKR"
-                  ? renderStoredLiveCurrency(trade.stored_target_price ?? trade.target_price, trade.live_target_price, trade.target_price_mismatch)
+                  ? renderStoredLiveCurrency(
+                      trade.stored_target_price ?? trade.target_price,
+                      trade.live_target_price,
+                      trade.target_price_mismatch,
+                      "Live",
+                      getIbkrLiveExitLabel(trade),
+                    )
                   : formatCurrency(trade.target_price)}
               </td>
               {showLiveComparison ? (
