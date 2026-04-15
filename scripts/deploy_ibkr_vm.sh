@@ -13,6 +13,7 @@ gcloud compute ssh "$INSTANCE_NAME" \
   --command="sudo -u $VM_USER bash -lc 'cd /opt/stock-scanner-cloud && git fetch origin && git checkout $BRANCH && git pull --ff-only origin $BRANCH && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt' \
 && sudo cp /opt/stock-scanner-cloud/ibkr_bridge/systemd/ibkr-gateway.service /etc/systemd/system/ibkr-gateway.service \
 && sudo cp /opt/stock-scanner-cloud/ibkr_bridge/systemd/ibkr-bridge.service /etc/systemd/system/ibkr-bridge.service \
+&& sudo usermod -a -G systemd-journal $VM_USER \
 && sudo systemctl daemon-reload \
 && sudo systemctl disable --now ibkr-gateway || true \
 && sudo systemctl restart ibkr-bridge \

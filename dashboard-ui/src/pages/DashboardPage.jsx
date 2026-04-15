@@ -11,7 +11,7 @@ import InsightCard from "../components/InsightCard";
 import ModePerformanceChart from "../components/ModePerformanceChart";
 import RefreshStatusPanel from "../components/dashboard/RefreshStatusPanel";
 import SymbolPerformanceChart from "../components/SymbolPerformanceChart";
-import { runIbkrStaleCloseRepair, sendAdminTestAlert } from "../api/dashboard";
+import { runIbkrStaleCloseRepair, runIbkrVmJournalRepair, sendAdminTestAlert } from "../api/dashboard";
 import { useDashboardData } from "../hooks/useDashboardData";
 import { Component, Suspense, lazy, useEffect, useState } from "react";
 
@@ -114,6 +114,7 @@ export default function DashboardPage() {
   const [tradeBrokerView, setTradeBrokerView] = useState(getInitialTradeBrokerView);
   const [isSendingTestAlert, setIsSendingTestAlert] = useState(false);
   const [isRunningIbkrRepair, setIsRunningIbkrRepair] = useState(false);
+  const [isRunningIbkrDeepRepair, setIsRunningIbkrDeepRepair] = useState(false);
   const [ibkrRepairDate, setIbkrRepairDate] = useState(todayDateInputValue);
   const [theme, setTheme] = useState(() => {
     if (typeof window === "undefined") {
@@ -312,6 +313,24 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleRunIbkrDeepRepair() {
+    try {
+      setIsRunningIbkrDeepRepair(true);
+      const data = await runIbkrVmJournalRepair(ibkrRepairDate);
+      const appliedCount = Number(data?.applied_count || 0);
+      const candidateCount = Number(data?.candidate_count || 0);
+      pushToast({
+        type: "success",
+        message: `IBKR deep repair finished for ${ibkrRepairDate}: applied ${appliedCount} of ${candidateCount} journal candidates.`,
+      });
+      refreshData();
+    } catch (err) {
+      pushToast({ type: "error", message: err?.message || "Failed to run IBKR deep repair" });
+    } finally {
+      setIsRunningIbkrDeepRepair(false);
+    }
+  }
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem("dashboard-theme", theme);
@@ -432,6 +451,14 @@ export default function DashboardPage() {
                   className="dashboard-button dashboard-button-neutral dashboard-button-compact"
                 >
                   {isRunningIbkrRepair ? "Repairing..." : "Repair IBKR"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRunIbkrDeepRepair}
+                  disabled={isRunningIbkrDeepRepair || !ibkrRepairDate}
+                  className="dashboard-button dashboard-button-secondary dashboard-button-compact"
+                >
+                  {isRunningIbkrDeepRepair ? "Deep Repair..." : "Deep Repair"}
                 </button>
                 <button
                   type="button"

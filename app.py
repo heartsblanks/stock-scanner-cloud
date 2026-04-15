@@ -145,6 +145,7 @@ from routes.sync import register_sync_routes
 from services.alert_service import send_telegram_alert, telegram_alerts_enabled
 from services.sync_service import execute_sync_paper_trades
 from services.ibkr_repair_service import repair_ibkr_stale_closes
+from services.ibkr_vm_journal_repair_service import repair_ibkr_stale_closes_from_bridge_journal
 from services.scan_service import execute_full_scan
 from services.trade_service import execute_close_all_paper_positions
 
@@ -404,6 +405,33 @@ def run_ibkr_stale_close_repair(*, target_date: str):
     )
 
 
+def run_ibkr_vm_journal_repair(
+    *,
+    target_date: str,
+    since: str | None = None,
+    until: str | None = None,
+    year: int | None = None,
+    apply_changes: bool = True,
+):
+    def fetch_bridge_journal_lines(*, since: str, until: str) -> list[str]:
+        payload = ibkr_bridge_get(
+            "/journal",
+            params={"since": since, "until": until, "unit": "ibkr-bridge"},
+            timeout=30,
+        ) or {}
+        return list(payload.get("lines") or [])
+
+    return repair_ibkr_stale_closes_from_bridge_journal(
+        target_date=target_date,
+        get_stale_ibkr_closed_trade_lifecycles=get_stale_ibkr_closed_trade_lifecycles,
+        fetch_bridge_journal_lines=fetch_bridge_journal_lines,
+        since=since,
+        until=until,
+        year=year,
+        apply_changes=apply_changes,
+    )
+
+
 def run_maintenance_scheduler(*, now_ny: datetime, retention_days: int = 30):
     return build_execute_maintenance_ops(
         now_ny=now_ny,
@@ -566,6 +594,7 @@ register_scheduler_routes(
     execute_ibkr_vm_control=run_ibkr_vm_control_scheduler,
     execute_ibkr_login_alert=run_ibkr_login_alert_scheduler,
     execute_ibkr_stale_close_repair=run_ibkr_stale_close_repair,
+    execute_ibkr_vm_journal_repair=run_ibkr_vm_journal_repair,
 )
 register_legacy_reconcile_routes(
     app,

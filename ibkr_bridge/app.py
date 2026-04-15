@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from functools import wraps
 from typing import Any, Callable
 
@@ -222,6 +223,42 @@ def get_open_orders():
         return payload
 
     return _run_bridge_operation("get_open_orders", fetch_open_orders)
+
+
+@app.get("/journal")
+@require_auth
+def get_bridge_journal():
+    def fetch_journal():
+        since = str(request.args.get("since", "")).strip()
+        until = str(request.args.get("until", "")).strip()
+        unit = str(request.args.get("unit", "ibkr-bridge")).strip() or "ibkr-bridge"
+        if not since or not until:
+            raise RuntimeError("since and until are required")
+
+        result = subprocess.run(
+            ["journalctl", "-u", unit, "--since", since, "--until", until, "--no-pager"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        lines = result.stdout.splitlines()
+        payload = {
+            "ok": True,
+            "unit": unit,
+            "since": since,
+            "until": until,
+            "line_count": len(lines),
+            "lines": lines,
+        }
+        _audit_success(
+            "IBKR bridge journal fetched",
+            operation="get_bridge_journal",
+            payload=payload,
+            summary={"unit": unit, "since": since, "until": until, "line_count": len(lines)},
+        )
+        return payload
+
+    return _run_bridge_operation("get_bridge_journal", fetch_journal)
 
 
 @app.get("/orders/<order_id>")

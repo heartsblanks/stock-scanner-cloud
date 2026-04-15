@@ -113,6 +113,29 @@ export async function runIbkrStaleCloseRepair(targetDate) {
   return data || {};
 }
 
+export async function runIbkrVmJournalRepair(targetDate, options = {}) {
+  const response = await fetch("/api/ibkr-vm-journal-repair", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      target_date: targetDate,
+      since: options?.since || undefined,
+      until: options?.until || undefined,
+      year: options?.year || undefined,
+      dry_run: Boolean(options?.dryRun),
+    }),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.error || "Failed to run IBKR VM journal repair");
+  }
+
+  return data || {};
+}
+
 export async function fetchPaperTradeAttemptRecent(limit = 25, broker, decisionStage) {
   const params = { limit };
   if (broker) {

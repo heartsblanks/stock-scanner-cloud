@@ -18,6 +18,7 @@ def register_scheduler_routes(
     execute_ibkr_vm_control,
     execute_ibkr_login_alert,
     execute_ibkr_stale_close_repair,
+    execute_ibkr_vm_journal_repair,
 ):
     def _require_admin_token():
         admin_token = str(os.getenv("ADMIN_API_TOKEN", "")).strip()
@@ -107,4 +108,38 @@ def register_scheduler_routes(
             return jsonify(result)
         except Exception as e:
             log_exception("scheduler ibkr stale close repair failed", e, route="/scheduler/ibkr-stale-close-repair")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.post("/scheduler/ibkr-vm-journal-repair")
+    def scheduler_ibkr_vm_journal_repair():
+        auth_error = _require_admin_token()
+        if auth_error is not None:
+            return auth_error
+
+        now_ny = datetime.now(ny_tz)
+        payload = request.get_json(silent=True) or {}
+        target_date = str(payload.get("target_date", "")).strip() or now_ny.date().isoformat()
+        since = str(payload.get("since", "")).strip() or None
+        until = str(payload.get("until", "")).strip() or None
+        year_raw = payload.get("year")
+        dry_run = bool(payload.get("dry_run", False))
+
+        year = None
+        if year_raw not in (None, ""):
+            try:
+                year = int(year_raw)
+            except Exception:
+                return jsonify({"ok": False, "error": "year must be an integer"}), 400
+
+        try:
+            result = execute_ibkr_vm_journal_repair(
+                target_date=target_date,
+                since=since,
+                until=until,
+                year=year,
+                apply_changes=not dry_run,
+            )
+            return jsonify(result)
+        except Exception as e:
+            log_exception("scheduler ibkr vm journal repair failed", e, route="/scheduler/ibkr-vm-journal-repair")
             return jsonify({"ok": False, "error": str(e)}), 500
