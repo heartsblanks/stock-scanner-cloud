@@ -56,6 +56,80 @@ def _sync_time_budget_seconds(*, broker_name: str) -> float | None:
     return value
 
 
+def _normalize_ibkr_client_order_id(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _expected_ibkr_client_order_id(
+    open_row: dict[str, Any],
+    *,
+    to_float_or_none: Callable[[Any], float | None],
+) -> str:
+    symbol = str(open_row.get("symbol", "") or "").strip().upper()
+    if not symbol:
+        return ""
+
+    direction = str(open_row.get("direction", "") or "").strip().upper()
+    if not direction:
+        inferred_direction = infer_direction(
+            open_row.get("entry_price", ""),
+            "",
+            open_row.get("stop_price", ""),
+            open_row.get("target_price", ""),
+            open_row.get("side", ""),
+        )
+        direction = str(inferred_direction or "").strip().upper()
+    if direction not in {"LONG", "SHORT"}:
+        return ""
+
+    entry_price = to_float_or_none(open_row.get("entry_price", ""))
+    shares = to_float_or_none(open_row.get("shares", ""))
+    if entry_price is None or shares is None or shares <= 0:
+        return ""
+
+    try:
+        entry_basis = int(round(entry_price * 10000))
+        share_count = int(round(shares))
+    except Exception:
+        return ""
+    return f"scanner-{symbol}-{direction}-{entry_basis}-{share_count}"
+
+
+def _validate_ibkr_sync_identity(
+    *,
+    open_row: dict[str, Any],
+    sync_result: dict[str, Any],
+    to_float_or_none: Callable[[Any], float | None],
+) -> tuple[bool, str | None]:
+    open_symbol = str(open_row.get("symbol", "") or "").strip().upper()
+    sync_symbol = str(sync_result.get("symbol", "") or "").strip().upper()
+    if open_symbol and sync_symbol and open_symbol != sync_symbol:
+        return False, f"symbol_mismatch:{open_symbol}->{sync_symbol}"
+
+    actual_client_order_id = _normalize_ibkr_client_order_id(sync_result.get("client_order_id"))
+    expected_client_order_id = _expected_ibkr_client_order_id(open_row, to_float_or_none=to_float_or_none)
+    if actual_client_order_id and expected_client_order_id and actual_client_order_id != expected_client_order_id:
+        return False, f"client_order_id_mismatch:{expected_client_order_id}->{actual_client_order_id}"
+
+    stored_entry_price = to_float_or_none(open_row.get("entry_price", ""))
+    synced_entry_price = to_float_or_none(
+        sync_result.get("entry_filled_avg_price", "") or sync_result.get("entry_price", "")
+    )
+    if stored_entry_price is not None and synced_entry_price is not None and stored_entry_price > 0:
+        allowed_delta = max(0.5, stored_entry_price * 0.03)
+        if abs(stored_entry_price - synced_entry_price) > allowed_delta:
+            return False, f"entry_price_mismatch:{stored_entry_price}->{synced_entry_price}"
+
+    stored_shares = to_float_or_none(open_row.get("shares", ""))
+    synced_shares = to_float_or_none(sync_result.get("entry_filled_qty", "") or sync_result.get("shares", ""))
+    if stored_shares is not None and synced_shares is not None and stored_shares > 0:
+        allowed_share_delta = max(1.0, stored_shares * 0.05)
+        if abs(stored_shares - synced_shares) > allowed_share_delta:
+            return False, f"entry_qty_mismatch:{stored_shares}->{synced_shares}"
+
+    return True, None
+
+
 def _sort_open_rows_for_sync(open_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     non_ibkr_rows: list[dict[str, Any]] = []
     ibkr_rows: list[dict[str, Any]] = []
@@ -459,6 +533,36 @@ def execute_sync_paper_trades(
                 skipped_count += 1
                 continue
 
+        identity_conflict_reason = None
+        if broker_name == "IBKR":
+            sync_identity_valid, identity_conflict_reason = _validate_ibkr_sync_identity(
+                open_row=open_row,
+                sync_result=sync_result,
+                to_float_or_none=to_float_or_none,
+            )
+            if not sync_identity_valid:
+                log_warning(
+                    "IBKR sync result rejected due to identity mismatch",
+                    component="sync_service",
+                    operation="execute_sync_paper_trades",
+                    symbol=symbol,
+                    parent_order_id=parent_order_id,
+                    broker=broker_name,
+                    identity_conflict_reason=identity_conflict_reason,
+                    sync_symbol=sync_result.get("symbol", ""),
+                    sync_client_order_id=sync_result.get("client_order_id", ""),
+                    sync_entry_price=sync_result.get("entry_filled_avg_price", "") or sync_result.get("entry_price", ""),
+                    sync_entry_qty=sync_result.get("entry_filled_qty", "") or sync_result.get("shares", ""),
+                )
+                sync_result = {
+                    "id": parent_order_id,
+                    "status": "unknown",
+                    "parent_status": "unknown",
+                    "message": "IBKR sync identity mismatch",
+                    "identity_conflict": True,
+                    "identity_conflict_reason": identity_conflict_reason,
+                }
+
         exit_event = str(sync_result.get("exit_event", "")).strip().upper()
         if not exit_event and broker_name == "IBKR":
             sync_status = str(sync_result.get("status", "")).strip().lower()
@@ -476,6 +580,8 @@ def execute_sync_paper_trades(
                 take_profit_status=str(sync_result.get("take_profit_status", "")).strip().lower(),
                 stop_loss_status=str(sync_result.get("stop_loss_status", "")).strip().lower(),
                 is_unknown_parent=is_unknown_parent,
+                identity_conflict=bool(sync_result.get("identity_conflict")),
+                identity_conflict_reason=str(sync_result.get("identity_conflict_reason", "") or ""),
             )
             if is_unknown_parent:
                 sync_result, stale_reconciled = _reconcile_ibkr_stale_open_trade(
@@ -519,10 +625,11 @@ def execute_sync_paper_trades(
                 "broker": broker_name,
                 "parent_order_id": parent_order_id,
                 "synced": False,
-                "reason": "still_open",
+                "reason": "identity_conflict" if sync_result.get("identity_conflict") else "still_open",
                 "parent_status": sync_result.get("parent_status", ""),
                 "take_profit_status": sync_result.get("take_profit_status", ""),
                 "stop_loss_status": sync_result.get("stop_loss_status", ""),
+                "identity_conflict_reason": sync_result.get("identity_conflict_reason", ""),
             })
             skipped_count += 1
             continue

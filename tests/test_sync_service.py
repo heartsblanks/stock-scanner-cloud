@@ -234,6 +234,120 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(result["synced_count"], 0)
         self.assertEqual(result["results"][0]["reason"], "bridge_timeout")
 
+    def test_ibkr_sync_rejects_cross_symbol_identity_mismatch(self):
+        captured_lifecycle = {}
+
+        def upsert_trade_lifecycle(**kwargs):
+            captured_lifecycle.update(kwargs)
+
+        result = execute_sync_paper_trades(
+            get_open_paper_trades=lambda: [
+                {
+                    "timestamp_utc": "2026-04-13T16:58:57+00:00",
+                    "symbol": "RKLB",
+                    "name": "Rocket Lab",
+                    "mode": "third",
+                    "side": "BUY",
+                    "shares": "142",
+                    "entry_price": "70.42",
+                    "stop_price": "69.531",
+                    "target_price": "72.198",
+                    "broker_order_id": "118",
+                    "broker_parent_order_id": "118",
+                    "broker": "IBKR",
+                }
+            ],
+            sync_order_by_id_for_broker=lambda broker, parent_id: {
+                "status": "closed",
+                "parent_order_id": "118",
+                "parent_status": "Filled",
+                "symbol": "SOUN",
+                "client_order_id": "scanner-SOUN-LONG-75150-665",
+                "entry_filled_qty": "665",
+                "entry_filled_avg_price": "7.515",
+                "exit_event": "MANUAL_CLOSE",
+                "exit_order_id": "119",
+                "exit_status": "Filled",
+                "exit_price": "7.86",
+                "exit_filled_qty": "665",
+                "exit_filled_avg_price": "7.86",
+                "exit_reason": "BROKER_FILLED_EXIT",
+                "exit_filled_at": "2026-04-15T16:05:34+00:00",
+            },
+            paper_trade_exit_already_logged=lambda parent_order_id, exit_event: False,
+            append_trade_log=lambda row: None,
+            safe_insert_trade_event=lambda **kwargs: None,
+            safe_insert_broker_order=lambda **kwargs: None,
+            upsert_trade_lifecycle=upsert_trade_lifecycle,
+            parse_iso_utc=parse_iso_utc,
+            to_float_or_none=to_float_or_none,
+            get_open_state_for_broker=lambda broker: {
+                "positions": [{"symbol": "RKLB"}],
+                "orders": [],
+            },
+            close_position_for_broker=lambda broker, symbol: {"ok": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["synced_count"], 0)
+        self.assertEqual(result["results"][0]["reason"], "identity_conflict")
+        self.assertIn("symbol_mismatch", result["results"][0]["identity_conflict_reason"])
+        self.assertEqual(captured_lifecycle, {})
+
+    def test_ibkr_sync_rejects_client_order_id_identity_mismatch(self):
+        result = execute_sync_paper_trades(
+            get_open_paper_trades=lambda: [
+                {
+                    "timestamp_utc": "2026-04-15T14:36:45+00:00",
+                    "symbol": "QS",
+                    "name": "QS",
+                    "mode": "secondary",
+                    "side": "BUY",
+                    "shares": "701",
+                    "entry_price": "7.13",
+                    "stop_price": "6.955",
+                    "target_price": "7.48",
+                    "broker_order_id": "112",
+                    "broker_parent_order_id": "112",
+                    "broker": "IBKR",
+                }
+            ],
+            sync_order_by_id_for_broker=lambda broker, parent_id: {
+                "status": "closed",
+                "parent_order_id": "112",
+                "parent_status": "Filled",
+                "symbol": "QS",
+                "client_order_id": "scanner-QS-LONG-70000-701",
+                "entry_filled_qty": "701",
+                "entry_filled_avg_price": "7.0",
+                "exit_event": "MANUAL_CLOSE",
+                "exit_order_id": "114",
+                "exit_status": "Filled",
+                "exit_price": "6.96",
+                "exit_filled_qty": "701",
+                "exit_filled_avg_price": "6.96",
+                "exit_reason": "BROKER_FILLED_EXIT",
+                "exit_filled_at": "2026-04-15T16:55:09+00:00",
+            },
+            paper_trade_exit_already_logged=lambda parent_order_id, exit_event: False,
+            append_trade_log=lambda row: None,
+            safe_insert_trade_event=lambda **kwargs: None,
+            safe_insert_broker_order=lambda **kwargs: None,
+            upsert_trade_lifecycle=lambda **kwargs: None,
+            parse_iso_utc=parse_iso_utc,
+            to_float_or_none=to_float_or_none,
+            get_open_state_for_broker=lambda broker: {
+                "positions": [{"symbol": "QS"}],
+                "orders": [],
+            },
+            close_position_for_broker=lambda broker, symbol: {"ok": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["synced_count"], 0)
+        self.assertEqual(result["results"][0]["reason"], "identity_conflict")
+        self.assertIn("client_order_id_mismatch", result["results"][0]["identity_conflict_reason"])
+
     def test_ibkr_stale_reconcile_repairs_lifecycle_when_exit_event_already_logged(self):
         captured_lifecycle = {}
         append_calls = []
