@@ -56,6 +56,30 @@ def _sync_time_budget_seconds(*, broker_name: str) -> float | None:
     return value
 
 
+def _sort_open_rows_for_sync(open_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    non_ibkr_rows: list[dict[str, Any]] = []
+    ibkr_rows: list[dict[str, Any]] = []
+
+    for row in open_rows or []:
+        broker_name = str(row.get("broker", "") or "ALPACA").strip().upper() or "ALPACA"
+        if broker_name == "IBKR":
+            ibkr_rows.append(row)
+        else:
+            non_ibkr_rows.append(row)
+
+    def ibkr_sort_key(row: dict[str, Any]) -> tuple[int, str, str]:
+        timestamp = str(
+            row.get("timestamp_utc")
+            or row.get("entry_time")
+            or row.get("created_at")
+            or ""
+        ).strip()
+        parent_order_id = str(row.get("broker_parent_order_id", "") or row.get("parent_order_id", "") or "").strip()
+        return (0 if timestamp else 1, timestamp, parent_order_id)
+
+    return non_ibkr_rows + sorted(ibkr_rows, key=ibkr_sort_key)
+
+
 def _read_broker_open_symbols(
     *,
     broker_name: str,
@@ -242,7 +266,7 @@ def execute_sync_paper_trades(
     close_position_for_broker: Callable[[str, str], Any] | None = None,
 ) -> dict[str, Any] | tuple[dict[str, Any], int]:
     try:
-        open_rows = get_open_paper_trades()
+        open_rows = _sort_open_rows_for_sync(get_open_paper_trades())
     except Exception as e:
         log_exception("Open paper trade read failed", e, component="sync_service", operation="execute_sync_paper_trades")
         return {"ok": False, "error": f"open paper trade read failed: {e}"}, 500
