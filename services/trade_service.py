@@ -218,18 +218,28 @@ def execute_close_all_paper_positions(
             close_filled_qty = str(close_response_filled_qty).strip()
 
         if close_position_closed and not close_filled:
-            close_filled = True
-            if not close_filled_avg_price and current_price not in (None, "", "None"):
-                close_filled_avg_price = str(current_price).strip()
-            log_warning(
-                "Paper EOD close broker flattened position before fill sync",
-                component="trade_service",
-                operation="execute_close_all_paper_positions",
-                symbol=symbol,
-                broker=broker_name,
-                order_id=close_order_id,
-                fallback_exit_price=close_filled_avg_price,
-            )
+            if broker_name == "IBKR":
+                log_warning(
+                    "Paper EOD close detected flattened IBKR position without confirmed fill; lifecycle update deferred",
+                    component="trade_service",
+                    operation="execute_close_all_paper_positions",
+                    symbol=symbol,
+                    broker=broker_name,
+                    order_id=close_order_id,
+                )
+            else:
+                close_filled = True
+                if not close_filled_avg_price and current_price not in (None, "", "None"):
+                    close_filled_avg_price = str(current_price).strip()
+                log_warning(
+                    "Paper EOD close broker flattened position before fill sync",
+                    component="trade_service",
+                    operation="execute_close_all_paper_positions",
+                    symbol=symbol,
+                    broker=broker_name,
+                    order_id=close_order_id,
+                    fallback_exit_price=close_filled_avg_price,
+                )
 
         timestamp_utc = datetime.now(timezone.utc).isoformat()
         safe_insert_broker_order(
