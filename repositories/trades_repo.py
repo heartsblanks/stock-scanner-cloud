@@ -8,7 +8,7 @@ from repositories.common import normalize_text, to_optional_float
 
 
 def _broker_filter_sql(normalized_broker: str) -> str:
-    return "UPPER(COALESCE(broker, '')) = %(broker)s"
+    return "UPPER(COALESCE(NULLIF(broker, ''), 'IBKR')) = %(broker)s"
 
 
 def insert_trade_event(
