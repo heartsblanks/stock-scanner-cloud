@@ -194,7 +194,7 @@ Recommended consolidated scheduler setup:
 - `maintenance`
   - `0 18 * * * (America/New_York)`
   - Calls `POST /scheduler/maintenance`
-  - Prunes `alpaca_api_logs` plus older operational rows from `signal_logs`, `scan_runs`, `paper_trade_attempts`, `broker_orders`, `reconciliation_details`, and `reconciliation_runs`
+  - Prunes `broker_api_logs` plus older operational rows from `signal_logs`, `scan_runs`, `paper_trade_attempts`, `broker_orders`, `reconciliation_details`, and `reconciliation_runs`
 - `ibkr-login-alert`
   - `*/10 9-16 * * 1-5 (America/New_York)`
   - Calls `POST /scheduler/ibkr-login-alert`
@@ -230,7 +230,7 @@ Operational flow:
 
 The maintenance scheduler currently applies this first-pass retention policy:
 
-- `alpaca_api_logs`: 30 days
+- `broker_api_logs`: 30 days
 - `signal_logs`: 45 days
 - `scan_runs`: 45 days
 - `paper_trade_attempts`: 120 days
@@ -270,7 +270,7 @@ Main tables:
 - `broker_orders`
 - `reconciliation_runs`
 - `reconciliation_details`
-- `alpaca_api_logs`
+- `broker_api_logs`
 
 Schema defined in:
 ```

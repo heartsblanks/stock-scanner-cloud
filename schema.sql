@@ -146,15 +146,15 @@ CREATE TABLE IF NOT EXISTS reconciliation_details (
     local_entry_timestamp_utc TIMESTAMPTZ,
     local_exit_timestamp_utc TIMESTAMPTZ,
     local_entry_price NUMERIC,
-    alpaca_entry_price NUMERIC,
+    broker_entry_price NUMERIC,
     local_exit_price NUMERIC,
-    alpaca_exit_price NUMERIC,
+    broker_exit_price NUMERIC,
     local_shares NUMERIC,
-    alpaca_entry_qty NUMERIC,
-    alpaca_exit_qty NUMERIC,
+    broker_entry_qty NUMERIC,
+    broker_exit_qty NUMERIC,
     local_exit_reason TEXT,
-    alpaca_exit_reason TEXT,
-    alpaca_exit_order_id TEXT,
+    broker_exit_reason TEXT,
+    broker_exit_order_id TEXT,
     entry_price_diff NUMERIC,
     exit_price_diff NUMERIC,
     match_status TEXT,
@@ -179,7 +179,7 @@ CREATE INDEX IF NOT EXISTS idx_reconciliation_details_parent_order ON reconcilia
 CREATE INDEX IF NOT EXISTS idx_reconciliation_details_status ON reconciliation_details(match_status);
 
 -- Alpaca API audit logs (for debugging & reconciliation verification)
-CREATE TABLE IF NOT EXISTS alpaca_api_logs (
+CREATE TABLE IF NOT EXISTS broker_api_logs (
     id SERIAL PRIMARY KEY,
     logged_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     method TEXT NOT NULL,
@@ -194,9 +194,9 @@ CREATE TABLE IF NOT EXISTS alpaca_api_logs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_alpaca_api_logs_logged_at ON alpaca_api_logs(logged_at);
-CREATE INDEX IF NOT EXISTS idx_alpaca_api_logs_method ON alpaca_api_logs(method);
-CREATE INDEX IF NOT EXISTS idx_alpaca_api_logs_success_logged_at ON alpaca_api_logs(success, logged_at);
+CREATE INDEX IF NOT EXISTS idx_broker_api_logs_logged_at ON broker_api_logs(logged_at);
+CREATE INDEX IF NOT EXISTS idx_broker_api_logs_method ON broker_api_logs(method);
+CREATE INDEX IF NOT EXISTS idx_broker_api_logs_success_logged_at ON broker_api_logs(success, logged_at);
 
 -- Trade lifecycles: one row per trade (OPEN → CLOSED unified)
 CREATE TABLE IF NOT EXISTS trade_lifecycles (

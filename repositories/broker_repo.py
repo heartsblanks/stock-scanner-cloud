@@ -112,7 +112,7 @@ def insert_alpaca_api_log(
 ) -> None:
     execute(
         """
-        INSERT INTO alpaca_api_logs (
+        INSERT INTO broker_api_logs (
             logged_at, method, url, params_json, request_body_json, status_code, response_body, success, error_message, duration_ms
         ) VALUES (
             %(logged_at)s, %(method)s, %(url)s, %(params_json)s, %(request_body_json)s, %(status_code)s, %(response_body)s, %(success)s, %(error_message)s, %(duration_ms)s
@@ -133,15 +133,15 @@ def insert_alpaca_api_log(
     )
 
 
-def get_recent_alpaca_api_logs(limit: int = 100) -> list[dict]:
-    return fetch_all("SELECT * FROM alpaca_api_logs ORDER BY logged_at DESC, id DESC LIMIT %(limit)s", {"limit": limit})
+def get_recent_broker_api_logs(limit: int = 100) -> list[dict]:
+    return fetch_all("SELECT * FROM broker_api_logs ORDER BY logged_at DESC, id DESC LIMIT %(limit)s", {"limit": limit})
 
 
 def get_recent_alpaca_api_errors(limit: int = 100) -> list[dict]:
     return fetch_all(
         """
         SELECT *
-        FROM alpaca_api_logs
+        FROM broker_api_logs
         WHERE COALESCE(success, FALSE) = FALSE
            OR COALESCE(status_code, 0) >= 400
            OR COALESCE(error_message, '') <> ''
@@ -152,11 +152,11 @@ def get_recent_alpaca_api_errors(limit: int = 100) -> list[dict]:
     )
 
 
-def prune_alpaca_api_logs(retention_days: int = 30) -> int:
+def prune_broker_api_logs(retention_days: int = 30) -> int:
     row = fetch_one(
         """
         WITH deleted AS (
-            DELETE FROM alpaca_api_logs
+            DELETE FROM broker_api_logs
             WHERE logged_at < NOW() - (%(retention_days)s::text || ' days')::interval
             RETURNING 1
         )

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.db import fetch_one
+from core.db import fetch_one, get_db_cursor
 
 
 _RETENTION_TABLES: dict[str, tuple[str, str]] = {
-    "alpaca_api_logs": ("logged_at", "alpaca_api_logs"),
+    "broker_api_logs": ("logged_at", "broker_api_logs"),
     "signal_logs": ("timestamp_utc", "signal_logs"),
     "scan_runs": ("scan_time", "scan_runs"),
     "paper_trade_attempts": ("timestamp_utc", "paper_trade_attempts"),
@@ -92,10 +92,10 @@ def purge_legacy_alpaca_data() -> dict[str, Any]:
             """,
         ),
         (
-            "alpaca_api_logs",
+            "broker_api_logs",
             """
             WITH deleted AS (
-                DELETE FROM alpaca_api_logs
+                DELETE FROM broker_api_logs
                 RETURNING 1
             )
             SELECT COUNT(*)::INT AS deleted_count FROM deleted
@@ -106,11 +106,13 @@ def purge_legacy_alpaca_data() -> dict[str, Any]:
     deleted_counts: dict[str, int] = {}
     total_deleted = 0
 
-    for table_name, statement in statements:
-        row = fetch_one(statement, {})
-        deleted_count = int(row["deleted_count"]) if row and row.get("deleted_count") is not None else 0
-        deleted_counts[table_name] = deleted_count
-        total_deleted += deleted_count
+    with get_db_cursor(commit=True) as cur:
+        for table_name, statement in statements:
+            cur.execute(statement, {})
+            row = cur.fetchone()
+            deleted_count = int(row["deleted_count"]) if row and row.get("deleted_count") is not None else 0
+            deleted_counts[table_name] = deleted_count
+            total_deleted += deleted_count
 
     return {
         "ok": True,

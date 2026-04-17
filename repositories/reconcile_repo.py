@@ -77,15 +77,15 @@ def insert_reconciliation_detail(
     local_entry_timestamp_utc: Optional[datetime] = None,
     local_exit_timestamp_utc: Optional[datetime] = None,
     local_entry_price: Optional[float] = None,
-    alpaca_entry_price: Optional[float] = None,
+    broker_entry_price: Optional[float] = None,
     local_exit_price: Optional[float] = None,
-    alpaca_exit_price: Optional[float] = None,
+    broker_exit_price: Optional[float] = None,
     local_shares: Optional[float] = None,
-    alpaca_entry_qty: Optional[float] = None,
-    alpaca_exit_qty: Optional[float] = None,
+    broker_entry_qty: Optional[float] = None,
+    broker_exit_qty: Optional[float] = None,
     local_exit_reason: Optional[str] = None,
-    alpaca_exit_reason: Optional[str] = None,
-    alpaca_exit_order_id: Optional[str] = None,
+    broker_exit_reason: Optional[str] = None,
+    broker_exit_order_id: Optional[str] = None,
     entry_price_diff: Optional[float] = None,
     exit_price_diff: Optional[float] = None,
     match_status: Optional[str] = None,
@@ -102,15 +102,15 @@ def insert_reconciliation_detail(
           AND COALESCE(local_entry_timestamp_utc, TIMESTAMPTZ '1970-01-01 00:00:00+00') = %(local_entry_timestamp_utc_match)s
           AND COALESCE(local_exit_timestamp_utc, TIMESTAMPTZ '1970-01-01 00:00:00+00') = %(local_exit_timestamp_utc_match)s
           AND COALESCE(local_entry_price, -1) = %(local_entry_price_match)s
-          AND COALESCE(alpaca_entry_price, -1) = %(alpaca_entry_price_match)s
+          AND COALESCE(broker_entry_price, -1) = %(broker_entry_price_match)s
           AND COALESCE(local_exit_price, -1) = %(local_exit_price_match)s
-          AND COALESCE(alpaca_exit_price, -1) = %(alpaca_exit_price_match)s
+          AND COALESCE(broker_exit_price, -1) = %(broker_exit_price_match)s
           AND COALESCE(local_shares, -1) = %(local_shares_match)s
-          AND COALESCE(alpaca_entry_qty, -1) = %(alpaca_entry_qty_match)s
-          AND COALESCE(alpaca_exit_qty, -1) = %(alpaca_exit_qty_match)s
+          AND COALESCE(broker_entry_qty, -1) = %(broker_entry_qty_match)s
+          AND COALESCE(broker_exit_qty, -1) = %(broker_exit_qty_match)s
           AND COALESCE(local_exit_reason, '') = %(local_exit_reason)s
-          AND COALESCE(alpaca_exit_reason, '') = %(alpaca_exit_reason)s
-          AND COALESCE(alpaca_exit_order_id, '') = %(alpaca_exit_order_id)s
+          AND COALESCE(broker_exit_reason, '') = %(broker_exit_reason)s
+          AND COALESCE(broker_exit_order_id, '') = %(broker_exit_order_id)s
           AND COALESCE(entry_price_diff, -1) = %(entry_price_diff_match)s
           AND COALESCE(exit_price_diff, -1) = %(exit_price_diff_match)s
           AND COALESCE(match_status, '') = %(match_status)s
@@ -125,15 +125,15 @@ def insert_reconciliation_detail(
             "local_entry_timestamp_utc_match": local_entry_timestamp_utc or datetime(1970, 1, 1),
             "local_exit_timestamp_utc_match": local_exit_timestamp_utc or datetime(1970, 1, 1),
             "local_entry_price_match": local_entry_price if local_entry_price is not None else -1,
-            "alpaca_entry_price_match": alpaca_entry_price if alpaca_entry_price is not None else -1,
+            "broker_entry_price_match": broker_entry_price if broker_entry_price is not None else -1,
             "local_exit_price_match": local_exit_price if local_exit_price is not None else -1,
-            "alpaca_exit_price_match": alpaca_exit_price if alpaca_exit_price is not None else -1,
+            "broker_exit_price_match": broker_exit_price if broker_exit_price is not None else -1,
             "local_shares_match": local_shares if local_shares is not None else -1,
-            "alpaca_entry_qty_match": alpaca_entry_qty if alpaca_entry_qty is not None else -1,
-            "alpaca_exit_qty_match": alpaca_exit_qty if alpaca_exit_qty is not None else -1,
+            "broker_entry_qty_match": broker_entry_qty if broker_entry_qty is not None else -1,
+            "broker_exit_qty_match": broker_exit_qty if broker_exit_qty is not None else -1,
             "local_exit_reason": normalize_text(local_exit_reason),
-            "alpaca_exit_reason": normalize_text(alpaca_exit_reason),
-            "alpaca_exit_order_id": normalize_text(alpaca_exit_order_id),
+            "broker_exit_reason": normalize_text(broker_exit_reason),
+            "broker_exit_order_id": normalize_text(broker_exit_order_id),
             "entry_price_diff_match": entry_price_diff if entry_price_diff is not None else -1,
             "exit_price_diff_match": exit_price_diff if exit_price_diff is not None else -1,
             "match_status": normalize_text(match_status),
@@ -145,14 +145,14 @@ def insert_reconciliation_detail(
         """
         INSERT INTO reconciliation_details (
             run_id, broker_parent_order_id, symbol, mode, client_order_id, local_entry_timestamp_utc,
-            local_exit_timestamp_utc, local_entry_price, alpaca_entry_price, local_exit_price, alpaca_exit_price,
-            local_shares, alpaca_entry_qty, alpaca_exit_qty, local_exit_reason, alpaca_exit_reason,
-            alpaca_exit_order_id, entry_price_diff, exit_price_diff, match_status
+            local_exit_timestamp_utc, local_entry_price, broker_entry_price, local_exit_price, broker_exit_price,
+            local_shares, broker_entry_qty, broker_exit_qty, local_exit_reason, broker_exit_reason,
+            broker_exit_order_id, entry_price_diff, exit_price_diff, match_status
         ) VALUES (
             %(run_id)s, %(broker_parent_order_id)s, %(symbol)s, %(mode)s, %(client_order_id)s, %(local_entry_timestamp_utc)s,
-            %(local_exit_timestamp_utc)s, %(local_entry_price)s, %(alpaca_entry_price)s, %(local_exit_price)s, %(alpaca_exit_price)s,
-            %(local_shares)s, %(alpaca_entry_qty)s, %(alpaca_exit_qty)s, %(local_exit_reason)s, %(alpaca_exit_reason)s,
-            %(alpaca_exit_order_id)s, %(entry_price_diff)s, %(exit_price_diff)s, %(match_status)s
+            %(local_exit_timestamp_utc)s, %(local_entry_price)s, %(broker_entry_price)s, %(local_exit_price)s, %(broker_exit_price)s,
+            %(local_shares)s, %(broker_entry_qty)s, %(broker_exit_qty)s, %(local_exit_reason)s, %(broker_exit_reason)s,
+            %(broker_exit_order_id)s, %(entry_price_diff)s, %(exit_price_diff)s, %(match_status)s
         )
         """,
         locals(),

@@ -464,7 +464,7 @@ Used for:
 - order status lookup
 - order synchronization
 
-All Alpaca requests should be logged into `alpaca_api_logs` where practical.
+All Alpaca requests should be logged into `broker_api_logs` where practical.
 
 ### 8.2 GitHub
 
@@ -553,7 +553,7 @@ Stores summary-level reconciliation run results.
 #### `reconciliation_details`
 Stores row-level reconciliation comparisons.
 
-#### `alpaca_api_logs`
+#### `broker_api_logs`
 Stores Alpaca request/response logging with fields including:
 - logged_at
 - method
