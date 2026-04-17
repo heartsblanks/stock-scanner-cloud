@@ -1482,9 +1482,9 @@ body {
 
 .dashboard-command-header {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(360px, 1fr);
-  gap: 14px;
-  padding: 14px;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  padding: 12px;
   border-radius: 14px;
   border: 1px solid var(--border-strong);
   background: linear-gradient(160deg, rgba(3, 16, 12, 0.96), rgba(2, 10, 8, 0.94));
@@ -1493,7 +1493,14 @@ body {
 
 .dashboard-command-main {
   display: grid;
-  gap: 10px;
+  gap: 6px;
+}
+
+.dashboard-command-headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .dashboard-command-kicker {
@@ -1511,32 +1518,49 @@ body {
 }
 
 .dashboard-command-title {
-  font-size: clamp(1.55rem, 2.7vw, 2.4rem);
+  font-size: clamp(1.15rem, 2vw, 1.55rem);
   letter-spacing: -0.03em;
-  line-height: 1.06;
+  line-height: 1;
 }
 
 .dashboard-command-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .dashboard-command-controls {
-  display: grid;
-  gap: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
 }
 
 .dashboard-command-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
+}
+
+.dashboard-command-row-dense {
+  width: 100%;
 }
 
 .dashboard-command-row-meta {
+  margin-left: auto;
   justify-content: flex-start;
+}
+
+.dashboard-command-controls .dashboard-date-filter-inline {
+  margin-left: auto;
+}
+
+.dashboard-view-nav-inline {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .dashboard-quick-grid {
@@ -1591,6 +1615,11 @@ body {
   border-color: rgba(95, 225, 157, 0.14);
   background: rgba(15, 35, 28, 0.72);
   color: var(--text);
+}
+
+.dashboard-view-tab-inline {
+  min-height: 30px;
+  padding: 5px 10px;
 }
 
 .dashboard-view-tab-active {
@@ -1873,6 +1902,14 @@ h3 {
     justify-content: flex-start;
   }
 
+  .dashboard-command-controls .dashboard-date-filter-inline {
+    margin-left: 0;
+  }
+
+  .dashboard-command-row-meta {
+    margin-left: 0;
+  }
+
   .dashboard-quick-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -1891,6 +1928,15 @@ h3 {
     align-items: stretch;
   }
 
+  .dashboard-view-nav-inline {
+    width: 100%;
+  }
+
+  .dashboard-view-nav-inline .dashboard-view-tab {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
   .dashboard-command-row .dashboard-button,
   .dashboard-date-filter-inline,
   .dashboard-date-filter-inline .dashboard-input {
@@ -1905,7 +1951,7 @@ h3 {
 
 .dashboard-system-state-detail {
   color: var(--text-muted);
-  font-size: 0.76rem;
+  font-size: 0.7rem;
 }
 
 .dashboard-panel-tools {

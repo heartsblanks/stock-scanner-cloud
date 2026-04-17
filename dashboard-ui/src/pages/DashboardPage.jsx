@@ -475,12 +475,11 @@ export default function DashboardPage() {
 
         <section className="dashboard-command-header">
           <div className="dashboard-command-main">
-            <div className="dashboard-command-kicker">IBKR Command Grid</div>
-            <h1 className="dashboard-command-title">Stock Scanner Operations</h1>
-            <div className="dashboard-system-state">
+            <div className="dashboard-command-headline">
+              <h1 className="dashboard-command-title">Stock Scanner</h1>
               <span className={`dashboard-badge ${systemState.tone}`}>System {systemState.label}</span>
-              <span className="dashboard-system-state-detail">{systemState.detail}</span>
             </div>
+            <div className="dashboard-system-state-detail">{systemState.detail}</div>
             <div className="dashboard-command-meta">
               <span
                 className={`dashboard-pill dashboard-pill-status ${
@@ -506,10 +505,22 @@ export default function DashboardPage() {
           </div>
 
           <div className="dashboard-command-controls">
-            <div className="dashboard-command-row">
+            <div className="dashboard-command-row dashboard-command-row-dense">
+              <div className="dashboard-view-nav dashboard-view-nav-inline">
+                {DASHBOARD_VIEWS.map((view) => (
+                  <button
+                    key={view.id}
+                    type="button"
+                    onClick={() => setActiveView(view.id)}
+                    className={`dashboard-view-tab dashboard-view-tab-inline ${
+                      activeView === view.id ? "dashboard-view-tab-active" : ""
+                    }`}
+                  >
+                    <span className="dashboard-view-tab-label">{view.label}</span>
+                  </button>
+                ))}
+              </div>
               <DashboardFilters onApply={handleApplyFilters} />
-            </div>
-            <div className="dashboard-command-row">
               <button
                 onClick={refreshData}
                 disabled={isRefreshing}
@@ -655,21 +666,6 @@ export default function DashboardPage() {
         </section>
 
         <div className="dashboard-grid">
-          <section className="dashboard-view-nav-panel">
-            <div className="dashboard-view-nav">
-              {DASHBOARD_VIEWS.map((view) => (
-                <button
-                  key={view.id}
-                  type="button"
-                  onClick={() => setActiveView(view.id)}
-                  className={`dashboard-view-tab ${activeView === view.id ? "dashboard-view-tab-active" : ""}`}
-                >
-                  <span className="dashboard-view-tab-label">{view.label}</span>
-                </button>
-              ))}
-            </div>
-          </section>
-
           {hasDrilldown && (
             <section className="dashboard-drilldown-panel">
               <div className="dashboard-banner-title">Active Drilldown</div>
