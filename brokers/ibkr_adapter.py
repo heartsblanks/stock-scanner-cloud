@@ -120,7 +120,7 @@ class IbkrPaperBroker:
         payload = ibkr_bridge_post(
             "/orders/sync-batch",
             json_body={"order_ids": normalized_order_ids},
-            timeout=_bridge_timeout("IBKR_BRIDGE_ORDER_SYNC_BATCH_TIMEOUT_SECONDS", 20),
+            timeout=_bridge_timeout("IBKR_BRIDGE_ORDER_SYNC_BATCH_TIMEOUT_SECONDS", 45),
         ) or {}
         rows = list(payload.get("results") or [])
 

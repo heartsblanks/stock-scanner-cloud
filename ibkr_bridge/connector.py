@@ -791,21 +791,51 @@ class IbkrGatewayClient:
                 unknown_fallback_by_order_id[order_id] = fills_result
                 unresolved_after_fills.append(order_id)
 
-        completed_duration_ms = 0
-        unresolved_after_completed = list(unresolved_after_fills)
+        open_duration_ms = 0
+        unresolved_after_open = list(unresolved_after_fills)
         if unresolved_after_fills:
+            open_started_at = time.monotonic()
+            open_trades = self._fetch_open_trades(ib)
+            open_duration_ms = int((time.monotonic() - open_started_at) * 1000)
+            self._log_sync_batch_stage(
+                stage="open_trades",
+                duration_ms=open_duration_ms,
+                order_count=len(unresolved_after_fills),
+                open_trade_count=len(open_trades),
+            )
+
+            unresolved_after_open = []
+            for order_id in unresolved_after_fills:
+                open_result = self._sync_order_from_open_trades_snapshot(
+                    open_trades=open_trades,
+                    order_id=order_id,
+                )
+                if str(open_result.get("status", "")).strip().lower() != "unknown":
+                    resolved_by_order_id[order_id] = open_result
+                else:
+                    unknown_fallback_by_order_id[order_id] = open_result
+                    unresolved_after_open.append(order_id)
+        else:
+            self._log_sync_batch_stage(
+                stage="open_trades",
+                duration_ms=0,
+                order_count=0,
+                open_trade_count=0,
+            )
+
+        completed_duration_ms = 0
+        if unresolved_after_open:
             completed_started_at = time.monotonic()
             completed_trades = self._fetch_completed_trades(ib)
             completed_duration_ms = int((time.monotonic() - completed_started_at) * 1000)
             self._log_sync_batch_stage(
                 stage="completed",
                 duration_ms=completed_duration_ms,
-                order_count=len(unresolved_after_fills),
+                order_count=len(unresolved_after_open),
                 completed_count=len(completed_trades),
             )
 
-            unresolved_after_completed = []
-            for order_id in unresolved_after_fills:
+            for order_id in unresolved_after_open:
                 completed_result = self._sync_order_from_completed_trades_snapshot(
                     trades=completed_trades,
                     order_id=order_id,
@@ -814,40 +844,12 @@ class IbkrGatewayClient:
                     resolved_by_order_id[order_id] = completed_result
                 else:
                     unknown_fallback_by_order_id[order_id] = completed_result
-                    unresolved_after_completed.append(order_id)
         else:
             self._log_sync_batch_stage(
                 stage="completed",
                 duration_ms=0,
                 order_count=0,
                 completed_count=0,
-            )
-
-        open_duration_ms = 0
-        if unresolved_after_completed:
-            open_started_at = time.monotonic()
-            open_trades = self._fetch_open_trades(ib)
-            open_duration_ms = int((time.monotonic() - open_started_at) * 1000)
-            self._log_sync_batch_stage(
-                stage="open_trades",
-                duration_ms=open_duration_ms,
-                order_count=len(unresolved_after_completed),
-                open_trade_count=len(open_trades),
-            )
-
-            for order_id in unresolved_after_completed:
-                open_result = self._sync_order_from_open_trades_snapshot(
-                    open_trades=open_trades,
-                    order_id=order_id,
-                )
-                if str(open_result.get("status", "")).strip().lower() != "unknown":
-                    resolved_by_order_id[order_id] = open_result
-        else:
-            self._log_sync_batch_stage(
-                stage="open_trades",
-                duration_ms=0,
-                order_count=0,
-                open_trade_count=0,
             )
 
         results: list[dict[str, Any]] = []
