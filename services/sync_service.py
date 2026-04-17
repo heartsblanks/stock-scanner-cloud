@@ -959,8 +959,36 @@ def execute_sync_paper_trades(
                 sync_result.get("exit_filled_avg_price", "") or sync_result.get("exit_price", "")
             )
             if confirmed_exit_timestamp is None or confirmed_exit_price is None:
+                fallback_timestamp_utc = datetime.now(timezone.utc).isoformat()
+                fallback_exit_timestamp = confirmed_exit_timestamp
+                if fallback_exit_timestamp is None:
+                    fallback_exit_timestamp = _resolve_exit_timestamp(sync_result, fallback_timestamp_utc, parse_iso_utc)
+                fallback_exit_timestamp_utc = (
+                    fallback_exit_timestamp.astimezone(timezone.utc).isoformat()
+                    if fallback_exit_timestamp
+                    else fallback_timestamp_utc
+                )
+
+                fallback_exit_price = confirmed_exit_price
+                if fallback_exit_price is None:
+                    fallback_exit_price = to_float_or_none(sync_result.get("exit_price", ""))
+                if fallback_exit_price is None:
+                    # Keep lifecycle numerics usable even when broker omits fill details.
+                    fallback_exit_price = to_float_or_none(open_row.get("entry_price", ""))
+
+                fallback_exit_price_text = str(fallback_exit_price) if fallback_exit_price is not None else ""
+                sync_result = {
+                    **sync_result,
+                    "exit_reason": str(sync_result.get("exit_reason", "") or "BROKER_POSITION_FLAT_PENDING_FILL_SYNC"),
+                    "exit_time": str(sync_result.get("exit_time", "") or fallback_exit_timestamp_utc),
+                    "exit_filled_at": str(sync_result.get("exit_filled_at", "") or fallback_exit_timestamp_utc),
+                    "exit_price": str(sync_result.get("exit_price", "") or fallback_exit_price_text),
+                    "exit_filled_avg_price": str(sync_result.get("exit_filled_avg_price", "") or fallback_exit_price_text),
+                    "exit_order_id": str(sync_result.get("exit_order_id", "") or parent_order_id),
+                    "exit_filled_qty": str(sync_result.get("exit_filled_qty", "") or open_row.get("shares", "")),
+                }
                 log_warning(
-                    "IBKR close detected but fill evidence is incomplete; lifecycle close skipped",
+                    "IBKR close detected with partial fill evidence; applying fallback lifecycle close payload",
                     component="sync_service",
                     operation="execute_sync_paper_trades",
                     symbol=symbol,
@@ -968,22 +996,12 @@ def execute_sync_paper_trades(
                     broker=broker_name,
                     stale_reconciled=stale_reconciled,
                     exit_event=exit_event,
+                    exit_reason=sync_result.get("exit_reason", ""),
                     exit_filled_at=sync_result.get("exit_filled_at", ""),
                     exit_time=sync_result.get("exit_time", ""),
                     exit_filled_avg_price=sync_result.get("exit_filled_avg_price", ""),
                     exit_price=sync_result.get("exit_price", ""),
                 )
-                results.append({
-                    "symbol": symbol,
-                    "broker": broker_name,
-                    "parent_order_id": parent_order_id,
-                    "synced": False,
-                    "reason": "missing_exit_fill_data",
-                    "stale_reconciled": stale_reconciled,
-                    "exit_event": exit_event,
-                })
-                skipped_count += 1
-                continue
 
         exit_already_logged = paper_trade_exit_already_logged(parent_order_id, exit_event)
         if exit_already_logged:

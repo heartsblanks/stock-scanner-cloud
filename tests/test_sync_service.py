@@ -103,11 +103,13 @@ class SyncServiceTests(unittest.TestCase):
         )
 
         self.assertTrue(result["ok"])
-        self.assertEqual(result["synced_count"], 0)
+        self.assertEqual(result["synced_count"], 1)
         self.assertEqual(result["results"][0]["broker"], "IBKR")
         self.assertTrue(result["results"][0]["stale_reconciled"])
-        self.assertEqual(result["results"][0]["reason"], "missing_exit_fill_data")
-        self.assertEqual(captured_lifecycle, {})
+        self.assertTrue(result["results"][0]["synced"])
+        self.assertEqual(captured_lifecycle["status"], "CLOSED")
+        self.assertEqual(captured_lifecycle["exit_reason"], "BROKER_POSITION_FLAT_PENDING_FILL_SYNC")
+        self.assertAlmostEqual(captured_lifecycle["exit_price"], 5.0, places=6)
 
     def test_ibkr_sync_timeout_is_classified_explicitly(self):
         result = execute_sync_paper_trades(
@@ -479,10 +481,11 @@ class SyncServiceTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertTrue(result["partial"])
-        self.assertEqual(result["synced_count"], 0)
+        self.assertEqual(result["synced_count"], 1)
         self.assertEqual(synced_parent_ids, ["64"])
         self.assertEqual(result["results"][0]["parent_order_id"], "64")
-        self.assertEqual(result["results"][0]["reason"], "missing_exit_fill_data")
+        self.assertTrue(result["results"][0]["synced"])
+        self.assertTrue(result["results"][0]["stale_reconciled"])
 
     def test_ibkr_sync_respects_per_run_sync_cap(self):
         synced_parent_ids = []

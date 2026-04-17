@@ -1,4 +1,5 @@
 import os
+import time
 from typing import Any
 
 from brokers import get_paper_broker, get_paper_broker_config
@@ -33,6 +34,12 @@ cancel_open_orders_for_symbol = PAPER_BROKER.cancel_open_orders_for_symbol
 sync_order_by_id = PAPER_BROKER.sync_order_by_id
 sync_orders_by_ids = getattr(PAPER_BROKER, "sync_orders_by_ids", None)
 get_order_by_id = PAPER_BROKER.get_order_by_id
+
+
+_ibkr_open_state_cache: dict[str, Any] = {
+    "timestamp": 0.0,
+    "state": None,
+}
 
 
 def _broker_instance_by_name(broker_name: str):
@@ -242,7 +249,70 @@ def get_ibkr_shadow_risk_exposure_summary(payload: dict[str, Any]) -> dict[str, 
 
 
 def get_latest_open_paper_trade_for_symbol_for_broker(symbol: str, broker_name: str) -> dict | None:
-    return context_get_latest_open_paper_trade_for_symbol(symbol, broker=broker_name)
+    existing_open_trade = context_get_latest_open_paper_trade_for_symbol(symbol, broker=broker_name)
+    if existing_open_trade is None:
+        return None
+
+    normalized_broker = str(broker_name or "").strip().upper()
+    normalized_symbol = str(symbol or "").strip().upper()
+    if normalized_broker != "IBKR" or not normalized_symbol:
+        return existing_open_trade
+
+    parent_order_id = str(
+        existing_open_trade.get("broker_parent_order_id")
+        or existing_open_trade.get("parent_order_id")
+        or existing_open_trade.get("broker_order_id")
+        or existing_open_trade.get("order_id")
+        or ""
+    ).strip()
+
+    try:
+        now_monotonic = time.monotonic()
+        cached_state = _ibkr_open_state_cache.get("state")
+        cached_timestamp = float(_ibkr_open_state_cache.get("timestamp") or 0.0)
+        if cached_state is None or (now_monotonic - cached_timestamp) > 5.0:
+            cached_state = get_open_state_for_broker_name("IBKR") or {}
+            _ibkr_open_state_cache["state"] = cached_state
+            _ibkr_open_state_cache["timestamp"] = now_monotonic
+
+        positions = list((cached_state or {}).get("positions") or [])
+        orders = list((cached_state or {}).get("orders") or [])
+        open_symbols = {
+            str(position.get("symbol", "")).strip().upper()
+            for position in positions
+            if str(position.get("symbol", "")).strip()
+        }
+        related_orders = [
+            order
+            for order in orders
+            if str(order.get("symbol", "")).strip().upper() == normalized_symbol
+            or (parent_order_id and str(order.get("parent_id", "")).strip() == parent_order_id)
+            or (parent_order_id and str(order.get("id", "")).strip() == parent_order_id)
+        ]
+
+        if normalized_symbol not in open_symbols and not related_orders:
+            log_warning(
+                "Ignoring stale DB OPEN row during symbol_already_open guard because broker is flat for symbol",
+                component="runtime_context",
+                operation="get_latest_open_paper_trade_for_symbol_for_broker",
+                broker=normalized_broker,
+                symbol=normalized_symbol,
+                parent_order_id=parent_order_id,
+            )
+            return None
+    except Exception as exc:
+        # Conservative fallback: keep DB guard if broker snapshot check is unavailable.
+        log_exception(
+            "Failed to validate live IBKR open state during symbol_already_open guard",
+            exc,
+            component="runtime_context",
+            operation="get_latest_open_paper_trade_for_symbol_for_broker",
+            broker=normalized_broker,
+            symbol=normalized_symbol,
+            parent_order_id=parent_order_id,
+        )
+
+    return existing_open_trade
 
 
 def fetch_ibkr_intraday(symbol: str, interval: str = "1min", outputsize: int | None = None) -> list[dict]:
