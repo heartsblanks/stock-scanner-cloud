@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 import os
 from core.logging_utils import log_exception, log_info, log_warning
+from services.alert_service import send_telegram_alert, telegram_alerts_enabled
 
 # NOTE: requires implementation
 # def get_recent_closed_trades_for_symbol(symbol: str, limit: int = 5) -> list[dict]
@@ -103,11 +104,11 @@ LOW_PRICE_MAX_NOTIONAL = _to_float(os.getenv("LOW_PRICE_MAX_NOTIONAL", 5000.0), 
 
 def _paper_trade_broker_name(paper_trade_result: dict[str, Any]) -> str:
     broker = str(paper_trade_result.get("broker", "") or "").strip().upper()
-    return broker or "ALPACA"
+    return broker or "IBKR"
 
 
 def _paper_trade_source(broker: str) -> str:
-    normalized = str(broker or "").strip().upper() or "ALPACA"
+    normalized = str(broker or "").strip().upper() or "IBKR"
     return f"{normalized}_PAPER"
 
 
@@ -115,7 +116,6 @@ def _paper_trade_order_id(paper_trade_result: dict[str, Any]) -> str:
     return str(
         paper_trade_result.get("broker_order_id")
         or paper_trade_result.get("order_id")
-        or paper_trade_result.get("alpaca_order_id")
         or ""
     ).strip()
 
@@ -124,7 +124,6 @@ def _paper_trade_parent_order_id(paper_trade_result: dict[str, Any]) -> str:
     return str(
         paper_trade_result.get("broker_parent_order_id")
         or paper_trade_result.get("parent_order_id")
-        or paper_trade_result.get("alpaca_order_id")
         or _paper_trade_order_id(paper_trade_result)
         or ""
     ).strip()
@@ -134,7 +133,6 @@ def _paper_trade_order_status(paper_trade_result: dict[str, Any]) -> str:
     return str(
         paper_trade_result.get("broker_order_status")
         or paper_trade_result.get("order_status")
-        or paper_trade_result.get("alpaca_order_status")
         or ""
     ).strip()
 
@@ -192,32 +190,27 @@ def _normalize_paper_trade_results(raw_result: Any) -> list[dict[str, Any]]:
     return []
 
 
-def _get_live_alpaca_account_equity(payload: dict[str, Any]) -> float:
+def _get_live_ibkr_account_equity(payload: dict[str, Any]) -> float:
     """
-    Resolve sizing equity from Alpaca first, with a safe fallback chain:
-    1. live Alpaca account equity
+    Resolve sizing equity from IBKR first, with a safe fallback chain:
+    1. live IBKR account equity
     2. request payload account_size
     3. env fallback for emergency/manual use
 
     This keeps scan sizing aligned with the actual broker account while still
-    allowing the service to run if Alpaca is temporarily unavailable.
+    allowing the service to run if IBKR is temporarily unavailable.
     """
     try:
         account_getters: list[Callable[[], Any]] = []
 
-        for module_name in ("alpaca.paper", "paper_alpaca", "services.paper_alpaca"):
-            try:
-                module = __import__(module_name, fromlist=["get_account", "get_paper_account"])
-            except Exception:
-                continue
+        try:
+            from orchestration.runtime_context import IBKR_PAPER_BROKER
 
-            get_account = getattr(module, "get_account", None)
+            get_account = getattr(IBKR_PAPER_BROKER, "get_account", None)
             if callable(get_account):
                 account_getters.append(get_account)
-
-            get_paper_account = getattr(module, "get_paper_account", None)
-            if callable(get_paper_account):
-                account_getters.append(get_paper_account)
+        except Exception:
+            pass
 
         for getter in account_getters:
             try:
@@ -252,7 +245,83 @@ def _get_live_alpaca_account_equity(payload: dict[str, Any]) -> float:
     if env_account_size > 0:
         return env_account_size
 
-    raise ValueError("Unable to resolve account equity from Alpaca, payload, or environment")
+    raise ValueError("Unable to resolve account equity from IBKR, payload, or environment")
+
+
+HIGH_QUALITY_LONG_SIGNAL_ALERT_MIN_CONFIDENCE = _to_int(
+    os.getenv("HIGH_QUALITY_LONG_SIGNAL_ALERT_MIN_CONFIDENCE", "92"),
+    92,
+)
+
+
+def _maybe_send_high_quality_long_signal_alert(
+    *,
+    scan_id: str,
+    scan_source: str,
+    mode: str,
+    top_trade: dict[str, Any] | None,
+    trades: list[dict[str, Any]],
+    paper_trade: bool,
+    current_open_positions: int,
+    current_open_exposure: float,
+    source: str,
+    benchmark_directions: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not telegram_alerts_enabled():
+        return None
+    if not trades:
+        return None
+
+    long_trades = [trade for trade in trades if str(trade.get("metrics", {}).get("direction", "")).strip().upper() == "BUY"]
+    if not long_trades:
+        return None
+
+    best_long_trade = max(
+        long_trades,
+        key=lambda trade: _to_float((trade.get("metrics") or {}).get("final_confidence"), 0.0),
+    )
+    best_metrics = best_long_trade.get("metrics") or {}
+    confidence = _to_float(best_metrics.get("final_confidence"), 0.0)
+    if confidence < HIGH_QUALITY_LONG_SIGNAL_ALERT_MIN_CONFIDENCE:
+        return None
+
+    symbol = str(best_metrics.get("symbol", "")).strip().upper()
+    alert_result = send_telegram_alert(
+        alert_key=f"high-quality-long:{scan_id}:{symbol}",
+        message=(
+            f"High-quality long signal detected: {symbol}\n"
+            f"Confidence: {confidence:.0f}\n"
+            f"Entry: {best_metrics.get('entry', '')} | Stop: {best_metrics.get('stop', '')} | Target: {best_metrics.get('target', '')}\n"
+            f"Mode: {mode} | Source: {scan_source} | Broker: IBKR"
+        ),
+        payload={
+            "scan_id": scan_id,
+            "symbol": symbol,
+            "mode": mode,
+            "source": source,
+            "scan_source": scan_source,
+            "confidence": confidence,
+            "entry": best_metrics.get("entry", ""),
+            "stop": best_metrics.get("stop", ""),
+            "target": best_metrics.get("target", ""),
+            "paper_trade": paper_trade,
+            "current_open_positions": current_open_positions,
+            "current_open_exposure": current_open_exposure,
+            "benchmark_sp500": (benchmark_directions or {}).get("SP500", ""),
+            "benchmark_nasdaq": (benchmark_directions or {}).get("NASDAQ", ""),
+        },
+    )
+    log_info(
+        "High-quality long signal alert evaluated",
+        component="scan_service",
+        operation="execute_full_scan",
+        scan_id=scan_id,
+        symbol=symbol,
+        confidence=confidence,
+        alert_sent=bool(alert_result.get("sent")),
+        alert_reason=alert_result.get("reason"),
+    )
+    return alert_result
 
 
 # --- Patch: Minimum viable position sizing for high-priced symbols ---
@@ -344,7 +413,7 @@ def _apply_hard_notional_cap(metrics: dict[str, Any]) -> None:
         return
 
     remaining_allocatable_capital = _to_float(metrics.get("remaining_allocatable_capital"), 0.0)
-    configured_hard_cap = _to_float(os.getenv("ALPACA_MAX_NOTIONAL"), 0.0)
+    configured_hard_cap = _to_float(os.getenv("PAPER_MAX_NOTIONAL"), 0.0)
 
     hard_cap_candidates = [value for value in (remaining_allocatable_capital, configured_hard_cap) if value > 0]
     if not hard_cap_candidates:
@@ -455,7 +524,7 @@ def execute_full_scan(
     to_float_or_none: Callable[[Any], float | None],
     MIN_CONFIDENCE: float,
     resolve_account_size: Callable[[dict[str, Any]], float],
-    active_broker: str = "ALPACA",
+    active_broker: str = "IBKR",
 ) -> dict[str, Any] | tuple[dict[str, Any], int]:
     mode = str(payload.get("mode", "primary")).lower()
     debug_raw = payload.get("debug", False)
@@ -518,7 +587,7 @@ def execute_full_scan(
         broker_rejection_reason: str | None = None,
     ) -> None:
         attempt_metrics = metrics or {}
-        normalized_broker = str(broker or active_broker or "").strip().upper() or "ALPACA"
+        normalized_broker = str(broker or active_broker or "").strip().upper() or "IBKR"
         safe_insert_paper_trade_attempt(
             timestamp_utc=parse_iso_utc(timestamp_utc),
             scan_id=scan_id,
@@ -622,7 +691,7 @@ def execute_full_scan(
         current_open_exposure=current_open_exposure,
     )
     try:
-        log_info("Using live Alpaca equity/account_size", component="scan_service", operation="execute_full_scan", account_size=account_size, mode=mode)
+        log_info("Using live IBKR equity/account_size", component="scan_service", operation="execute_full_scan", account_size=account_size, mode=mode)
     except Exception:
         pass
     trades = [t for t in all_trades if t["metrics"].get("direction") == "BUY"]
@@ -710,6 +779,20 @@ def execute_full_scan(
         response["evaluations"] = [debug_to_dict(ev) for ev in evaluations]
 
     top_trade = trades[0] if trades else None
+    high_quality_long_signal_alert = _maybe_send_high_quality_long_signal_alert(
+        scan_id=scan_id,
+        scan_source=scan_source,
+        mode=mode,
+        top_trade=top_trade,
+        trades=trades,
+        paper_trade=paper_trade,
+        current_open_positions=current_open_positions,
+        current_open_exposure=current_open_exposure,
+        source=source,
+        benchmark_directions=benchmark_directions,
+    )
+    if high_quality_long_signal_alert is not None:
+        response["high_quality_long_signal_alert"] = high_quality_long_signal_alert
 
     if paper_trade:
         # Enforce daily risk guardrail

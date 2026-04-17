@@ -40,7 +40,7 @@ def read_trade_rows_for_date(target_date: str) -> list[dict]:
         broker_order_id = str(row.get("broker_order_id", "") or "").strip()
         broker_parent_order_id = str(row.get("broker_parent_order_id", "") or "").strip()
         broker = str(row.get("broker", "") or "").strip().upper()
-        trade_source = f"{broker}_PAPER" if broker else ("ALPACA_PAPER" if (broker_order_id or broker_parent_order_id) else "MANUAL")
+        trade_source = f"{broker}_PAPER" if broker else ("IBKR_PAPER" if (broker_order_id or broker_parent_order_id) else "MANUAL")
 
         normalized_rows.append({
             "timestamp_utc": row.get("timestamp_utc", ""),
@@ -129,8 +129,8 @@ def get_open_paper_trades() -> list[dict]:
                 "target_price": row.get("target_price", ""),
                 "status": row.get("status") or "OPEN",
                 "exit_reason": row.get("exit_reason") or "",
-                "trade_source": f"{str(row.get('broker', '') or 'ALPACA').strip().upper()}_PAPER",
-                "broker": str(row.get("broker", "") or "ALPACA").strip().upper(),
+                "trade_source": f"{str(row.get('broker', '') or 'IBKR').strip().upper()}_PAPER",
+                "broker": str(row.get("broker", "") or "IBKR").strip().upper(),
                 "broker_order_id": order_id,
                 "broker_parent_order_id": parent_order_id,
                 "linked_signal_timestamp_utc": row.get("signal_timestamp") or "",
@@ -251,9 +251,9 @@ def get_risk_exposure_summary() -> dict:
     position_limit_enforced = bool(limits["position_limit_enforced"])
     account_size = 0.0
     try:
-        from services.scan_service import _get_live_alpaca_account_equity
+        from services.scan_service import _get_live_ibkr_account_equity
 
-        account_size = float(_get_live_alpaca_account_equity({}))
+        account_size = float(_get_live_ibkr_account_equity({}))
     except Exception as exc:
         log_exception("Failed to resolve live account equity for risk summary", exc, component="paper_trade_context", operation="get_risk_exposure_summary")
 
@@ -331,7 +331,7 @@ def get_latest_open_paper_trade_for_symbol(symbol: str, broker: str | None = Non
         row
         for row in get_open_paper_trades()
         if str(row.get("symbol", "")).strip().upper() == normalized_symbol
-        and (not normalized_broker or str(row.get("broker", "") or "ALPACA").strip().upper() == normalized_broker)
+        and (not normalized_broker or str(row.get("broker", "") or "IBKR").strip().upper() == normalized_broker)
     ]
     if not matching_rows:
         return None

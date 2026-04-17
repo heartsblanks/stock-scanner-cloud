@@ -4,7 +4,6 @@ export default function HealthOverviewSection({
   lastUpdated,
   sectionLoading,
   sectionErrors,
-  alpacaOpenCount,
   ibkrOpenCount,
   mismatch,
   mismatchLabel,
@@ -12,7 +11,6 @@ export default function HealthOverviewSection({
   syncHealthStatus,
   reconciliationHealthStatus,
   lastReconciliationAt,
-  alpacaApiErrors,
   isRunningSync,
   ibkrStatus,
   riskExposureSummary,
@@ -71,7 +69,6 @@ export default function HealthOverviewSection({
             <div className="dashboard-error">{sectionErrors.reconciliation}</div>
         )}
           <div className="dashboard-metrics-grid">
-          <InsightCard title="Open Positions (Alpaca)" value={alpacaOpenCount ?? "-"} />
           <InsightCard title="Open Positions (IBKR)" value={ibkrOpenCount ?? "-"} />
           <InsightCard
             title="Mismatch"
@@ -131,7 +128,6 @@ export default function HealthOverviewSection({
             <span className="dashboard-pill">
               Last Reconciliation: {lastReconciliationAt ? new Date(lastReconciliationAt).toLocaleString() : "-"}
             </span>
-            <span className="dashboard-pill">Recent Alpaca Errors: {alpacaApiErrors.length}</span>
             <span className="dashboard-pill">Sync Action State: {isRunningSync ? "In progress" : "Idle"}</span>
             {ibkrStatus?.enabled && (
               <span className="dashboard-pill">

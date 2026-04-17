@@ -148,7 +148,7 @@ class SchedulerOpsTests(unittest.TestCase):
         )
 
         self.assertTrue(result["ok"])
-        self.assertIn("prune_alpaca_api_logs", result["results"])
+        self.assertIn("prune_operational_logs", result["results"])
         self.assertIn("prune_signal_logs", result["results"])
         self.assertIn("prune_scan_runs", result["results"])
         self.assertEqual(result["results"]["prune_signal_logs"]["body"]["retention_days"], 45)

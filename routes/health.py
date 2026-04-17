@@ -11,16 +11,14 @@ def register_health_routes(
     db_healthcheck,
     enable_db_logging: bool,
     get_ops_summary,
-    get_recent_alpaca_api_logs,
-    get_recent_alpaca_api_errors,
     get_recent_paper_trade_attempts,
     get_recent_paper_trade_rejections,
     get_paper_trade_attempt_daily_summary,
     get_paper_trade_attempt_hourly_summary,
     get_ibkr_operational_status,
-    prune_alpaca_api_logs,
     telegram_alerts_enabled,
     send_telegram_alert,
+    purge_legacy_alpaca_data=None,
 ) -> None:
     cache: dict[tuple[str, str], tuple[float, dict]] = {}
 
@@ -61,9 +59,6 @@ def register_health_routes(
                 "/paper-trade-attempts/daily-summary",
                 "/paper-trade-attempts/hourly-summary",
                 "/ibkr-status",
-                "/alpaca-api-logs/recent",
-                "/alpaca-api-logs/errors",
-                "/alpaca-api-logs/prune",
                 "/scheduler/market-ops",
                 "/scheduler/daily-post-close",
                 "/scheduler/maintenance",
@@ -72,6 +67,7 @@ def register_health_routes(
                 "/scheduler/ibkr-stale-close-repair",
                 "/scheduler/ibkr-vm-journal-repair",
                 "/admin/test-alert",
+                "/admin/purge-alpaca-data",
             ],
         })
 
@@ -107,6 +103,28 @@ def register_health_routes(
             "alert_result": alert_result,
         }), status_code
 
+    @app.post("/admin/purge-alpaca-data")
+    def admin_purge_alpaca_data():
+        admin_token = str(os.getenv("ADMIN_API_TOKEN", "")).strip()
+        request_token = str(request.headers.get("X-Admin-Token", "")).strip()
+        if not purge_legacy_alpaca_data:
+            return jsonify({"ok": False, "error": "purge_not_implemented"}), 501
+        if not admin_token:
+            return jsonify({"ok": False, "error": "admin_purge_disabled"}), 503
+        if request_token != admin_token:
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+        try:
+            result = purge_legacy_alpaca_data()
+            return jsonify({
+                "ok": True,
+                "route": "/admin/purge-alpaca-data",
+                **result,
+            })
+        except Exception as e:
+            log_exception("alpaca data purge failed", e, route="/admin/purge-alpaca-data")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
     @app.get("/db-health")
     def db_health():
         try:
@@ -135,48 +153,6 @@ def register_health_routes(
             return jsonify(payload)
         except Exception as e:
             log_exception("IBKR status failed", e, route="/ibkr-status")
-            return jsonify({"ok": False, "error": str(e)}), 500
-
-
-    @app.get("/alpaca-api-logs/recent")
-    def alpaca_api_logs_recent():
-        try:
-            limit_raw = request.args.get("limit", "100")
-            try:
-                limit = max(1, min(1000, int(limit_raw)))
-            except Exception:
-                return jsonify({"ok": False, "error": "limit must be an integer"}), 400
-
-            rows = get_recent_alpaca_api_logs(limit=limit)
-            return jsonify({
-                "ok": True,
-                "count": len(rows),
-                "limit": limit,
-                "rows": rows,
-            })
-        except Exception as e:
-            log_exception("alpaca-api-logs/recent failed", e, route="/alpaca-api-logs/recent")
-            return jsonify({"ok": False, "error": str(e)}), 500
-
-
-    @app.get("/alpaca-api-logs/errors")
-    def alpaca_api_logs_errors():
-        try:
-            limit_raw = request.args.get("limit", "100")
-            try:
-                limit = max(1, min(1000, int(limit_raw)))
-            except Exception:
-                return jsonify({"ok": False, "error": "limit must be an integer"}), 400
-
-            rows = get_recent_alpaca_api_errors(limit=limit)
-            return jsonify({
-                "ok": True,
-                "count": len(rows),
-                "limit": limit,
-                "rows": rows,
-            })
-        except Exception as e:
-            log_exception("alpaca-api-logs/errors failed", e, route="/alpaca-api-logs/errors")
             return jsonify({"ok": False, "error": str(e)}), 500
 
     @app.get("/paper-trade-attempts/recent")
@@ -267,24 +243,4 @@ def register_health_routes(
             })
         except Exception as e:
             log_exception("paper-trade-attempts/hourly-summary failed", e, route="/paper-trade-attempts/hourly-summary")
-            return jsonify({"ok": False, "error": str(e)}), 500
-
-    @app.post("/alpaca-api-logs/prune")
-    def alpaca_api_logs_prune():
-        payload = request.get_json(silent=True) or {}
-        retention_days_raw = payload.get("retention_days", 30)
-        try:
-            retention_days = max(1, int(retention_days_raw))
-        except Exception:
-            return jsonify({"ok": False, "error": "retention_days must be an integer"}), 400
-
-        try:
-            deleted_count = prune_alpaca_api_logs(retention_days=retention_days)
-            return jsonify({
-                "ok": True,
-                "retention_days": retention_days,
-                "deleted_count": deleted_count,
-            })
-        except Exception as e:
-            log_exception("alpaca-api-logs/prune failed", e, route="/alpaca-api-logs/prune")
             return jsonify({"ok": False, "error": str(e)}), 500

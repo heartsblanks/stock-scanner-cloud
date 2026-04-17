@@ -6,18 +6,6 @@ from zoneinfo import ZoneInfo
 
 
 NY_TZ = ZoneInfo("America/New_York")
-ALPACA_SCHEDULED_MODE_ORDER = [
-    "core_one",
-    "core_two",
-    "core_three",
-    "primary",
-    "secondary",
-    "sixth",
-    "third",
-    "fourth",
-    "fifth",
-]
-
 IBKR_SCHEDULED_MODE_ORDER = [
     "primary",
     "secondary",
@@ -33,7 +21,7 @@ IBKR_SCHEDULED_MODE_ORDER = [
 
 def scheduled_round_robin_mode(now_ny: datetime | None = None, *, mode_order: list[str] | None = None) -> str | None:
     now_ny = now_ny or datetime.now(NY_TZ)
-    effective_mode_order = mode_order or ALPACA_SCHEDULED_MODE_ORDER
+    effective_mode_order = mode_order or IBKR_SCHEDULED_MODE_ORDER
     total_minutes = (now_ny.hour * 60) + now_ny.minute
     first_scan_minute = (9 * 60) + 45
     last_scan_minute = (15 * 60) + 50
@@ -52,7 +40,7 @@ def build_scheduled_scan_payload(
     mode_order: list[str] | None = None,
 ) -> dict[str, Any]:
     now_ny = now_ny or datetime.now(NY_TZ)
-    effective_mode_order = mode_order or ALPACA_SCHEDULED_MODE_ORDER
+    effective_mode_order = mode_order or IBKR_SCHEDULED_MODE_ORDER
     scheduled_mode = scheduled_round_robin_mode(now_ny, mode_order=effective_mode_order)
     if scheduled_mode is None:
         raise ValueError("outside scheduled paper scan window")

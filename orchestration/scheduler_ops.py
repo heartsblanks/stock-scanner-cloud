@@ -177,7 +177,7 @@ def execute_maintenance_ops(
     )
 
     results = {
-        "prune_alpaca_api_logs": {
+        "prune_operational_logs": {
             "ok": True,
             "status_code": 200,
             "body": {

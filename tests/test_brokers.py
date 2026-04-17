@@ -8,11 +8,11 @@ from brokers.ibkr_bridge_client import get_ibkr_bridge_base_url, get_ibkr_bridge
 
 
 class BrokerRegistryTests(unittest.TestCase):
-    def test_default_broker_config_is_alpaca(self):
+    def test_default_broker_config_is_ibkr(self):
         with patch.dict("os.environ", {}, clear=False):
             config = get_paper_broker_config()
 
-        self.assertEqual(config.broker_name, "alpaca")
+        self.assertEqual(config.broker_name, "ibkr")
 
     def test_ibkr_broker_can_be_selected_but_is_not_ready_yet(self):
         with patch.dict("os.environ", {"PAPER_BROKER": "ibkr"}, clear=False):
@@ -27,7 +27,7 @@ class BrokerRegistryTests(unittest.TestCase):
         with patch.dict(
             "os.environ",
             {
-                "PAPER_BROKER": "alpaca",
+                "PAPER_BROKER": "ibkr",
                 "ENABLE_IBKR_SHADOW_MODE": "true",
                 "ENABLE_IBKR_MARKET_DATA_COMPARE": "true",
             },
@@ -35,7 +35,7 @@ class BrokerRegistryTests(unittest.TestCase):
         ):
             config = get_paper_broker_config()
 
-        self.assertEqual(config.broker_name, "alpaca")
+        self.assertEqual(config.broker_name, "ibkr")
         self.assertTrue(config.shadow_mode_enabled)
         self.assertTrue(config.market_data_compare_enabled)
 

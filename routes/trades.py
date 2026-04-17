@@ -117,7 +117,7 @@ def register_trade_routes(
 
         enriched_rows: list[dict] = []
         for row in rows:
-            broker_name = str(row.get("broker", "") or "ALPACA").strip().upper() or "ALPACA"
+            broker_name = str(row.get("broker", "") or "IBKR").strip().upper() or "IBKR"
             if broker_name != "IBKR":
                 enriched_rows.append(row)
                 continue
@@ -234,10 +234,10 @@ def register_trade_routes(
                 "ok": False,
                 "error": "event_type must be OPEN, STOP_HIT, TARGET_HIT, MANUAL_CLOSE, or EOD_CLOSE",
             }), 400
-        if trade_source not in {"MANUAL", "ALPACA_PAPER"}:
+        if trade_source not in {"MANUAL", "IBKR_PAPER"}:
             return jsonify({
                 "ok": False,
-                "error": "trade_source must be MANUAL or ALPACA_PAPER",
+                "error": "trade_source must be MANUAL or IBKR_PAPER",
             }), 400
 
         if not symbol:

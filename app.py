@@ -6,7 +6,6 @@ from flask import Flask
 from flask_cors import CORS
 import requests
 from core.logging_utils import log_info
-from alpaca.reconcile import run_reconciliation, upload_file_to_gcs
 from analytics.trade_analysis import run_trade_analysis, upload_file_to_gcs as upload_analysis_file_to_gcs
 from analytics.signal_analysis import run_signal_analysis, upload_file_to_gcs as upload_signal_analysis_file_to_gcs
 from brokers.ibkr_bridge_client import ibkr_bridge_enabled, ibkr_bridge_get
@@ -20,8 +19,6 @@ from storage import (
     get_closed_trade_events,
     get_recent_trade_event_rows,
     get_latest_scan_summary,
-    get_recent_alpaca_api_logs,
-    get_recent_alpaca_api_errors,
     get_recent_paper_trade_attempts,
     get_recent_paper_trade_rejections,
     get_paper_trade_attempt_daily_summary,
@@ -32,8 +29,8 @@ from storage import (
     get_latest_exit_trade_event_for_parent_order_id,
     upsert_trade_lifecycle,
     get_dashboard_summary,
-    prune_alpaca_api_logs,
     prune_operational_data,
+    purge_legacy_alpaca_data,
 )
 from exports.export_daily_snapshot import run_daily_snapshot
 from routes.health import register_health_routes
@@ -114,11 +111,8 @@ from orchestration.persistence_context import (
     safe_insert_trade_event,
 )
 from orchestration.runtime_context import (
-    ALPACA_PAPER_BROKER,
     IBKR_PAPER_BROKER,
     IBKR_PAPER_TRADE_MIN_CONFIDENCE,
-    PAPER_BROKER_CONFIG,
-    PAPER_TRADE_MIN_CONFIDENCE,
     _account_equity_from_broker_account,
     close_position,
     close_position_for_broker_name,
@@ -131,11 +125,10 @@ from orchestration.runtime_context import (
     get_open_positions_for_broker_name,
     get_risk_exposure_summary_for_broker,
     get_ibkr_shadow_risk_exposure_summary,
-    place_alpaca_paper_orders_from_trade,
     place_ibkr_paper_orders_from_trade,
-    refresh_alpaca_mode_rankings,
-    resolve_alpaca_account_size,
-    resolve_alpaca_scheduled_mode_order,
+    refresh_ibkr_mode_rankings,
+    resolve_ibkr_account_size,
+    resolve_ibkr_scheduled_mode_order,
     resolve_ibkr_shadow_account_size,
     sync_order_by_id,
     sync_order_by_id_for_broker,
@@ -182,7 +175,7 @@ def find_instrument_by_symbol(symbol: str) -> tuple[str, str] | tuple[None, None
 
 LOG_BUCKET = os.getenv("LOG_BUCKET", "stock-scanner-490821-logs")
 RECONCILIATION_BUCKET = os.getenv("RECONCILIATION_BUCKET", "stock-scanner-490821-logs")
-RECONCILIATION_OBJECT = os.getenv("RECONCILIATION_OBJECT", "reports/alpaca_reconciliation.csv")
+RECONCILIATION_OBJECT = os.getenv("RECONCILIATION_OBJECT", "reports/reconciliation.csv")
 TRADE_ANALYSIS_BUCKET = os.getenv("TRADE_ANALYSIS_BUCKET", "stock-scanner-490821-logs")
 TRADE_ANALYSIS_SUMMARY_OBJECT = os.getenv("TRADE_ANALYSIS_SUMMARY_OBJECT", "reports/trade_analysis_summary.csv")
 TRADE_ANALYSIS_PAIRED_OBJECT = os.getenv("TRADE_ANALYSIS_PAIRED_OBJECT", "reports/trade_analysis_paired_trades.csv")
@@ -191,7 +184,7 @@ SIGNAL_ANALYSIS_SUMMARY_OBJECT = os.getenv("SIGNAL_ANALYSIS_SUMMARY_OBJECT", "re
 SIGNAL_ANALYSIS_ROWS_OBJECT = os.getenv("SIGNAL_ANALYSIS_ROWS_OBJECT", "reports/signal_analysis_rows.csv")
 
 
-def paper_candidate_from_evaluation(eval_result: dict, min_confidence: float = PAPER_TRADE_MIN_CONFIDENCE) -> dict | None:
+def paper_candidate_from_evaluation(eval_result: dict, min_confidence: float = IBKR_PAPER_TRADE_MIN_CONFIDENCE) -> dict | None:
     return build_paper_candidate_from_evaluation(eval_result, min_confidence)
 
 
@@ -285,21 +278,21 @@ def handle_sync_paper_trades():
 def handle_scan_request(payload):
     return runtime_handle_scan_request(
         payload,
-        run_alpaca_scan=lambda scan_payload: execute_scan_pipeline(
+        run_ibkr_scan=lambda scan_payload: execute_scan_pipeline(
             scan_payload,
-            broker_name="ALPACA",
-            run_scan_fn=run_scan,
-            resolve_account_size_fn=resolve_alpaca_account_size,
-            get_current_open_position_state_fn=lambda: get_current_open_position_state_for_broker(ALPACA_PAPER_BROKER),
-            get_risk_exposure_summary_fn=lambda: get_risk_exposure_summary_for_broker(ALPACA_PAPER_BROKER),
-            get_latest_open_trade_fn=lambda symbol: get_latest_open_paper_trade_for_symbol_for_broker(symbol, "ALPACA"),
-            place_paper_orders_fn=place_alpaca_paper_orders_from_trade,
+            broker_name="IBKR",
+            run_scan_fn=fetch_ibkr_intraday,
+            resolve_account_size_fn=resolve_ibkr_account_size,
+            get_current_open_position_state_fn=lambda: get_current_open_position_state_for_broker(IBKR_PAPER_BROKER),
+            get_risk_exposure_summary_fn=lambda: get_risk_exposure_summary_for_broker(IBKR_PAPER_BROKER),
+            get_latest_open_trade_fn=lambda symbol: get_latest_open_paper_trade_for_symbol_for_broker(symbol, "IBKR"),
+            place_paper_orders_fn=place_ibkr_paper_orders_from_trade,
             paper_candidate_from_evaluation_fn=lambda eval_result: paper_candidate_from_evaluation(
                 eval_result,
-                min_confidence=PAPER_TRADE_MIN_CONFIDENCE,
+                min_confidence=IBKR_PAPER_TRADE_MIN_CONFIDENCE,
             ),
         ),
-        shadow_mode_enabled=PAPER_BROKER_CONFIG.shadow_mode_enabled,
+        shadow_mode_enabled=False,
         ibkr_bridge_enabled=ibkr_bridge_enabled(),
         run_ibkr_shadow_scans=_run_ibkr_shadow_scans,
     )
@@ -311,7 +304,7 @@ def run_scan_wrapper(payload):
 
 def run_scheduled_paper_scan_wrapper(payload):
     now_ny = datetime.now(NY_TZ)
-    scheduled_mode_order = resolve_alpaca_scheduled_mode_order()
+    scheduled_mode_order = resolve_ibkr_scheduled_mode_order()
     return runtime_run_scheduled_scan_wrapper(
         payload,
         now_ny=now_ny,
@@ -343,9 +336,8 @@ def _close_all_paper_positions_for_broker(broker) -> dict[str, Any] | tuple[dict
 
 def close_all_paper_positions():
     return runtime_close_all_paper_positions(
-        alpaca_broker=ALPACA_PAPER_BROKER,
         ibkr_broker=IBKR_PAPER_BROKER,
-        shadow_mode_enabled=PAPER_BROKER_CONFIG.shadow_mode_enabled,
+        shadow_mode_enabled=False,
         ibkr_bridge_enabled=ibkr_bridge_enabled(),
         close_all_paper_positions_for_broker_fn=_close_all_paper_positions_for_broker,
     )
@@ -379,17 +371,11 @@ def run_daily_post_close_scheduler(*, now_ny: datetime):
             parse_iso_utc=parse_iso_utc,
             to_float_or_none=to_float_or_none,
         ),
-        run_reconcile=lambda: build_reconcile_now_response(
-            run_reconciliation=run_reconciliation,
-            upload_file_to_gcs=upload_file_to_gcs,
-            reconciliation_bucket=RECONCILIATION_BUCKET,
-            reconciliation_object=RECONCILIATION_OBJECT,
-            safe_insert_reconciliation_run=safe_insert_reconciliation_run,
-        ),
+        run_reconcile=lambda: {"ok": True, "skipped": True, "reason": "reconciliation_disabled_in_ibkr_only_mode"},
         run_trade_analysis=run_trade_analysis,
         run_signal_analysis=run_signal_analysis,
         run_snapshot_export=run_daily_snapshot,
-        run_mode_ranking_refresh=lambda: refresh_alpaca_mode_rankings(ranking_date=now_ny.date().isoformat()),
+        run_mode_ranking_refresh=lambda: refresh_ibkr_mode_rankings(ranking_date=now_ny.date().isoformat()),
     )
 
 
@@ -436,7 +422,7 @@ def run_ibkr_vm_journal_repair(
 def run_maintenance_scheduler(*, now_ny: datetime, retention_days: int = 30):
     return build_execute_maintenance_ops(
         now_ny=now_ny,
-        prune_logs=prune_alpaca_api_logs,
+        prune_logs=lambda _days: 0,
         prune_operational_data=prune_operational_data,
         retention_days=retention_days,
     )
@@ -506,16 +492,14 @@ register_health_routes(
     db_healthcheck=db_healthcheck,
     enable_db_logging=ENABLE_DB_LOGGING,
     get_ops_summary=get_ops_summary,
-    get_recent_alpaca_api_logs=get_recent_alpaca_api_logs,
-    get_recent_alpaca_api_errors=get_recent_alpaca_api_errors,
     get_recent_paper_trade_attempts=get_recent_paper_trade_attempts,
     get_recent_paper_trade_rejections=get_recent_paper_trade_rejections,
     get_paper_trade_attempt_daily_summary=get_paper_trade_attempt_daily_summary,
     get_paper_trade_attempt_hourly_summary=get_paper_trade_attempt_hourly_summary,
     get_ibkr_operational_status=get_ibkr_operational_status,
-    prune_alpaca_api_logs=prune_alpaca_api_logs,
     telegram_alerts_enabled=telegram_alerts_enabled,
     send_telegram_alert=send_telegram_alert,
+    purge_legacy_alpaca_data=purge_legacy_alpaca_data,
 )
 register_export_routes(app, run_daily_snapshot=run_daily_snapshot)
 register_analysis_routes(
@@ -533,8 +517,8 @@ register_analysis_routes(
 )
 register_reconcile_routes(
     app,
-    run_reconciliation=run_reconciliation,
-    upload_file_to_gcs=upload_file_to_gcs,
+    run_reconciliation=lambda: {"ok": True, "skipped": True, "reason": "reconciliation_disabled_in_ibkr_only_mode"},
+    upload_file_to_gcs=lambda *_args, **_kwargs: None,
     reconciliation_bucket=RECONCILIATION_BUCKET,
     reconciliation_object=RECONCILIATION_OBJECT,
     safe_insert_reconciliation_run=safe_insert_reconciliation_run,
@@ -583,7 +567,6 @@ register_sync_routes(
 register_dashboard_routes(
     app,
     get_dashboard_summary=get_dashboard_summary,
-    get_alpaca_open_positions=get_open_positions,
     get_risk_exposure_summary=get_risk_exposure_summary,
 )
 register_scheduler_routes(
@@ -601,8 +584,8 @@ register_legacy_reconcile_routes(
     app,
     build_reconcile_now_response=build_reconcile_now_response,
     build_reconciliation_runs_response=build_reconciliation_runs_response,
-    run_reconciliation=run_reconciliation,
-    upload_file_to_gcs=upload_file_to_gcs,
+    run_reconciliation=lambda: {"ok": True, "skipped": True, "reason": "reconciliation_disabled_in_ibkr_only_mode"},
+    upload_file_to_gcs=lambda *_args, **_kwargs: None,
     reconciliation_bucket=RECONCILIATION_BUCKET,
     reconciliation_object=RECONCILIATION_OBJECT,
     safe_insert_reconciliation_run=safe_insert_reconciliation_run,

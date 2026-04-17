@@ -135,7 +135,7 @@ def _sort_open_rows_for_sync(open_rows: list[dict[str, Any]]) -> list[dict[str, 
     ibkr_rows: list[dict[str, Any]] = []
 
     for row in open_rows or []:
-        broker_name = str(row.get("broker", "") or "ALPACA").strip().upper() or "ALPACA"
+        broker_name = str(row.get("broker", "") or "IBKR").strip().upper() or "IBKR"
         if broker_name == "IBKR":
             ibkr_rows.append(row)
         else:
@@ -164,7 +164,7 @@ def _sort_open_rows_for_sync_with_broker_state(
     sorted_rows = _sort_open_rows_for_sync(open_rows)
     ibkr_rows = [
         row for row in sorted_rows
-        if (str(row.get("broker", "") or "ALPACA").strip().upper() or "ALPACA") == "IBKR"
+        if (str(row.get("broker", "") or "IBKR").strip().upper() or "IBKR") == "IBKR"
     ]
     if not ibkr_rows:
         return sorted_rows
@@ -421,7 +421,7 @@ def execute_sync_paper_trades(
     for open_row in open_rows:
         parent_order_id = str(open_row.get("broker_parent_order_id", "")).strip()
         symbol = str(open_row.get("symbol", "")).strip().upper()
-        broker_name = str(open_row.get("broker", "") or "ALPACA").strip().upper() or "ALPACA"
+        broker_name = str(open_row.get("broker", "") or "IBKR").strip().upper() or "IBKR"
         time_budget_seconds = _sync_time_budget_seconds(broker_name=broker_name)
 
         if time_budget_seconds is not None and (time.monotonic() - batch_started_at) >= time_budget_seconds:
@@ -801,12 +801,12 @@ def execute_sync_paper_trades(
 
     broker_names = sorted(
         {
-            str(row.get("broker", "") or "ALPACA").strip().upper() or "ALPACA"
+            str(row.get("broker", "") or "IBKR").strip().upper() or "IBKR"
             for row in (open_rows or [])
         }
     )
     if not broker_names and (get_open_positions_for_broker or get_open_positions):
-        broker_names = ["ALPACA"]
+        broker_names = ["IBKR"]
 
     for broker_name in broker_names:
         try:
@@ -829,7 +829,7 @@ def execute_sync_paper_trades(
             str(row.get("symbol", "")).strip().upper()
             for row in (open_rows or [])
             if str(row.get("symbol", "")).strip()
-            and (str(row.get("broker", "") or "ALPACA").strip().upper() or "ALPACA") == broker_name
+            and (str(row.get("broker", "") or "IBKR").strip().upper() or "IBKR") == broker_name
         }
 
         for position in leftover_positions:

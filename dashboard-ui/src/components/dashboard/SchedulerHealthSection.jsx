@@ -51,18 +51,15 @@ function getFreshnessTone(value, { okMinutes, warnMinutes }) {
 
 export default function SchedulerHealthSection({
   opsSummary,
-  alpacaRecentAttempts,
   ibkrRecentAttempts,
   ibkrStatus,
 }) {
   const latestScanRun = opsSummary?.latest_scan_run || null;
   const latestReconciliationAt = opsSummary?.latest_reconciliation_run_time || null;
-  const latestAlpacaAttemptAt = alpacaRecentAttempts?.[0]?.timestamp_utc || null;
   const latestIbkrAttemptAt = ibkrRecentAttempts?.[0]?.timestamp_utc || null;
 
   const scanTone = getFreshnessTone(latestScanRun?.scan_time, { okMinutes: 45, warnMinutes: 120 });
   const reconciliationTone = getFreshnessTone(latestReconciliationAt, { okMinutes: 18 * 60, warnMinutes: 36 * 60 });
-  const alpacaAttemptTone = getFreshnessTone(latestAlpacaAttemptAt, { okMinutes: 45, warnMinutes: 120 });
   const ibkrAttemptTone = getFreshnessTone(latestIbkrAttemptAt, { okMinutes: 45, warnMinutes: 120 });
 
   const ibkrState = String(ibkrStatus?.state || "UNKNOWN").toUpperCase();
@@ -100,11 +97,6 @@ export default function SchedulerHealthSection({
               valueColor={reconciliationTone.color}
             />
             <InsightCard
-              title="Alpaca Activity"
-              value={alpacaAttemptTone.label}
-              valueColor={alpacaAttemptTone.color}
-            />
-            <InsightCard
               title="IBKR Activity"
               value={ibkrAttemptTone.label}
               valueColor={ibkrAttemptTone.color}
@@ -122,9 +114,6 @@ export default function SchedulerHealthSection({
             </span>
             <span className="dashboard-pill">
               Last Reconcile: {latestReconciliationAt ? `${new Date(latestReconciliationAt).toLocaleString()} (${formatRelativeAge(latestReconciliationAt)})` : "-"}
-            </span>
-            <span className="dashboard-pill">
-              Latest Alpaca Attempt: {latestAlpacaAttemptAt ? formatRelativeAge(latestAlpacaAttemptAt) : "-"}
             </span>
             <span className="dashboard-pill">
               Latest IBKR Attempt: {latestIbkrAttemptAt ? formatRelativeAge(latestIbkrAttemptAt) : "-"}

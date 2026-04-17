@@ -21,7 +21,6 @@ def get_table_row_count(table_name: str) -> int:
         "broker_orders",
         "reconciliation_runs",
         "reconciliation_details",
-        "alpaca_api_logs",
         "trade_lifecycles",
     }
     normalized_table_name = str(table_name).strip()
@@ -50,7 +49,6 @@ def get_ops_summary() -> dict:
         "broker_orders_count": get_table_row_count("broker_orders"),
         "reconciliation_runs_count": get_table_row_count("reconciliation_runs"),
         "reconciliation_details_count": get_table_row_count("reconciliation_details"),
-        "alpaca_api_logs_count": get_table_row_count("alpaca_api_logs"),
         "trade_lifecycles_count": get_table_row_count("trade_lifecycles"),
         "open_trade_events_count": len(get_open_trade_events(limit=1000)),
         "closed_trade_events_count": len(get_closed_trade_events(limit=1000)),

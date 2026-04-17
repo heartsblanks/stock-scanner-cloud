@@ -8,8 +8,6 @@ from repositories.common import normalize_text, to_optional_float
 
 
 def _broker_filter_sql(normalized_broker: str) -> str:
-    if normalized_broker == "ALPACA":
-        return "UPPER(COALESCE(NULLIF(broker, ''), 'ALPACA')) = %(broker)s"
     return "UPPER(COALESCE(broker, '')) = %(broker)s"
 
 

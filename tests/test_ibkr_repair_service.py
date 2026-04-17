@@ -6,6 +6,63 @@ from services.ibkr_repair_service import repair_ibkr_stale_closes
 
 
 class IbkrRepairServiceTests(unittest.TestCase):
+    def test_prefers_trade_event_before_live_sync(self):
+        captured_lifecycle: dict = {}
+        sync_called = False
+
+        def failing_sync(_broker, _parent_order_id):
+            nonlocal sync_called
+            sync_called = True
+            raise AssertionError("live sync should not be called when trade event data exists")
+
+        result = repair_ibkr_stale_closes(
+            target_date="2026-04-10",
+            get_stale_ibkr_closed_trade_lifecycles=lambda **kwargs: [
+                {
+                    "trade_key": "88",
+                    "symbol": "QBTS",
+                    "mode": "fourth",
+                    "side": "BUY",
+                    "direction": "LONG",
+                    "status": "CLOSED",
+                    "entry_time": datetime(2026, 4, 10, 15, 36, 0, tzinfo=UTC),
+                    "entry_price": "14.49",
+                    "exit_time": None,
+                    "exit_price": None,
+                    "stop_price": "14.266",
+                    "target_price": "14.938",
+                    "exit_reason": "STALE_OPEN_RECONCILED",
+                    "shares": "345",
+                    "signal_timestamp": None,
+                    "signal_entry": None,
+                    "signal_stop": None,
+                    "signal_target": None,
+                    "signal_confidence": None,
+                    "order_id": "88",
+                    "parent_order_id": "88",
+                    "exit_order_id": "",
+                }
+            ],
+            sync_order_by_id_for_broker=failing_sync,
+            get_latest_exit_trade_event_for_parent_order_id=lambda parent_order_id, broker=None: {
+                "event_type": "STOP_HIT",
+                "event_time": datetime(2026, 4, 10, 16, 1, 9, tzinfo=UTC),
+                "price": "14.27",
+                "status": "CLOSED",
+                "order_id": "90",
+            },
+            upsert_trade_lifecycle=lambda **kwargs: captured_lifecycle.update(kwargs),
+            safe_insert_broker_order=lambda **kwargs: None,
+            parse_iso_utc=parse_iso_utc,
+            to_float_or_none=to_float_or_none,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["repaired_count"], 1)
+        self.assertFalse(sync_called)
+        self.assertEqual(captured_lifecycle["exit_reason"], "STOP_HIT")
+        self.assertEqual(captured_lifecycle["exit_order_id"], "90")
+
     def test_repairs_stale_rows_from_live_sync_results(self):
         captured_lifecycle: dict = {}
         captured_broker_orders: list[dict] = []
@@ -142,6 +199,42 @@ class IbkrRepairServiceTests(unittest.TestCase):
         self.assertEqual(captured_lifecycle["exit_reason"], "STOP_HIT")
         self.assertAlmostEqual(captured_lifecycle["exit_price"], 14.27, places=2)
         self.assertIsNotNone(captured_lifecycle["realized_pnl"])
+
+    def test_stops_when_repair_time_budget_is_exceeded(self):
+        current_times = iter([0.0, 31.0])
+
+        result = repair_ibkr_stale_closes(
+            target_date="2026-04-10",
+            get_stale_ibkr_closed_trade_lifecycles=lambda **kwargs: [
+                {
+                    "trade_key": "34",
+                    "symbol": "RIVN",
+                    "order_id": "34",
+                    "parent_order_id": "34",
+                }
+            ],
+            sync_order_by_id_for_broker=lambda broker, parent_order_id: {
+                "exit_order_id": "36",
+                "exit_price": 15.47,
+                "exit_status": "Filled",
+                "exit_filled_qty": 317,
+                "exit_filled_avg_price": 15.47,
+                "exit_filled_at": "2026-04-10T16:01:09+00:00",
+                "exit_reason": "BROKER_FILLED_EXIT",
+            },
+            get_latest_exit_trade_event_for_parent_order_id=lambda parent_order_id, broker=None: None,
+            upsert_trade_lifecycle=lambda **kwargs: None,
+            safe_insert_broker_order=lambda **kwargs: None,
+            parse_iso_utc=parse_iso_utc,
+            to_float_or_none=to_float_or_none,
+            max_duration_seconds=30.0,
+            current_time_fn=lambda: next(current_times),
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["repaired_count"], 0)
+        self.assertEqual(result["skipped_count"], 1)
+        self.assertEqual(result["results"][0]["reason"], "repair_time_budget_exceeded")
 
 
 if __name__ == "__main__":

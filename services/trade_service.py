@@ -89,7 +89,7 @@ def execute_close_all_paper_positions(
         qty = str(position.get("qty", "")).strip()
         side = str(position.get("side", "")).strip().lower()
         current_price = position.get("current_price", "")
-        broker_name = str(position.get("broker", "") or "").strip().upper() or "ALPACA"
+        broker_name = str(position.get("broker", "") or "").strip().upper() or "IBKR"
         time_budget_seconds = _close_time_budget_seconds(broker_name=broker_name)
 
         if time_budget_seconds is not None and (time.monotonic() - batch_started_at) >= time_budget_seconds:
@@ -175,7 +175,7 @@ def execute_close_all_paper_positions(
         close_filled = False
         close_position_closed = bool(close_response.get("position_closed", False))
         close_failed = bool(close_response.get("close_failed", False))
-        broker_name = str(position.get("broker", "") or (open_row or {}).get("broker", "") or "ALPACA").strip().upper() or "ALPACA"
+        broker_name = str(position.get("broker", "") or (open_row or {}).get("broker", "") or "IBKR").strip().upper() or "IBKR"
         status_transitions = list(close_response.get("status_transitions") or [])
 
         if status_transitions:
@@ -453,7 +453,7 @@ def execute_close_all_paper_positions(
             "canceled_order_count": len(canceled_order_ids),
             "managed_by_app": managed_by_app,
             "local_trade_found": bool(open_row),
-            "close_source": "managed_trade" if open_row else "orphan_alpaca_position",
+            "close_source": "managed_trade" if open_row else "orphan_ibkr_position",
         })
 
     return {

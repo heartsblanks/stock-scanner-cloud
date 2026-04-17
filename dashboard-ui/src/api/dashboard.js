@@ -258,62 +258,6 @@ export async function fetchRiskExposureSummary() {
   };
 }
 
-export async function fetchAlpacaApiLogs(limit = 100) {
-  const response = await apiClient.get("/alpaca-api-logs/recent", {
-    params: { limit },
-  });
-  const data = response.data || {};
-
-  return {
-    ...data,
-    rows: Array.isArray(data?.rows)
-      ? data.rows
-      : Array.isArray(data?.logs)
-      ? data.logs
-      : Array.isArray(data)
-      ? data
-      : [],
-    count:
-      data?.count ??
-      (Array.isArray(data?.rows)
-        ? data.rows.length
-        : Array.isArray(data?.logs)
-        ? data.logs.length
-        : Array.isArray(data)
-        ? data.length
-        : 0),
-    limit: data?.limit || limit,
-  };
-}
-
-export async function fetchAlpacaApiErrors(limit = 100) {
-  const response = await apiClient.get("/alpaca-api-logs/errors", {
-    params: { limit },
-  });
-  const data = response.data || {};
-
-  return {
-    ...data,
-    rows: Array.isArray(data?.rows)
-      ? data.rows
-      : Array.isArray(data?.errors)
-      ? data.errors
-      : Array.isArray(data)
-      ? data
-      : [],
-    count:
-      data?.count ??
-      (Array.isArray(data?.rows)
-        ? data.rows.length
-        : Array.isArray(data?.errors)
-        ? data.errors.length
-        : Array.isArray(data)
-        ? data.length
-        : 0),
-    limit: data?.limit || limit,
-  };
-}
-
 export async function fetchLatestScanSummary() {
   const response = await apiClient.get("/latest-scan-summary");
   const data = response.data || {};
@@ -337,16 +281,6 @@ export async function fetchLatestScanSummary() {
       summary?.sizing_multiplier ??
       summary?.final_multiplier ??
       null,
-  };
-}
-
-export async function fetchAlpacaOpenPositions() {
-  const response = await apiClient.get("/alpaca-open-positions");
-  const data = response.data || {};
-
-  return {
-    count: data.count || 0,
-    positions: data.positions || [],
   };
 }
 

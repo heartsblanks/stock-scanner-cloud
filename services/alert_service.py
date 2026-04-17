@@ -4,8 +4,6 @@ import os
 import time
 from typing import Any
 
-import requests
-
 from core.logging_utils import log_exception
 from core.logging_utils import log_info
 
@@ -54,6 +52,8 @@ def send_telegram_alert(*, alert_key: str, message: str, payload: dict[str, Any]
     }
 
     try:
+        import requests
+
         response = requests.post(url, json=body, timeout=10)
         response.raise_for_status()
     except Exception as exc:

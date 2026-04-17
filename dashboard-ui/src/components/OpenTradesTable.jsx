@@ -12,9 +12,6 @@ function getStatusBadge(status) {
 
 function getBrokerBadge(broker) {
   const normalized = String(broker || "").trim().toUpperCase();
-  if (normalized === "ALPACA") {
-    return "dashboard-badge dashboard-badge-broker-alpaca";
-  }
   if (normalized === "IBKR") {
     return "dashboard-badge dashboard-badge-broker-ibkr";
   }

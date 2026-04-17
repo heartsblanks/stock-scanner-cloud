@@ -18,7 +18,6 @@ import { Component, Suspense, lazy, useEffect, useState } from "react";
 const OpenTradesTable = lazy(() => import("../components/OpenTradesTable"));
 const TradeLifecycleTable = lazy(() => import("../components/TradeLifecycleTable"));
 const EquityCurveChart = lazy(() => import("../components/EquityCurveChart"));
-const AlpacaApiLogsSection = lazy(() => import("../components/dashboard/AlpacaApiLogsSection"));
 const ReconciliationSection = lazy(() => import("../components/dashboard/ReconciliationSection"));
 
 const DASHBOARD_VIEWS = [
@@ -26,7 +25,6 @@ const DASHBOARD_VIEWS = [
   { id: "trades", label: "Trades" },
   { id: "reconciliation", label: "Reconciliation" },
   { id: "analytics", label: "Analytics" },
-  { id: "broker", label: "Broker Logs" },
 ];
 
 function formatCurrency(value) {
@@ -90,20 +88,6 @@ function getInitialView() {
   return DASHBOARD_VIEWS.some((item) => item.id === view) ? view : "overview";
 }
 
-function getInitialTradeBrokerView() {
-  if (typeof window === "undefined") {
-    return "all";
-  }
-
-  const params = new URLSearchParams(window.location.search);
-  const brokerParam = String(params.get("trade_broker") || "").trim().toLowerCase();
-  if (brokerParam === "alpaca" || brokerParam === "ibkr" || brokerParam === "all") {
-    return brokerParam;
-  }
-
-  return "all";
-}
-
 function todayDateInputValue() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -111,7 +95,6 @@ function todayDateInputValue() {
 export default function DashboardPage() {
   const [activeView, setActiveView] = useState(getInitialView);
   const [drilldown, setDrilldown] = useState({ symbol: "", mode: "", hourUtc: "" });
-  const [tradeBrokerView, setTradeBrokerView] = useState(getInitialTradeBrokerView);
   const [isSendingTestAlert, setIsSendingTestAlert] = useState(false);
   const [isRunningIbkrRepair, setIsRunningIbkrRepair] = useState(false);
   const [isRunningIbkrDeepRepair, setIsRunningIbkrDeepRepair] = useState(false);
@@ -131,11 +114,7 @@ export default function DashboardPage() {
 
   const {
     summary,
-    openTrades,
-    lifecycle,
-    alpacaOpenTrades,
     ibkrOpenTrades,
-    alpacaLifecycle,
     ibkrLifecycle,
     loading,
     error,
@@ -147,8 +126,6 @@ export default function DashboardPage() {
     reconciliationHistory,
     riskExposureSummary,
     opsSummary,
-    alpacaApiLogs,
-    alpacaApiErrors,
     lastUpdated,
     isRefreshing,
     isRunningSync,
@@ -186,14 +163,12 @@ export default function DashboardPage() {
     paperTradeAttemptRejections,
     paperTradeAttemptDailySummary,
     paperTradeAttemptHourlySummary,
-    alpacaRecentAttempts,
     ibkrRecentAttempts,
     ibkrStatus,
     handleApplyFilters,
     refreshData,
     rerunReconciliation,
     syncPaperTrades,
-    alpacaOpenCount,
   } = useDashboardData(activeView);
 
   const mismatchTone =
@@ -214,42 +189,11 @@ export default function DashboardPage() {
           ? "dashboard-pill-info"
           : "dashboard-pill-danger";
   const hasDrilldown = Boolean(drilldown.symbol || drilldown.mode || drilldown.hourUtc);
-  const recentAlpacaPlacedCount = alpacaRecentAttempts.filter(
-    (row) => String(row?.decision_stage || "").toUpperCase() === "PLACED"
-  ).length;
   const recentIbkrPlacedCount = ibkrRecentAttempts.filter(
     (row) => String(row?.decision_stage || "").toUpperCase() === "PLACED"
   ).length;
 
-  const filteredOpenTrades = openTrades.filter((row) => {
-    const symbolMatch = !drilldown.symbol || String(row?.symbol || "").trim().toUpperCase() === drilldown.symbol;
-    const modeMatch = !drilldown.mode || String(row?.mode || "").trim() === drilldown.mode;
-    const hourMatch = !drilldown.hourUtc || getEntryHourUtc(row) === drilldown.hourUtc;
-    return symbolMatch && modeMatch && hourMatch;
-  });
-
-  const filteredLifecycle = lifecycle.filter((row) => {
-    const symbolMatch = !drilldown.symbol || String(row?.symbol || "").trim().toUpperCase() === drilldown.symbol;
-    const modeMatch = !drilldown.mode || String(row?.mode || "").trim() === drilldown.mode;
-    const hourMatch = !drilldown.hourUtc || getEntryHourUtc(row) === drilldown.hourUtc;
-    return symbolMatch && modeMatch && hourMatch;
-  });
-
-  const filteredAlpacaOpenTrades = alpacaOpenTrades.filter((row) => {
-    const symbolMatch = !drilldown.symbol || String(row?.symbol || "").trim().toUpperCase() === drilldown.symbol;
-    const modeMatch = !drilldown.mode || String(row?.mode || "").trim() === drilldown.mode;
-    const hourMatch = !drilldown.hourUtc || getEntryHourUtc(row) === drilldown.hourUtc;
-    return symbolMatch && modeMatch && hourMatch;
-  });
-
   const filteredIbkrOpenTrades = ibkrOpenTrades.filter((row) => {
-    const symbolMatch = !drilldown.symbol || String(row?.symbol || "").trim().toUpperCase() === drilldown.symbol;
-    const modeMatch = !drilldown.mode || String(row?.mode || "").trim() === drilldown.mode;
-    const hourMatch = !drilldown.hourUtc || getEntryHourUtc(row) === drilldown.hourUtc;
-    return symbolMatch && modeMatch && hourMatch;
-  });
-
-  const filteredAlpacaLifecycle = alpacaLifecycle.filter((row) => {
     const symbolMatch = !drilldown.symbol || String(row?.symbol || "").trim().toUpperCase() === drilldown.symbol;
     const modeMatch = !drilldown.mode || String(row?.mode || "").trim() === drilldown.mode;
     const hourMatch = !drilldown.hourUtc || getEntryHourUtc(row) === drilldown.hourUtc;
@@ -345,14 +289,9 @@ export default function DashboardPage() {
     if (typeof window !== "undefined") {
       const url = new URL(window.location.href);
       url.searchParams.set("view", activeView);
-      if (tradeBrokerView === "all") {
-        url.searchParams.delete("trade_broker");
-      } else {
-        url.searchParams.set("trade_broker", tradeBrokerView);
-      }
       window.history.replaceState({}, "", url);
     }
-  }, [activeView, tradeBrokerView]);
+  }, [activeView]);
 
   if (error) {
     if (!lastUpdated && !summary && !reconciliationSummary) {
@@ -403,9 +342,9 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 <div className="dashboard-hero-stat">
-                  <div className="dashboard-hero-stat-label">Open / Alpaca / IBKR</div>
+                  <div className="dashboard-hero-stat-label">Open IBKR Positions</div>
                   <div className="dashboard-hero-stat-value">
-                    {openTrades.length} / {alpacaOpenCount ?? "-"} / {ibkrOpenTrades.length}
+                    {ibkrOpenTrades.length}
                   </div>
                 </div>
                 <div className="dashboard-hero-stat">
@@ -415,9 +354,9 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 <div className="dashboard-hero-stat">
-                  <div className="dashboard-hero-stat-label">Recent Placed A / I</div>
+                  <div className="dashboard-hero-stat-label">Recent IBKR Placements</div>
                   <div className="dashboard-hero-stat-value">
-                    {recentAlpacaPlacedCount} / {recentIbkrPlacedCount}
+                    {recentIbkrPlacedCount}
                   </div>
                 </div>
               </div>
@@ -540,7 +479,6 @@ export default function DashboardPage() {
                 lastUpdated={lastUpdated}
                 sectionLoading={sectionLoading}
                 sectionErrors={sectionErrors}
-                alpacaOpenCount={alpacaOpenCount}
                 ibkrOpenCount={ibkrOpenTrades.length}
                 mismatch={mismatch}
                 mismatchLabel={mismatchLabel}
@@ -548,7 +486,6 @@ export default function DashboardPage() {
                 syncHealthStatus={syncHealthStatus}
                 reconciliationHealthStatus={reconciliationHealthStatus}
                 lastReconciliationAt={lastReconciliationAt}
-                alpacaApiErrors={alpacaApiErrors}
                 isRunningSync={isRunningSync}
                 ibkrStatus={ibkrStatus}
                 riskExposureSummary={riskExposureSummary}
@@ -561,7 +498,6 @@ export default function DashboardPage() {
 
               <SchedulerHealthSection
                 opsSummary={opsSummary}
-                alpacaRecentAttempts={alpacaRecentAttempts}
                 ibkrRecentAttempts={ibkrRecentAttempts}
                 ibkrStatus={ibkrStatus}
               />
@@ -583,7 +519,6 @@ export default function DashboardPage() {
                   paperTradeAttemptRejections={paperTradeAttemptRejections}
                   paperTradeAttemptDailySummary={paperTradeAttemptDailySummary}
                   paperTradeAttemptHourlySummary={paperTradeAttemptHourlySummary}
-                  alpacaRecentAttempts={alpacaRecentAttempts}
                   ibkrRecentAttempts={ibkrRecentAttempts}
                   ibkrStatus={ibkrStatus}
                   hourlyOutcomeQuality={strategyHourlyOutcomeQuality}
@@ -620,31 +555,10 @@ export default function DashboardPage() {
                       <div>
                         <h2 className="dashboard-panel-title">Trade Actions</h2>
                         <p className="dashboard-panel-subtitle">
-                          Sync refreshes local paper trade state from Alpaca when fills or exits look stale.
+                          Sync refreshes local IBKR paper trade state when fills or exits look stale.
                         </p>
                       </div>
                       <div className="dashboard-toolbar">
-                        <button
-                          type="button"
-                          onClick={() => setTradeBrokerView("all")}
-                          className={`dashboard-button ${tradeBrokerView === "all" ? "dashboard-button-primary" : "dashboard-button-neutral"}`}
-                        >
-                          All Brokers
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setTradeBrokerView("alpaca")}
-                          className={`dashboard-button ${tradeBrokerView === "alpaca" ? "dashboard-button-primary" : "dashboard-button-neutral"}`}
-                        >
-                          Alpaca Only
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setTradeBrokerView("ibkr")}
-                          className={`dashboard-button ${tradeBrokerView === "ibkr" ? "dashboard-button-primary" : "dashboard-button-neutral"}`}
-                        >
-                          IBKR Only
-                        </button>
                         <button
                           onClick={syncPaperTrades}
                           disabled={isRefreshing || isRunningSync}
@@ -658,125 +572,41 @@ export default function DashboardPage() {
                 </div>
               </section>
 
-              {tradeBrokerView === "all" && (
-                <>
-                  <section className="dashboard-section">
-                    <div className="dashboard-panel">
-                      <div className="dashboard-panel-body">
-                        <div className="dashboard-panel-heading">
-                          <div>
-                            <h2 className="dashboard-panel-title">Open Trades</h2>
-                            <p className="dashboard-panel-subtitle">
-                              Live database positions across both broker tracks.
-                            </p>
-                          </div>
-                        </div>
-                        <LazySection>
-                          <OpenTradesTable trades={filteredOpenTrades} />
-                        </LazySection>
+              <section className="dashboard-section">
+                <div className="dashboard-panel">
+                  <div className="dashboard-panel-body">
+                    <div className="dashboard-panel-heading">
+                      <div>
+                        <h2 className="dashboard-panel-title">IBKR Open Trades</h2>
+                        <p className="dashboard-panel-subtitle">
+                          Live IBKR paper positions currently tracked by the database and broker sync.
+                        </p>
                       </div>
                     </div>
-                  </section>
+                    <LazySection>
+                      <OpenTradesTable trades={filteredIbkrOpenTrades} />
+                    </LazySection>
+                  </div>
+                </div>
+              </section>
 
-                  <section className="dashboard-section">
-                    <div className="dashboard-panel">
-                      <div className="dashboard-panel-body">
-                        <div className="dashboard-panel-heading">
-                          <div>
-                            <h2 className="dashboard-panel-title">Trade Lifecycle</h2>
-                            <p className="dashboard-panel-subtitle">
-                              Canonical entry and exit records across Alpaca and IBKR.
-                            </p>
-                          </div>
-                        </div>
-                        <LazySection>
-                          <TradeLifecycleTable rows={filteredLifecycle} />
-                        </LazySection>
+              <section className="dashboard-section">
+                <div className="dashboard-panel">
+                  <div className="dashboard-panel-body">
+                    <div className="dashboard-panel-heading">
+                      <div>
+                        <h2 className="dashboard-panel-title">IBKR Lifecycle</h2>
+                        <p className="dashboard-panel-subtitle">
+                          Canonical IBKR trade history for entries, exits, and realized outcome.
+                        </p>
                       </div>
                     </div>
-                  </section>
-                </>
-              )}
-
-              {tradeBrokerView === "alpaca" && (
-                <>
-                  <section className="dashboard-section">
-                    <div className="dashboard-panel">
-                      <div className="dashboard-panel-body">
-                        <div className="dashboard-panel-heading">
-                          <div>
-                            <h2 className="dashboard-panel-title">Alpaca Open Trades</h2>
-                            <p className="dashboard-panel-subtitle">
-                              Twelve Data driven positions currently open in Alpaca paper.
-                            </p>
-                          </div>
-                        </div>
-                        <LazySection>
-                          <OpenTradesTable trades={filteredAlpacaOpenTrades} />
-                        </LazySection>
-                      </div>
-                    </div>
-                  </section>
-
-                  <section className="dashboard-section">
-                    <div className="dashboard-panel">
-                      <div className="dashboard-panel-body">
-                        <div className="dashboard-panel-heading">
-                          <div>
-                            <h2 className="dashboard-panel-title">Alpaca Lifecycle</h2>
-                            <p className="dashboard-panel-subtitle">
-                              Canonical Alpaca trade history for entries, exits, and realized outcome.
-                            </p>
-                          </div>
-                        </div>
-                        <LazySection>
-                          <TradeLifecycleTable rows={filteredAlpacaLifecycle} />
-                        </LazySection>
-                      </div>
-                    </div>
-                  </section>
-                </>
-              )}
-
-              {tradeBrokerView === "ibkr" && (
-                <>
-                  <section className="dashboard-section">
-                    <div className="dashboard-panel">
-                      <div className="dashboard-panel-body">
-                        <div className="dashboard-panel-heading">
-                          <div>
-                            <h2 className="dashboard-panel-title">IBKR Open Trades</h2>
-                            <p className="dashboard-panel-subtitle">
-                              IBKR market-data driven shadow positions currently open.
-                            </p>
-                          </div>
-                        </div>
-                        <LazySection>
-                          <OpenTradesTable trades={filteredIbkrOpenTrades} />
-                        </LazySection>
-                      </div>
-                    </div>
-                  </section>
-
-                  <section className="dashboard-section">
-                    <div className="dashboard-panel">
-                      <div className="dashboard-panel-body">
-                        <div className="dashboard-panel-heading">
-                          <div>
-                            <h2 className="dashboard-panel-title">IBKR Lifecycle</h2>
-                            <p className="dashboard-panel-subtitle">
-                              Canonical IBKR trade history for entries, exits, and realized outcome.
-                            </p>
-                          </div>
-                        </div>
-                        <LazySection>
-                          <TradeLifecycleTable rows={filteredIbkrLifecycle} />
-                        </LazySection>
-                      </div>
-                    </div>
-                  </section>
-                </>
-              )}
+                    <LazySection>
+                      <TradeLifecycleTable rows={filteredIbkrLifecycle} />
+                    </LazySection>
+                  </div>
+                </div>
+              </section>
             </>
           )}
 
@@ -789,7 +619,7 @@ export default function DashboardPage() {
                       <div>
                         <h2 className="dashboard-panel-title">Reconciliation Actions</h2>
                         <p className="dashboard-panel-subtitle">
-                          Run reconciliation when you want a fresh mismatch audit against Alpaca and a new stored run.
+                          Run reconciliation when you want a fresh mismatch audit against the stored trade ledger.
                         </p>
                       </div>
                       <div className="dashboard-toolbar">
@@ -822,17 +652,6 @@ export default function DashboardPage() {
                 />
               </LazySection>
             </>
-          )}
-
-          {activeView === "broker" && (
-            <LazySection>
-              <AlpacaApiLogsSection
-                sectionLoading={sectionLoading}
-                sectionErrors={sectionErrors}
-                alpacaApiLogs={alpacaApiLogs}
-                alpacaApiErrors={alpacaApiErrors}
-              />
-            </LazySection>
           )}
 
           {activeView === "analytics" && (

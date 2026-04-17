@@ -2,7 +2,6 @@ import os
 from typing import Any
 
 from brokers import get_paper_broker, get_paper_broker_config
-from brokers.alpaca_adapter import AlpacaPaperBroker
 from brokers.ibkr_adapter import IbkrPaperBroker
 from brokers.ibkr_bridge_client import ibkr_bridge_enabled, ibkr_bridge_get
 from core.logging_utils import log_exception, log_info, log_warning
@@ -10,7 +9,6 @@ from orchestration.paper_trade_context import (
     get_latest_open_paper_trade_for_symbol as context_get_latest_open_paper_trade_for_symbol,
 )
 from orchestration.scan_context import (
-    ALPACA_SCHEDULED_MODE_ORDER,
     IBKR_SCHEDULED_MODE_ORDER,
     to_float_or_none,
 )
@@ -21,12 +19,11 @@ PAPER_TRADE_MIN_CONFIDENCE = int(os.getenv("PAPER_TRADE_MIN_CONFIDENCE", "70"))
 IBKR_PAPER_TRADE_MIN_CONFIDENCE = int(
     os.getenv("IBKR_PAPER_TRADE_MIN_CONFIDENCE", str(PAPER_TRADE_MIN_CONFIDENCE))
 )
-ALPACA_MODE_RANKING_WINDOW_DAYS = max(1, int(os.getenv("ALPACA_MODE_RANKING_WINDOW_DAYS", "5")))
-ALPACA_MODE_RANKING_MIN_CLOSED_TRADES = max(1, int(os.getenv("ALPACA_MODE_RANKING_MIN_CLOSED_TRADES", "2")))
+IBKR_MODE_RANKING_WINDOW_DAYS = max(1, int(os.getenv("IBKR_MODE_RANKING_WINDOW_DAYS", "5")))
+IBKR_MODE_RANKING_MIN_CLOSED_TRADES = max(1, int(os.getenv("IBKR_MODE_RANKING_MIN_CLOSED_TRADES", "2")))
 
 PAPER_BROKER = get_paper_broker()
 PAPER_BROKER_CONFIG = get_paper_broker_config()
-ALPACA_PAPER_BROKER = AlpacaPaperBroker()
 IBKR_PAPER_BROKER = IbkrPaperBroker()
 
 place_paper_bracket_order_from_trade = PAPER_BROKER.place_paper_bracket_order_from_trade
@@ -39,9 +36,9 @@ get_order_by_id = PAPER_BROKER.get_order_by_id
 
 def _broker_instance_by_name(broker_name: str):
     normalized = str(broker_name or "").strip().upper()
-    if normalized == "IBKR":
-        return IBKR_PAPER_BROKER
-    return ALPACA_PAPER_BROKER
+    if normalized and normalized != "IBKR":
+        raise ValueError(f"Unsupported broker '{broker_name}' in IBKR-only mode")
+    return IBKR_PAPER_BROKER
 
 
 def sync_order_by_id_for_broker(broker_name: str, order_id: str) -> dict[str, Any]:
@@ -76,37 +73,7 @@ def close_position_for_broker_name(broker_name: str, symbol: str):
 
 
 def place_paper_orders_from_trade(trade: dict[str, Any], max_notional: float | None = None) -> list[dict]:
-    results: list[dict] = []
-
-    primary_result = ALPACA_PAPER_BROKER.place_paper_bracket_order_from_trade(trade, max_notional=max_notional)
-    if isinstance(primary_result, dict):
-        primary_result.setdefault("broker", "ALPACA")
-        results.append(primary_result)
-
-    if PAPER_BROKER_CONFIG.shadow_mode_enabled and ibkr_bridge_enabled():
-        try:
-            ibkr_result = IBKR_PAPER_BROKER.place_paper_bracket_order_from_trade(trade, max_notional=max_notional)
-        except Exception as exc:
-            ibkr_result = {
-                "attempted": True,
-                "placed": False,
-                "broker": "IBKR",
-                "reason": "ibkr_shadow_exception",
-                "details": str(exc),
-            }
-        if isinstance(ibkr_result, dict):
-            ibkr_result.setdefault("broker", "IBKR")
-            results.append(ibkr_result)
-
-    return results
-
-
-def place_alpaca_paper_orders_from_trade(trade: dict[str, Any], max_notional: float | None = None) -> list[dict]:
-    result = ALPACA_PAPER_BROKER.place_paper_bracket_order_from_trade(trade, max_notional=max_notional)
-    if isinstance(result, dict):
-        result.setdefault("broker", "ALPACA")
-        return [result]
-    return []
+    return place_ibkr_paper_orders_from_trade(trade, max_notional=max_notional)
 
 
 def place_ibkr_paper_orders_from_trade(trade: dict[str, Any], max_notional: float | None = None) -> list[dict]:
@@ -133,15 +100,6 @@ def _account_equity_from_broker_account(account: dict[str, Any] | None) -> float
         return float(account.get("equity") or 0.0)
     except Exception:
         return 0.0
-
-
-def resolve_alpaca_account_size(payload: dict[str, Any]) -> float:
-    del payload
-    account = ALPACA_PAPER_BROKER.get_account()
-    equity = _account_equity_from_broker_account(account)
-    if equity > 0:
-        return equity
-    raise ValueError("Unable to resolve Alpaca account equity")
 
 
 def resolve_ibkr_account_size(payload: dict[str, Any]) -> float:
@@ -180,36 +138,36 @@ def resolve_ibkr_shadow_account_size(payload: dict[str, Any]) -> float:
     return 1000000.0
 
 
-def resolve_alpaca_scheduled_mode_order() -> list[str]:
+def resolve_ibkr_scheduled_mode_order() -> list[str]:
     try:
         ranked_modes = get_latest_mode_ranking_order(
-            broker="ALPACA",
-            expected_modes=ALPACA_SCHEDULED_MODE_ORDER,
-            window_days=ALPACA_MODE_RANKING_WINDOW_DAYS,
+            broker="IBKR",
+            expected_modes=IBKR_SCHEDULED_MODE_ORDER,
+            window_days=IBKR_MODE_RANKING_WINDOW_DAYS,
         )
         if ranked_modes:
             return ranked_modes
     except Exception as exc:
         log_exception(
-            "Failed to resolve latest Alpaca mode ranking order; falling back to static order",
+            "Failed to resolve latest IBKR mode ranking order; falling back to static order",
             exc,
             component="runtime_context",
-            operation="resolve_alpaca_scheduled_mode_order",
+            operation="resolve_ibkr_scheduled_mode_order",
         )
-    return list(ALPACA_SCHEDULED_MODE_ORDER)
+    return list(IBKR_SCHEDULED_MODE_ORDER)
 
 
-def refresh_alpaca_mode_rankings(*, ranking_date: str | None = None) -> dict[str, Any]:
+def refresh_ibkr_mode_rankings(*, ranking_date: str | None = None) -> dict[str, Any]:
     result = refresh_mode_rankings(
-        broker="ALPACA",
-        expected_modes=ALPACA_SCHEDULED_MODE_ORDER,
-        window_days=ALPACA_MODE_RANKING_WINDOW_DAYS,
+        broker="IBKR",
+        expected_modes=IBKR_SCHEDULED_MODE_ORDER,
+        window_days=IBKR_MODE_RANKING_WINDOW_DAYS,
         as_of_date=ranking_date,
-        min_closed_trade_count=ALPACA_MODE_RANKING_MIN_CLOSED_TRADES,
+        min_closed_trade_count=IBKR_MODE_RANKING_MIN_CLOSED_TRADES,
     )
     return {
         "ok": True,
-        "message": "alpaca mode rankings refreshed",
+        "message": "ibkr mode rankings refreshed",
         **result,
     }
 

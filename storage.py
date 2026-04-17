@@ -4,17 +4,13 @@ from core.db import execute, fetch_all, fetch_one
 from repositories.broker_repo import (
     get_broker_order,
     get_broker_order_status_counts,
-    get_recent_alpaca_api_errors,
-    get_recent_alpaca_api_logs,
     get_recent_broker_orders,
-    insert_alpaca_api_log,
     insert_broker_order,
-    prune_alpaca_api_logs,
 )
 from repositories.common import normalize_text as _normalize_text
 from repositories.common import to_optional_float as _to_optional_float
 from repositories.ops_repo import get_ops_summary, get_table_row_count
-from repositories.maintenance_repo import prune_operational_data
+from repositories.maintenance_repo import prune_operational_data, purge_legacy_alpaca_data
 from repositories.reconcile_repo import (
     get_latest_reconciliation_run,
     get_latest_reconciliation_summary,

@@ -71,13 +71,13 @@ class IbkrGatewayClient:
     def _load_order_classes(self):
         self._ensure_event_loop()
         try:
-            from ib_insync import LimitOrder, MarketOrder, StopOrder, Stock
+            from ib_insync import LimitOrder, MarketOrder, Order, StopOrder, Stock
         except ImportError as exc:
             raise RuntimeError(
                 "ib_insync is not installed on the IBKR bridge host. "
                 "Install requirements after adding the IBKR bridge dependency."
             ) from exc
-        return LimitOrder, MarketOrder, StopOrder, Stock
+        return LimitOrder, MarketOrder, StopOrder, Order, Stock
 
     def _connect(self):
         self._ensure_event_loop()
@@ -442,8 +442,11 @@ class IbkrGatewayClient:
             "type": str(getattr(order, "orderType", "")).strip().lower(),
             "status": str(getattr(order_status, "status", "")).strip(),
             "parent_id": str(getattr(order, "parentId", "")).strip(),
+            "trail_stop_price": _to_float(getattr(order, "trailStopPrice", 0.0)),
+            "trailing_percent": _to_float(getattr(order, "trailingPercent", 0.0)),
             "limit_price": _to_float(getattr(order, "lmtPrice", 0.0)),
-            "stop_price": _to_float(getattr(order, "auxPrice", 0.0)),
+            "stop_price": _to_float(getattr(order, "trailStopPrice", getattr(order, "auxPrice", 0.0))),
+            "trail_amount": _to_float(getattr(order, "auxPrice", 0.0)),
         }
 
     def _fetch_recent_fills(self, ib) -> list[Any]:
@@ -886,7 +889,7 @@ class IbkrGatewayClient:
         )
 
         ib = self._connect()
-        LimitOrder, MarketOrder, StopOrder, Stock = self._load_order_classes()
+        LimitOrder, MarketOrder, StopOrder, Order, Stock = self._load_order_classes()
         contract = Stock(symbol, "SMART", "USD")
         try:
             ib.qualifyContracts(contract)
@@ -932,11 +935,24 @@ class IbkrGatewayClient:
         take_profit.orderRef = client_order_id
         take_profit.tif = "GTC"
 
-        stop_loss = StopOrder(exit_action, final_shares, round(stop, 2), transmit=True)
-        stop_loss.orderId = base_order_id + 2
-        stop_loss.parentId = base_order_id
-        stop_loss.orderRef = client_order_id
-        stop_loss.tif = "GTC"
+        trail_amount = round(abs(entry - stop), 2)
+        trail_percent = None
+        if trail_amount > 0 and entry > 0:
+            trail_percent = round((trail_amount / entry) * 100.0, 4)
+
+        trailing_stop = Order()
+        trailing_stop.action = exit_action
+        trailing_stop.totalQuantity = final_shares
+        trailing_stop.orderType = "TRAIL"
+        trailing_stop.transmit = True
+        trailing_stop.orderId = base_order_id + 2
+        trailing_stop.parentId = base_order_id
+        trailing_stop.orderRef = client_order_id
+        trailing_stop.tif = "GTC"
+        trailing_stop.auxPrice = trail_amount
+        trailing_stop.trailStopPrice = round(stop, 2)
+        if trail_percent is not None:
+            trailing_stop.trailingPercent = trail_percent
 
         log_info(
             "IBKR bridge paper bracket orders prepared",
@@ -946,7 +962,9 @@ class IbkrGatewayClient:
             client_order_id=client_order_id,
             parent_order_id=base_order_id,
             take_profit_order_id=base_order_id + 1,
-            stop_loss_order_id=base_order_id + 2,
+            trailing_stop_order_id=base_order_id + 2,
+            trail_amount=trail_amount,
+            trail_percent=trail_percent,
         )
 
         try:
@@ -966,9 +984,9 @@ class IbkrGatewayClient:
                 symbol=symbol,
                 order_id=base_order_id + 1,
             )
-            stop_loss_trade = ib.placeOrder(contract, stop_loss)
+            trailing_stop_trade = ib.placeOrder(contract, trailing_stop)
             log_info(
-                "IBKR bridge stop loss order submitted",
+                "IBKR bridge trailing stop order submitted",
                 component="ibkr_bridge",
                 operation="place_paper_bracket_order",
                 symbol=symbol,
@@ -996,7 +1014,7 @@ class IbkrGatewayClient:
         estimated_notional = round(final_shares * entry, 2)
         parent_status = str(getattr(getattr(parent_trade, "orderStatus", None), "status", "")).strip()
         take_profit_status = str(getattr(getattr(take_profit_trade, "orderStatus", None), "status", "")).strip()
-        stop_loss_status = str(getattr(getattr(stop_loss_trade, "orderStatus", None), "status", "")).strip()
+        trailing_stop_status = str(getattr(getattr(trailing_stop_trade, "orderStatus", None), "status", "")).strip()
 
         log_info(
             "IBKR bridge paper bracket placement completed",
@@ -1007,7 +1025,7 @@ class IbkrGatewayClient:
             parent_order_id=base_order_id,
             parent_status=parent_status,
             take_profit_status=take_profit_status,
-            stop_loss_status=stop_loss_status,
+            trailing_stop_status=trailing_stop_status,
             estimated_notional=estimated_notional,
         )
         return {
@@ -1022,7 +1040,10 @@ class IbkrGatewayClient:
             "broker_parent_order_id": str(base_order_id),
             "broker_order_status": parent_status,
             "take_profit_order_id": str(base_order_id + 1),
+            "trailing_stop_order_id": str(base_order_id + 2),
             "stop_loss_order_id": str(base_order_id + 2),
+            "trail_amount": trail_amount,
+            "trail_percent": trail_percent,
             "order_id": str(base_order_id),
             "parent_order_id": str(base_order_id),
             "order_status": parent_status,

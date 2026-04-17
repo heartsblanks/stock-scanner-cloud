@@ -6,7 +6,7 @@ from brokers.base import PaperBroker, PaperBrokerConfig
 
 
 def get_paper_broker_name() -> str:
-    return str(os.getenv("PAPER_BROKER", "alpaca")).strip().lower() or "alpaca"
+    return str(os.getenv("PAPER_BROKER", "ibkr")).strip().lower() or "ibkr"
 
 
 def get_paper_broker_config() -> PaperBrokerConfig:
@@ -19,12 +19,12 @@ def get_paper_broker_config() -> PaperBrokerConfig:
 
 def get_paper_broker() -> PaperBroker:
     broker_name = get_paper_broker_name()
-    if broker_name == "alpaca":
-        from brokers.alpaca_adapter import AlpacaPaperBroker
+    if broker_name != "ibkr":
+        raise ValueError(
+            f"Unsupported PAPER_BROKER '{broker_name}'. "
+            "This deployment is IBKR-only."
+        )
 
-        return AlpacaPaperBroker()
-    if broker_name == "ibkr":
-        from brokers.ibkr_adapter import IbkrPaperBroker
+    from brokers.ibkr_adapter import IbkrPaperBroker
 
-        return IbkrPaperBroker()
-    raise ValueError(f"Unsupported PAPER_BROKER '{broker_name}'")
+    return IbkrPaperBroker()

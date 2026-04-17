@@ -1,5 +1,7 @@
 import unittest
+import sys
 from types import SimpleNamespace
+from types import ModuleType
 from unittest.mock import patch
 
 from services.scan_service import (
@@ -9,7 +11,7 @@ from services.scan_service import (
     _apply_minimum_viable_position_sizing,
     evaluate_symbol_performance_gate,
     execute_full_scan,
-    _get_live_alpaca_account_equity,
+    _get_live_ibkr_account_equity,
 )
 
 
@@ -91,7 +93,7 @@ class ScanServiceSizingTests(unittest.TestCase):
             "remaining_allocatable_capital": 89736.64,
         }
 
-        with patch.dict("os.environ", {"ALPACA_MAX_NOTIONAL": "10000"}, clear=False):
+        with patch.dict("os.environ", {"PAPER_MAX_NOTIONAL": "10000"}, clear=False):
             _apply_hard_notional_cap(metrics)
 
         self.assertAlmostEqual(metrics["hard_max_notional"], 10000.0, places=4)
@@ -114,16 +116,14 @@ class ScanServiceSizingTests(unittest.TestCase):
         self.assertLessEqual(metrics["per_trade_notional"], 5000.0)
         self.assertEqual(metrics["shares"], int(metrics["per_trade_notional"] / 9.75))
 
-    def test_live_account_equity_reads_from_alpaca_package_after_repo_move(self):
-        original_import = __import__
+    def test_live_account_equity_reads_from_ibkr_broker(self):
+        fake_broker = SimpleNamespace(get_account=lambda: {"equity": "12345.67"})
 
-        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
-            if name == "alpaca.paper":
-                return SimpleNamespace(get_account=lambda: {"equity": "12345.67"})
-            return original_import(name, globals, locals, fromlist, level)
+        fake_runtime_context = ModuleType("orchestration.runtime_context")
+        fake_runtime_context.IBKR_PAPER_BROKER = fake_broker
 
-        with patch("builtins.__import__", side_effect=fake_import):
-            equity = _get_live_alpaca_account_equity({})
+        with patch.dict(sys.modules, {"orchestration.runtime_context": fake_runtime_context}):
+            equity = _get_live_ibkr_account_equity({})
 
         self.assertAlmostEqual(equity, 12345.67, places=2)
 

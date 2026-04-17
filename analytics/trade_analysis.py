@@ -48,8 +48,8 @@ def get_db_trade_rows() -> list[dict[str, str]]:
             symbol,
             '' AS name,
             mode,
-            'ALPACA_PAPER' AS trade_source,
-            '' AS broker,
+            'IBKR_PAPER' AS trade_source,
+            COALESCE(NULLIF(broker, ''), 'IBKR') AS broker,
             order_id AS broker_order_id,
             parent_order_id AS broker_parent_order_id,
             status,
@@ -204,7 +204,7 @@ def pair_trades(rows: Iterable[dict[str, str]], signal_index: dict[str, dict[str
         trade_source = str(row.get("trade_source", "")).strip().upper()
         parent_id = str(row.get("broker_parent_order_id", "")).strip()
 
-        if trade_source != "ALPACA_PAPER" or not parent_id:
+        if trade_source != "IBKR_PAPER" or not parent_id:
             continue
 
         if event_type == "OPEN":
@@ -471,7 +471,7 @@ def main() -> None:
             symbol=str(row["symbol"]),
             name=str(row["name"]),
             mode=str(row["mode"]),
-            trade_source="ALPACA_PAPER",
+            trade_source="IBKR_PAPER",
             side=str(row["side"]),
             shares=float(row["shares"]),
             entry_timestamp_utc=str(row["entry_timestamp_utc"]),

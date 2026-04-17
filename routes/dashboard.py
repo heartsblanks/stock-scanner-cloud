@@ -5,7 +5,7 @@ from core.logging_utils import log_exception
 
 
 
-def register_dashboard_routes(app, *, get_dashboard_summary, get_alpaca_open_positions=None, get_risk_exposure_summary=None) -> None:
+def register_dashboard_routes(app, *, get_dashboard_summary, get_risk_exposure_summary=None) -> None:
     cache: dict[tuple[str, str], tuple[float, dict]] = {}
 
     def get_cached_json(cache_key: tuple[str, str], ttl_seconds: int, builder):
@@ -30,22 +30,6 @@ def register_dashboard_routes(app, *, get_dashboard_summary, get_alpaca_open_pos
             return jsonify(payload)
         except Exception as e:
             log_exception("dashboard-summary failed", e, route="/dashboard-summary")
-            return jsonify({"ok": False, "error": str(e)}), 500
-
-    @app.get("/alpaca-open-positions")
-    def alpaca_open_positions():
-        try:
-            if not get_alpaca_open_positions:
-                return jsonify({"ok": False, "error": "Not implemented"}), 501
-
-            positions = get_alpaca_open_positions()
-            return jsonify({
-                "ok": True,
-                "positions": positions,
-                "count": len(positions or []),
-            })
-        except Exception as e:
-            log_exception("alpaca-open-positions failed", e, route="/alpaca-open-positions")
             return jsonify({"ok": False, "error": str(e)}), 500
 
     @app.get("/risk-exposure-summary")

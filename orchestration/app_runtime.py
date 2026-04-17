@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any, Callable
 
@@ -191,19 +190,11 @@ def run_ibkr_shadow_scans(
 def handle_scan_request(
     payload: dict[str, Any],
     *,
-    run_alpaca_scan: Callable[[dict[str, Any]], Any],
+    run_ibkr_scan: Callable[[dict[str, Any]], Any],
     shadow_mode_enabled: bool,
     ibkr_bridge_enabled: bool,
     run_ibkr_shadow_scans: Callable[[dict[str, Any]], dict[str, Any]],
 ):
-    alpaca_execution_enabled = str(os.getenv("ENABLE_ALPACA_EXECUTION", "true")).strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "y",
-        "on",
-    }
-
     def run_broker_scan(
         broker_name: str,
         broker_scan_fn: Callable[[dict[str, Any]], Any],
@@ -230,123 +221,31 @@ def handle_scan_request(
         return response, timing
 
     paper_trade_requested = bool(isinstance(payload, dict) and payload.get("paper_trade"))
-    should_run_parallel_ibkr = bool(
-        paper_trade_requested
-        and alpaca_execution_enabled
-        and shadow_mode_enabled
-        and ibkr_bridge_enabled
-    )
-    should_run_ibkr_only = bool(
-        paper_trade_requested
-        and not alpaca_execution_enabled
-        and shadow_mode_enabled
-        and ibkr_bridge_enabled
-    )
+    del run_ibkr_scan, shadow_mode_enabled
 
-    if should_run_ibkr_only:
-        ibkr_response, ibkr_timing = run_broker_scan("IBKR", run_ibkr_shadow_scans)
-        if isinstance(ibkr_response, dict):
-            ibkr_response.setdefault("paper_trade", True)
-            ibkr_response["alpaca_execution_enabled"] = False
-            ibkr_response["alpaca_skipped"] = {
-                "enabled": False,
-                "reason": "alpaca_execution_disabled",
-            }
-            ibkr_response["parallel_runs"] = {
-                "alpaca": {
-                    "ok": False,
-                    "skipped": True,
-                    "reason": "alpaca_execution_disabled",
-                },
-                "ibkr": {
-                    "ok": bool(ibkr_response.get("ok", False)),
-                    **(ibkr_timing or {}),
-                },
-                "cross_broker_start_delta_ms": None,
-                "cross_broker_finish_delta_ms": None,
-            }
-        return ibkr_response
-
-    if paper_trade_requested and not alpaca_execution_enabled and not (shadow_mode_enabled and ibkr_bridge_enabled):
+    if paper_trade_requested and not ibkr_bridge_enabled:
         return {
-            "ok": True,
+            "ok": False,
             "paper_trade": True,
-            "alpaca_execution_enabled": False,
             "placed_count": 0,
             "candidate_count": 0,
             "skipped_count": 0,
             "results": [],
-            "reason": "alpaca_execution_disabled",
-            "details": "Alpaca execution is disabled and IBKR execution is not active for this request.",
+            "reason": "ibkr_bridge_unavailable",
+            "details": "IBKR execution is required, but the IBKR bridge is not active for this request.",
         }
 
-    if should_run_parallel_ibkr:
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            alpaca_future = executor.submit(run_broker_scan, "ALPACA", run_alpaca_scan)
-            ibkr_future = executor.submit(run_broker_scan, "IBKR", run_ibkr_shadow_scans)
-            alpaca_response, alpaca_timing = alpaca_future.result()
-            ibkr_response, ibkr_timing = ibkr_future.result()
-    else:
-        alpaca_response, alpaca_timing = run_broker_scan("ALPACA", run_alpaca_scan)
-        ibkr_response = None
-        ibkr_timing = None
-
-    if not should_run_parallel_ibkr:
-        return alpaca_response
-
-    if isinstance(alpaca_response, tuple) or isinstance(ibkr_response, tuple):
-        return alpaca_response
-
-    if isinstance(alpaca_response, dict):
-        cross_broker_start_delta_ms = (
-            abs(
-                int(
-                    (
-                        datetime.fromisoformat(alpaca_timing["started_at_utc"].replace("Z", ""))
-                        - datetime.fromisoformat(ibkr_timing["started_at_utc"].replace("Z", ""))
-                    ).total_seconds()
-                    * 1000
-                )
-            )
-            if alpaca_timing and ibkr_timing
-            else None
-        )
-        cross_broker_finish_delta_ms = (
-            abs(
-                int(
-                    (
-                        datetime.fromisoformat(alpaca_timing["finished_at_utc"].replace("Z", ""))
-                        - datetime.fromisoformat(ibkr_timing["finished_at_utc"].replace("Z", ""))
-                    ).total_seconds()
-                    * 1000
-                )
-            )
-            if alpaca_timing and ibkr_timing
-            else None
-        )
-        alpaca_response["parallel_runs"] = {
-            "alpaca": {
-                "ok": bool(alpaca_response.get("ok", False)),
-                **alpaca_timing,
-            },
+    ibkr_response, ibkr_timing = run_broker_scan("IBKR", run_ibkr_shadow_scans)
+    if isinstance(ibkr_response, dict):
+        ibkr_response.setdefault("paper_trade", paper_trade_requested)
+        ibkr_response["execution_broker"] = "IBKR"
+        ibkr_response["parallel_runs"] = {
             "ibkr": {
-                "ok": bool(ibkr_response.get("ok", False)) if isinstance(ibkr_response, dict) else False,
+                "ok": bool(ibkr_response.get("ok", False)),
                 **(ibkr_timing or {}),
             },
-            "cross_broker_start_delta_ms": cross_broker_start_delta_ms,
-            "cross_broker_finish_delta_ms": cross_broker_finish_delta_ms,
         }
-        alpaca_response["shadow_ibkr"] = ibkr_response
-        log_info(
-            "Parallel broker scan timing recorded",
-            component="app_runtime",
-            operation="handle_scan_request",
-            cross_broker_start_delta_ms=cross_broker_start_delta_ms,
-            cross_broker_finish_delta_ms=cross_broker_finish_delta_ms,
-            alpaca_duration_ms=alpaca_timing["duration_ms"] if alpaca_timing else None,
-            ibkr_duration_ms=ibkr_timing["duration_ms"] if ibkr_timing else None,
-        )
-    return alpaca_response
+    return ibkr_response
 
 
 def run_scheduled_scan_wrapper(
@@ -441,30 +340,21 @@ def close_all_paper_positions_for_broker(
 
 def close_all_paper_positions(
     *,
-    alpaca_broker,
     ibkr_broker,
     shadow_mode_enabled: bool,
     ibkr_bridge_enabled: bool,
     close_all_paper_positions_for_broker_fn: Callable[[Any], Any],
 ):
-    alpaca_result = close_all_paper_positions_for_broker_fn(alpaca_broker)
+    del shadow_mode_enabled
 
-    if not shadow_mode_enabled or not ibkr_bridge_enabled:
-        return alpaca_result
+    if not ibkr_bridge_enabled:
+        return {
+            "ok": False,
+            "reason": "ibkr_bridge_unavailable",
+            "details": "IBKR close requested while bridge is unavailable.",
+            "position_count": 0,
+            "closed_count": 0,
+            "skipped_count": 0,
+        }
 
-    ibkr_result = close_all_paper_positions_for_broker_fn(ibkr_broker)
-
-    if isinstance(alpaca_result, tuple):
-        return alpaca_result
-
-    if isinstance(ibkr_result, tuple):
-        alpaca_result["shadow_ibkr_close"] = ibkr_result[0]
-        alpaca_result["shadow_ibkr_close_status_code"] = ibkr_result[1]
-        return alpaca_result
-
-    aggregated = dict(alpaca_result or {})
-    aggregated["shadow_ibkr_close"] = ibkr_result
-    aggregated["combined_position_count"] = int(alpaca_result.get("position_count", 0) or 0) + int(ibkr_result.get("position_count", 0) or 0)
-    aggregated["combined_closed_count"] = int(alpaca_result.get("closed_count", 0) or 0) + int(ibkr_result.get("closed_count", 0) or 0)
-    aggregated["combined_skipped_count"] = int(alpaca_result.get("skipped_count", 0) or 0) + int(ibkr_result.get("skipped_count", 0) or 0)
-    return aggregated
+    return close_all_paper_positions_for_broker_fn(ibkr_broker)

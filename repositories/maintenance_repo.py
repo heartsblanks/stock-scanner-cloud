@@ -43,3 +43,77 @@ def prune_operational_data(retention_days_by_table: dict[str, int]) -> dict[str,
         }
 
     return results
+
+
+def purge_legacy_alpaca_data() -> dict[str, Any]:
+    statements: tuple[tuple[str, str], ...] = (
+        (
+            "paper_trade_attempts",
+            """
+            WITH deleted AS (
+                DELETE FROM paper_trade_attempts
+                WHERE UPPER(COALESCE(NULLIF(broker, ''), 'ALPACA')) = 'ALPACA'
+                RETURNING 1
+            )
+            SELECT COUNT(*)::INT AS deleted_count FROM deleted
+            """,
+        ),
+        (
+            "trade_events",
+            """
+            WITH deleted AS (
+                DELETE FROM trade_events
+                WHERE UPPER(COALESCE(NULLIF(broker, ''), 'ALPACA')) = 'ALPACA'
+                RETURNING 1
+            )
+            SELECT COUNT(*)::INT AS deleted_count FROM deleted
+            """,
+        ),
+        (
+            "trade_lifecycles",
+            """
+            WITH deleted AS (
+                DELETE FROM trade_lifecycles
+                WHERE UPPER(COALESCE(NULLIF(broker, ''), 'ALPACA')) = 'ALPACA'
+                RETURNING 1
+            )
+            SELECT COUNT(*)::INT AS deleted_count FROM deleted
+            """,
+        ),
+        (
+            "broker_orders",
+            """
+            WITH deleted AS (
+                DELETE FROM broker_orders
+                WHERE UPPER(COALESCE(NULLIF(broker, ''), 'ALPACA')) = 'ALPACA'
+                RETURNING 1
+            )
+            SELECT COUNT(*)::INT AS deleted_count FROM deleted
+            """,
+        ),
+        (
+            "alpaca_api_logs",
+            """
+            WITH deleted AS (
+                DELETE FROM alpaca_api_logs
+                RETURNING 1
+            )
+            SELECT COUNT(*)::INT AS deleted_count FROM deleted
+            """,
+        ),
+    )
+
+    deleted_counts: dict[str, int] = {}
+    total_deleted = 0
+
+    for table_name, statement in statements:
+        row = fetch_one(statement, {})
+        deleted_count = int(row["deleted_count"]) if row and row.get("deleted_count") is not None else 0
+        deleted_counts[table_name] = deleted_count
+        total_deleted += deleted_count
+
+    return {
+        "ok": True,
+        "deleted_counts": deleted_counts,
+        "total_deleted": total_deleted,
+    }

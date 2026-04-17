@@ -31,7 +31,7 @@ export default function ReconciliationSection({
             <div>
               <h2 className="dashboard-panel-title">Reconciliation</h2>
               <p className="dashboard-panel-subtitle">
-                Where local trade state and Alpaca reality diverge, and how those mismatches are evolving over time.
+                Where local trade state and live broker reality diverge, and how those mismatches are evolving over time.
               </p>
             </div>
           </div>
@@ -67,7 +67,7 @@ export default function ReconciliationSection({
                   <div className="metric-card-value">{reconciliationSummary.mismatch_count ?? "-"}</div>
                 </div>
                 <div className="metric-card">
-                  <div className="metric-card-label">Missing In Alpaca</div>
+                  <div className="metric-card-label">Missing In Broker</div>
                   <div className="metric-card-value">{reconciliationSummary.missing_in_alpaca ?? 0}</div>
                 </div>
                 <div className="metric-card">
