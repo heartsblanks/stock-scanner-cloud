@@ -27,7 +27,7 @@ steps:
       - '--concurrency'
       - '1'
       - '--max-instances'
-      - '1'
+      - '2'
       - '--vpc-connector'
       - 'ibkr-bridge-connector'
       - '--vpc-egress'
