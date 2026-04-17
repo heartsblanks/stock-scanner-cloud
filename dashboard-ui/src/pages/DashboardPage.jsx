@@ -72,6 +72,14 @@ function buildFreshness(timestamp, freshMinutes = 10, staleMinutes = 45) {
 function deriveSystemState({ backendHealthStatus, mismatchLabel, ibkrStatus }) {
   const ibkrState = String(ibkrStatus?.state || "UNKNOWN").toUpperCase();
 
+  if (ibkrState === "DB_ONLY") {
+    return {
+      label: "DB_ONLY",
+      tone: "dashboard-badge-info",
+      detail: ibkrStatus?.message || "Dashboard is running in database-only mode.",
+    };
+  }
+
   if (ibkrStatus?.enabled && ibkrStatus?.login_required) {
     return {
       label: "LOGIN_REQUIRED",
@@ -256,6 +264,7 @@ export default function DashboardPage() {
     paperTradeAttemptHourlySummary,
     ibkrRecentAttempts,
     ibkrStatus,
+    ibkrLiveChecksEnabled,
     handleApplyFilters,
     refreshData,
     refreshIbkrStatusLive,
@@ -284,7 +293,7 @@ export default function DashboardPage() {
       ? "dashboard-pill-ok"
       : ibkrState === "LOGIN_REQUIRED" || ibkrState === "MARKET_DATA_UNAVAILABLE"
         ? "dashboard-pill-warn"
-        : ibkrState === "DISABLED"
+        : ibkrState === "DISABLED" || ibkrState === "DB_ONLY"
           ? "dashboard-pill-info"
           : "dashboard-pill-danger";
 
@@ -422,7 +431,9 @@ export default function DashboardPage() {
   async function handleMorningCheck() {
     try {
       setIsRunningMorningCheck(true);
-      await refreshIbkrStatusLive();
+      if (ibkrLiveChecksEnabled) {
+        await refreshIbkrStatusLive();
+      }
       await syncPaperTrades();
       await rerunReconciliation();
       pushToast({ type: "success", message: "Morning Check completed." });
@@ -528,14 +539,16 @@ export default function DashboardPage() {
               >
                 {isRefreshing ? "Refreshing..." : "Refresh"}
               </button>
-              <button
-                type="button"
-                onClick={handleRefreshIbkrLiveStatus}
-                disabled={isRefreshingIbkrStatus}
-                className="dashboard-button dashboard-button-neutral dashboard-button-compact"
-              >
-                {isRefreshingIbkrStatus ? "Checking..." : "IBKR Live"}
-              </button>
+              {ibkrLiveChecksEnabled && (
+                <button
+                  type="button"
+                  onClick={handleRefreshIbkrLiveStatus}
+                  disabled={isRefreshingIbkrStatus}
+                  className="dashboard-button dashboard-button-neutral dashboard-button-compact"
+                >
+                  {isRefreshingIbkrStatus ? "Checking..." : "IBKR Live"}
+                </button>
+              )}
               <button
                 onClick={syncPaperTrades}
                 disabled={isRefreshing || isRunningSync}

@@ -24,7 +24,7 @@ export default function HealthOverviewSection({
       ? "#16a34a"
       : ibkrState === "LOGIN_REQUIRED" || ibkrState === "MARKET_DATA_UNAVAILABLE"
         ? "#f59e0b"
-        : ibkrState === "DISABLED"
+        : ibkrState === "DISABLED" || ibkrState === "DB_ONLY"
           ? "#64748b"
           : "#dc2626";
 

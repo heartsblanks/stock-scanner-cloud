@@ -192,7 +192,19 @@ export default function ExecutionInsightsSection({
               {sectionErrors.ibkr && <div className="dashboard-error">{sectionErrors.ibkr}</div>}
 
               <div className="dashboard-metrics-grid">
-                <InsightCard title="IBKR Readiness" value={ibkrState} valueColor={ibkrState === "READY" ? "#16a34a" : ibkrState === "LOGIN_REQUIRED" ? "#f59e0b" : "#dc2626"} />
+                <InsightCard
+                  title="IBKR Readiness"
+                  value={ibkrState}
+                  valueColor={
+                    ibkrState === "READY"
+                      ? "#16a34a"
+                      : ibkrState === "LOGIN_REQUIRED" || ibkrState === "MARKET_DATA_UNAVAILABLE"
+                        ? "#f59e0b"
+                        : ibkrState === "DISABLED" || ibkrState === "DB_ONLY"
+                          ? "#64748b"
+                          : "#dc2626"
+                  }
+                />
                 <InsightCard title="Latest IBKR Attempt" value={latestIbkrAttempt?.symbol || "-"} />
                 <InsightCard title="IBKR Market Bars" value={ibkrStatus?.market_data_count ?? "-"} />
                 <InsightCard title="Live Positions" value={ibkrStatus?.position_count ?? "-"} />

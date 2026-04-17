@@ -74,6 +74,8 @@ export default function SchedulerHealthSection({
         ? { label: ibkrState, color: "#f59e0b" }
         : ibkrState === "DISABLED"
           ? { label: "Disabled", color: "#64748b" }
+          : ibkrState === "DB_ONLY"
+            ? { label: "DB Only", color: "#64748b" }
           : { label: ibkrState, color: "#dc2626" };
 
   return (

@@ -13,7 +13,6 @@ import {
   fetchPaperTradeAttemptHourlySummary,
   fetchPaperTradeAttemptRecent,
   fetchPaperTradeAttemptRejections,
-  fetchIbkrStatus,
   runReconciliationNow,
   runSyncPaperTrades,
 } from "../api/dashboard";
@@ -23,6 +22,14 @@ const DASHBOARD_POLLING_WINDOW_START_MINUTES = 9 * 60 + 35;
 const DASHBOARD_POLLING_WINDOW_END_MINUTES = 16 * 60 + 30;
 const IBKR_OPEN_TRADES_PAGE_SIZE = 120;
 const IBKR_LIFECYCLE_PAGE_SIZE = 180;
+const IBKR_DASHBOARD_LIVE_CALLS_ENABLED = false;
+const IBKR_DB_ONLY_STATUS = {
+  ok: true,
+  enabled: false,
+  state: "DB_ONLY",
+  login_required: false,
+  message: "Dashboard live IBKR checks are disabled. Values shown are database-derived.",
+};
 
 function getEasternMarketSnapshot(now = new Date()) {
   const formatter = new Intl.DateTimeFormat("en-US", {
@@ -101,7 +108,7 @@ export function useDashboardData(activeView = "overview") {
   const [paperTradeAttemptDailySummary, setPaperTradeAttemptDailySummary] = useState([]);
   const [paperTradeAttemptHourlySummary, setPaperTradeAttemptHourlySummary] = useState([]);
   const [ibkrRecentAttempts, setIbkrRecentAttempts] = useState([]);
-  const [ibkrStatus, setIbkrStatus] = useState(null);
+  const [ibkrStatus, setIbkrStatus] = useState(IBKR_DB_ONLY_STATUS);
   const [latestScanSummary, setLatestScanSummary] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [nextRefreshAt, setNextRefreshAt] = useState(null);
@@ -180,13 +187,12 @@ export function useDashboardData(activeView = "overview") {
   const loadAttemptsSection = useCallback(async () => {
     try {
       setSectionLoading((prev) => ({ ...prev, attempts: true, ibkr: true }));
-      const [opsResult, rejectionResult, dailyResult, hourlyResult, ibkrRecentResult, ibkrStatusResult] = await Promise.allSettled([
+      const [opsResult, rejectionResult, dailyResult, hourlyResult, ibkrRecentResult] = await Promise.allSettled([
         fetchOpsSummary(),
         fetchPaperTradeAttemptRejections(12),
         fetchPaperTradeAttemptDailySummary(7),
         fetchPaperTradeAttemptHourlySummary(7),
         fetchPaperTradeAttemptRecent(8, "IBKR"),
-        fetchIbkrStatus(),
       ]);
 
       const criticalFailures = [rejectionResult, dailyResult, hourlyResult, ibkrRecentResult]
@@ -210,40 +216,28 @@ export function useDashboardData(activeView = "overview") {
         setIbkrRecentAttempts([]);
       }
 
-      if (ibkrStatusResult.status === "fulfilled") {
-        setIbkrStatus(ibkrStatusResult.value || null);
-        setSectionErrors((prev) => ({
-          ...prev,
-          attempts:
-            analyticsUnavailable
-              ? "Execution analytics are temporarily unavailable."
-              : criticalFailures > 0
-                ? "Some execution analytics are temporarily unavailable."
-                : null,
-          ibkr: null,
-        }));
-      } else {
-        setIbkrStatus(null);
-        setSectionErrors((prev) => ({
-          ...prev,
-          attempts:
-            analyticsUnavailable
-              ? "Execution analytics are temporarily unavailable."
-              : criticalFailures > 0
-                ? "Some execution analytics are temporarily unavailable."
-                : null,
-          ibkr: ibkrStatusResult.reason?.message || "Failed to load IBKR status",
-        }));
-      }
+      setIbkrStatus(IBKR_DB_ONLY_STATUS);
+      setSectionErrors((prev) => ({
+        ...prev,
+        attempts:
+          analyticsUnavailable
+            ? "Execution analytics are temporarily unavailable."
+            : criticalFailures > 0
+              ? "Some execution analytics are temporarily unavailable."
+              : null,
+        ibkr: null,
+      }));
     } catch (sectionErr) {
       setOpsSummary(null);
       setPaperTradeAttemptRejections([]);
       setPaperTradeAttemptDailySummary([]);
       setPaperTradeAttemptHourlySummary([]);
       setIbkrRecentAttempts([]);
+      setIbkrStatus(IBKR_DB_ONLY_STATUS);
       setSectionErrors((prev) => ({
         ...prev,
         attempts: sectionErr?.message || "Failed to load execution attempt analytics",
+        ibkr: null,
       }));
     } finally {
       setSectionLoading((prev) => ({ ...prev, attempts: false, ibkr: false }));
@@ -581,6 +575,11 @@ export function useDashboardData(activeView = "overview") {
   }
 
   async function refreshIbkrStatusLive() {
+    if (!IBKR_DASHBOARD_LIVE_CALLS_ENABLED) {
+      setIbkrStatus(IBKR_DB_ONLY_STATUS);
+      setSectionErrors((prev) => ({ ...prev, ibkr: null }));
+      return IBKR_DB_ONLY_STATUS;
+    }
     try {
       setIsRefreshingIbkrStatus(true);
       const data = await fetchIbkrStatus({ live: true, ttlSeconds: 15 });
@@ -732,6 +731,7 @@ export function useDashboardData(activeView = "overview") {
     paperTradeAttemptHourlySummary: attemptHourlySummary,
     ibkrRecentAttempts,
     ibkrStatus,
+    ibkrLiveChecksEnabled: IBKR_DASHBOARD_LIVE_CALLS_ENABLED,
     topAttemptReasons,
     stageCounts,
     paperTradePlacementRate,
