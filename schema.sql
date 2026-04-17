@@ -108,7 +108,7 @@ CREATE TABLE IF NOT EXISTS trade_events (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Broker orders snapshot (truth from Alpaca)
+-- Broker orders snapshot (truth from broker)
 CREATE TABLE IF NOT EXISTS broker_orders (
     id SERIAL PRIMARY KEY,
     order_id TEXT NOT NULL,
@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS reconciliation_runs (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Reconciliation details: one row per compared trade (local vs Alpaca)
+-- Reconciliation details: one row per compared trade (local vs broker)
 CREATE TABLE IF NOT EXISTS reconciliation_details (
     id SERIAL PRIMARY KEY,
     run_id INT,
@@ -178,7 +178,7 @@ CREATE INDEX IF NOT EXISTS idx_reconciliation_details_symbol ON reconciliation_d
 CREATE INDEX IF NOT EXISTS idx_reconciliation_details_parent_order ON reconciliation_details(broker_parent_order_id);
 CREATE INDEX IF NOT EXISTS idx_reconciliation_details_status ON reconciliation_details(match_status);
 
--- Alpaca API audit logs (for debugging & reconciliation verification)
+-- Broker API audit logs (for debugging & reconciliation verification)
 CREATE TABLE IF NOT EXISTS broker_api_logs (
     id SERIAL PRIMARY KEY,
     logged_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

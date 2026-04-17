@@ -31,7 +31,7 @@ class GitHubExportTests(unittest.TestCase):
             target.write_text("id,value\n1,test\n", encoding="utf-8")
 
             with patch.object(github_export, "GITHUB_OWNER", "heartsblanks"), patch.object(
-                github_export, "GITHUB_REPO", "alpaca-trade-logs"
+                github_export, "GITHUB_REPO", "stock-scanner-trade-logs"
             ), patch.object(github_export, "GITHUB_TOKEN", "token"), patch.object(
                 github_export, "GITHUB_BRANCH", "main"
             ):

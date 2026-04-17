@@ -13,8 +13,8 @@ from exports.export_reports import export_all_reports
 from exports.github_export import commit_and_push
 
 
-EXPORT_BASE_DIR = os.getenv("EXPORT_BASE_DIR", "/tmp/alpaca-trade-logs-export")
-EXPORT_REPO_DIR = os.getenv("EXPORT_REPO_DIR", "/tmp/alpaca-trade-logs-repo")
+EXPORT_BASE_DIR = os.getenv("EXPORT_BASE_DIR", "/tmp/stock-scanner-trade-logs-export")
+EXPORT_REPO_DIR = os.getenv("EXPORT_REPO_DIR", "/tmp/stock-scanner-trade-logs-repo")
 
 
 def run_daily_snapshot() -> dict[str, object]:

@@ -45,14 +45,14 @@ def prune_operational_data(retention_days_by_table: dict[str, int]) -> dict[str,
     return results
 
 
-def purge_legacy_alpaca_data() -> dict[str, Any]:
+def purge_legacy_broker_data() -> dict[str, Any]:
     statements: tuple[tuple[str, str], ...] = (
         (
             "paper_trade_attempts",
             """
             WITH deleted AS (
                 DELETE FROM paper_trade_attempts
-                WHERE UPPER(COALESCE(NULLIF(broker, ''), 'ALPACA')) = 'ALPACA'
+                WHERE UPPER(COALESCE(NULLIF(broker, ''), 'LEGACY')) <> 'IBKR'
                 RETURNING 1
             )
             SELECT COUNT(*)::INT AS deleted_count FROM deleted
@@ -63,7 +63,7 @@ def purge_legacy_alpaca_data() -> dict[str, Any]:
             """
             WITH deleted AS (
                 DELETE FROM trade_events
-                WHERE UPPER(COALESCE(NULLIF(broker, ''), 'ALPACA')) = 'ALPACA'
+                WHERE UPPER(COALESCE(NULLIF(broker, ''), 'LEGACY')) <> 'IBKR'
                 RETURNING 1
             )
             SELECT COUNT(*)::INT AS deleted_count FROM deleted
@@ -74,7 +74,7 @@ def purge_legacy_alpaca_data() -> dict[str, Any]:
             """
             WITH deleted AS (
                 DELETE FROM trade_lifecycles
-                WHERE UPPER(COALESCE(NULLIF(broker, ''), 'ALPACA')) = 'ALPACA'
+                WHERE UPPER(COALESCE(NULLIF(broker, ''), 'LEGACY')) <> 'IBKR'
                 RETURNING 1
             )
             SELECT COUNT(*)::INT AS deleted_count FROM deleted
@@ -85,7 +85,7 @@ def purge_legacy_alpaca_data() -> dict[str, Any]:
             """
             WITH deleted AS (
                 DELETE FROM broker_orders
-                WHERE UPPER(COALESCE(NULLIF(broker, ''), 'ALPACA')) = 'ALPACA'
+                WHERE UPPER(COALESCE(NULLIF(broker, ''), 'LEGACY')) <> 'IBKR'
                 RETURNING 1
             )
             SELECT COUNT(*)::INT AS deleted_count FROM deleted

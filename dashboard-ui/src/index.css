@@ -1014,7 +1014,7 @@ code {
   color: #6b7280;
 }
 
-.dashboard-badge-broker-alpaca {
+.dashboard-badge-broker-ibkr {
   background: rgba(25, 121, 178, 0.15);
   color: #1d76ad;
   border: 1px solid rgba(25, 121, 178, 0.25);
@@ -1203,7 +1203,7 @@ code {
   background: rgba(255, 255, 255, 0.02);
 }
 
-:root[data-theme="dark"] .dashboard-badge-broker-alpaca {
+:root[data-theme="dark"] .dashboard-badge-broker-ibkr {
   background: rgba(120, 167, 255, 0.16);
   color: #9bc0ff;
   border-color: rgba(120, 167, 255, 0.25);

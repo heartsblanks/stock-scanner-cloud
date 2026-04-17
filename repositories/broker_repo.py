@@ -98,7 +98,7 @@ def get_broker_order_status_counts() -> list[dict]:
     )
 
 
-def insert_alpaca_api_log(
+def insert_broker_api_log(
     logged_at: datetime,
     method: str,
     url: str,
@@ -137,7 +137,7 @@ def get_recent_broker_api_logs(limit: int = 100) -> list[dict]:
     return fetch_all("SELECT * FROM broker_api_logs ORDER BY logged_at DESC, id DESC LIMIT %(limit)s", {"limit": limit})
 
 
-def get_recent_alpaca_api_errors(limit: int = 100) -> list[dict]:
+def get_recent_broker_api_errors(limit: int = 100) -> list[dict]:
     return fetch_all(
         """
         SELECT *

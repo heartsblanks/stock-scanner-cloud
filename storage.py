@@ -10,7 +10,7 @@ from repositories.broker_repo import (
 from repositories.common import normalize_text as _normalize_text
 from repositories.common import to_optional_float as _to_optional_float
 from repositories.ops_repo import get_ops_summary, get_table_row_count
-from repositories.maintenance_repo import prune_operational_data, purge_legacy_alpaca_data
+from repositories.maintenance_repo import prune_operational_data, purge_legacy_broker_data
 from repositories.reconcile_repo import (
     get_latest_reconciliation_run,
     get_latest_reconciliation_summary,

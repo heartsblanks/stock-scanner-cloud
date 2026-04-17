@@ -30,7 +30,7 @@ from storage import (
     upsert_trade_lifecycle,
     get_dashboard_summary,
     prune_operational_data,
-    purge_legacy_alpaca_data,
+    purge_legacy_broker_data,
 )
 from exports.export_daily_snapshot import run_daily_snapshot
 from routes.health import register_health_routes
@@ -499,7 +499,7 @@ register_health_routes(
     get_ibkr_operational_status=get_ibkr_operational_status,
     telegram_alerts_enabled=telegram_alerts_enabled,
     send_telegram_alert=send_telegram_alert,
-    purge_legacy_alpaca_data=purge_legacy_alpaca_data,
+    purge_legacy_broker_data=purge_legacy_broker_data,
 )
 register_export_routes(app, run_daily_snapshot=run_daily_snapshot)
 register_analysis_routes(

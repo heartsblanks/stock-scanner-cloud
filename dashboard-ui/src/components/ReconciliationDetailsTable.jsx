@@ -8,7 +8,7 @@ function getStatusClass(status) {
   }
 
   if (
-    normalized === "missing_in_alpaca" ||
+    normalized === "missing_in_broker" ||
     normalized === "missing_in_db" ||
     normalized === "exit_not_resolved"
   ) {
@@ -23,7 +23,7 @@ function toneForMismatch(row) {
   if (status === "matched") {
     return "";
   }
-  if (status === "missing_in_alpaca" || status === "missing_in_db" || status === "exit_not_resolved") {
+  if (status === "missing_in_broker" || status === "missing_in_db" || status === "exit_not_resolved") {
     return "dashboard-table-row-negative";
   }
   return "";

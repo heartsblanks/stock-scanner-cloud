@@ -44,7 +44,7 @@ class AppRuntimeTests(unittest.TestCase):
         self.assertGreaterEqual(result["parallel_runs"]["ibkr"]["duration_ms"], 0)
         self.assertGreaterEqual(elapsed, 0.045)
 
-    def test_handle_scan_request_ignores_legacy_alpaca_flag_and_runs_ibkr(self):
+    def test_handle_scan_request_ignores_legacy_ibkr_flag_and_runs_ibkr(self):
         ibkr_calls = []
 
         with patch.dict("os.environ", {"ENABLE_IBKR_SHADOW_MODE": "false"}, clear=False):

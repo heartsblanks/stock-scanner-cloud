@@ -1,6 +1,6 @@
 # Stock Scanner Cloud
 
-Cloud-native trading workflow system for scanning markets, executing Alpaca paper trades, syncing state, analyzing performance, and visualizing results via a dashboard.
+Cloud-native trading workflow system for scanning markets, executing IBKR paper trades, syncing state, analyzing performance, and visualizing results via a dashboard.
 
 👉 See **ARCHITECTURE.md** for the full system design and current implementation status.
 
@@ -9,7 +9,7 @@ Cloud-native trading workflow system for scanning markets, executing Alpaca pape
 ## 🚀 What this project does
 
 - Schedules market scans and generates trade candidates
-- Places and manages **Alpaca paper trades**
+- Places and manages **IBKR paper trades**
 - Syncs open/closed positions and detects exits
 - Stores data in **PostgreSQL (Neon)**
 - Stores detailed scan signal rows in **PostgreSQL**
@@ -28,7 +28,7 @@ Cloud-native trading workflow system for scanning markets, executing Alpaca pape
 - **Compute:** Google Cloud Run
 - **Scheduling:** Google Cloud Scheduler
 - **CI/CD:** Google Cloud Build
-- **Broker:** Alpaca (paper trading)
+- **Broker:** IBKR (paper trading)
 - **Backup:** GitHub (daily snapshots)
 
 ---
@@ -43,7 +43,7 @@ Cloud-native trading workflow system for scanning markets, executing Alpaca pape
 ├── routes/
 ├── services/
 ├── repositories/
-├── alpaca/
+├── ibkr/
 ├── analysis/
 ├── export_daily_snapshot.py
 ├── github_export.py
@@ -115,7 +115,7 @@ Core backend variables:
 - `DATABASE_URL` or the socket-based `DB_*` variables
 - `APCA_API_KEY_ID`
 - `APCA_API_SECRET_KEY`
-- `APCA_BASE_URL` for Alpaca paper/live selection
+- `APCA_BASE_URL` for IBKR paper/live selection
 - `TWELVEDATA_API_KEY`
 - `ADMIN_API_TOKEN` for protected operational endpoints such as `/admin/test-alert`
 
@@ -123,7 +123,7 @@ Paper-trading and scan controls:
 
 - `PAPER_TRADE_MIN_CONFIDENCE`
 - `IBKR_PAPER_TRADE_MIN_CONFIDENCE`
-- `ALPACA_MAX_NOTIONAL`
+- `PAPER_MAX_NOTIONAL`
 - `MIN_NOTIONAL_TO_PLACE`
 - `SCHEDULED_PAPER_ACCOUNT_SIZE`
 - `PAPER_STOP_COOLDOWN_MINUTES`
@@ -298,7 +298,7 @@ Snapshots are DB-derived and no longer depend on operational `signals.csv` or `t
 
 ## ⚠️ Important Notes
 
-- Paper trading only (Alpaca paper API)
+- Paper trading only (IBKR paper API)
 - Not financial advice
 - Do not use for real capital without validation
 

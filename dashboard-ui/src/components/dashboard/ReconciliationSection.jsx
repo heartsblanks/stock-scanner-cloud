@@ -68,7 +68,7 @@ export default function ReconciliationSection({
                 </div>
                 <div className="metric-card">
                   <div className="metric-card-label">Missing In Broker</div>
-                  <div className="metric-card-value">{reconciliationSummary.missing_in_alpaca ?? 0}</div>
+                  <div className="metric-card-value">{reconciliationSummary.missing_in_broker ?? 0}</div>
                 </div>
                 <div className="metric-card">
                   <div className="metric-card-label">Missing In DB</div>

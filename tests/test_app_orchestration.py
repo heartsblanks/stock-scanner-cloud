@@ -15,7 +15,7 @@ class AppOrchestrationTests(unittest.TestCase):
                 "mismatch_count": 1,
                 "total_rows": 5,
                 "severity": "WARNING",
-                "file_path": "alpaca_reconciliation.csv",
+                "file_path": "reconciliation.csv",
             },
             upload_file_to_gcs=lambda local_path, bucket_name, object_name: captured_upload_args.append(
                 (local_path, bucket_name, object_name)
@@ -28,7 +28,7 @@ class AppOrchestrationTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(
             captured_upload_args,
-            [("alpaca_reconciliation.csv", "bucket-name", "reconciliation.csv")],
+            [("reconciliation.csv", "bucket-name", "reconciliation.csv")],
         )
         self.assertEqual(len(captured_run_args), 1)
         self.assertEqual(captured_run_args[0]["matched_count"], 4)

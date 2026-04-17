@@ -21,7 +21,7 @@ TRADE_ANALYSIS_SUMMARY_OBJECT = os.getenv("TRADE_ANALYSIS_SUMMARY_OBJECT", "repo
 TRADE_ANALYSIS_PAIRED_OBJECT = os.getenv("TRADE_ANALYSIS_PAIRED_OBJECT", "reports/trade_analysis_paired_trades.csv")
 SIGNAL_ANALYSIS_SUMMARY_OBJECT = os.getenv("SIGNAL_ANALYSIS_SUMMARY_OBJECT", "reports/signal_analysis_summary.csv")
 SIGNAL_ANALYSIS_ROWS_OBJECT = os.getenv("SIGNAL_ANALYSIS_ROWS_OBJECT", "reports/signal_analysis_rows.csv")
-RECONCILIATION_OBJECT = os.getenv("RECONCILIATION_OBJECT", "reports/alpaca_reconciliation.csv")
+RECONCILIATION_OBJECT = os.getenv("RECONCILIATION_OBJECT", "reports/reconciliation.csv")
 
 
 def _ensure_dir(path: Path) -> None:
@@ -61,7 +61,7 @@ def export_analysis_files(output_dir: str | Path, for_date: Optional[date] = Non
         (TRADE_ANALYSIS_PAIRED_OBJECT, "trade_analysis_paired_trades.csv"),
         (SIGNAL_ANALYSIS_SUMMARY_OBJECT, "signal_analysis_summary.csv"),
         (SIGNAL_ANALYSIS_ROWS_OBJECT, "signal_analysis_rows.csv"),
-        (RECONCILIATION_OBJECT, "alpaca_reconciliation.csv"),
+        (RECONCILIATION_OBJECT, "reconciliation.csv"),
     ]:
         exported_path = _download_gcs_file(
             storage_client,

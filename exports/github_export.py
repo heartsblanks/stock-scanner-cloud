@@ -14,7 +14,7 @@ if str(ROOT_DIR) not in sys.path:
 
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "").strip()
-GITHUB_REPO = os.getenv("GITHUB_REPO", "alpaca-trade-logs").strip()
+GITHUB_REPO = os.getenv("GITHUB_REPO", "stock-scanner-trade-logs").strip()
 GITHUB_OWNER = os.getenv("GITHUB_OWNER", "").strip()
 GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main").strip()
 GIT_AUTHOR_NAME = os.getenv("GIT_AUTHOR_NAME", "stock-scanner-bot").strip()

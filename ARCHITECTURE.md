@@ -22,8 +22,8 @@ The goal is to make requirements explicit first, so that new work can be added i
 `stock-scanner-cloud` is a cloud-hosted trading workflow system that:
 - scans markets on a schedule
 - generates paper trade candidates
-- submits and manages Alpaca paper trades
-- synchronizes open and closed trade state from Alpaca
+- submits and manages IBKR paper trades
+- synchronizes open and closed trade state from IBKR
 - records trade, broker, reconciliation, and API log data in PostgreSQL
 - exports daily snapshots and analysis outputs
 - provides a backend API for analytics and operational control
@@ -35,7 +35,7 @@ Primary hosting and infrastructure:
 - **Scheduling:** Google Cloud Scheduler
 - **Storage/Exports:** local runtime export staging and GitHub snapshot backup
 - **Frontend:** React/Vite dashboard UI
-- **Broker integration:** Alpaca paper trading API
+- **Broker integration:** IBKR paper trading API
 
 ---
 
@@ -109,7 +109,7 @@ Architecture documentation is updated alongside implementation so the document r
    - reduce root-directory clutter by moving maintenance, repair, and backfill utilities into `scripts/`
    - continue the same cleanup for export-related modules by consolidating them under `exports/`
    - continue the same cleanup for trading analysis and scan logic by consolidating them under `analytics/`
-   - fold the remaining top-level Alpaca wrappers into the existing `alpaca/` package so broker integration code lives in one place
+   - fold the remaining top-level IBKR wrappers into the existing `ibkr/` package so broker integration code lives in one place
    - consolidate scan, paper-trade, scheduler, and app-level orchestration helpers under `orchestration/`
    - remove dead root-level files such as unused export utilities
    - consolidate shared foundations such as DB access, structured logging, and trade math under `core/`
@@ -154,28 +154,28 @@ Current strategy status:
 - completed: post-noon caution is stronger via an additional confidence time penalty from `12:00 PM ET` onward
 - completed: short setups now get an additional midday time penalty starting at `11:00 PM ET`, with a stronger bump from `12:00 PM ET`
 - completed: short setups now require a higher minimum confidence threshold than longs
-- completed: paper-trade sizing is clamped by the hard `$10,000` `ALPACA_MAX_NOTIONAL` cap
+- completed: paper-trade sizing is clamped by the hard `$10,000` `PAPER_MAX_NOTIONAL` cap
 - completed: `trade_lifecycles.mode` is preserved across later sync/close/reconcile updates so category analysis stays intact
 - pending observation: review whether the `Price is above OR high and above VWAP.` breakout rule is too blunt after a few more live sessions
 - pending observation: monitor whether `No meaningful allocatable capital remains.` mostly disappears now that the oversized-order sizing bug is fixed
 
 Market data migration strategy:
 - current recommendation: stay on Twelve Data for now while strategy quality and symbol-universe quality continue to improve
-- why: live comparisons against recent real trades showed that Twelve Data and Alpaca were close on actual entry-minute prices, so provider mismatch did not look like the main driver of recent losing trades
-- why not Alpaca free `IEX`: live comparisons also showed that Alpaca free `IEX` bars are often sparser in the opening-range window, especially on thinner symbols, which can make opening-range and VWAP logic less reliable than the current setup
-- future implementation 1: migrate trading/account/order integration to `alpaca-py` first, without changing the scanner's market-data source
-- future implementation 2: only evaluate Alpaca as the primary market-data source through a side-by-side validation phase, ideally on paid `SIP` rather than free `IEX`
+- why: live comparisons against recent real trades showed that Twelve Data and IBKR were close on actual entry-minute prices, so provider mismatch did not look like the main driver of recent losing trades
+- why not IBKR free `IEX`: live comparisons also showed that IBKR free `IEX` bars are often sparser in the opening-range window, especially on thinner symbols, which can make opening-range and VWAP logic less reliable than the current setup
+- future implementation 1: migrate trading/account/order integration to `ibkr-py` first, without changing the scanner's market-data source
+- future implementation 2: only evaluate IBKR as the primary market-data source through a side-by-side validation phase, ideally on paid `SIP` rather than free `IEX`
 - upgrade triggers for paid market data: repeated evidence that entry timing is meaningfully late despite otherwise stable strategy behavior, repeated chart-review cases where missed/late entries trace back to candle timing, or enough strategy stability that data quality becomes the next obvious bottleneck
 - if migration happens later, the intended order is:
-- `1.` keep Twelve Data live while adding Alpaca market-data adapters in parallel
+- `1.` keep Twelve Data live while adding IBKR market-data adapters in parallel
 - `2.` compare OR completeness, VWAP, benchmark direction, and entry timing side by side for multiple sessions
 - `3.` cut over only after the higher-quality feed clearly improves scan quality
 
 Parallel IBKR evaluation strategy:
-- implementation approach: keep the current Alpaca paper-trading path stable while building IBKR support in parallel for comparison only
+- implementation approach: keep the current IBKR paper-trading path stable while building IBKR support in parallel for comparison only
 - branch strategy: do IBKR work on a dedicated branch so broker-abstraction and bridge changes do not destabilize the current production path
 - hosting approach: use a GCP VM for the IBKR sidecar stack because Cloud Run is not a good fit for a persistent IB Gateway session
-- current implementation status: the first broker-abstraction layer is now in place, with Alpaca wired behind a generic paper-broker adapter and the IBKR side now upgraded from a placeholder to a bridge-based contract that expects a VM-hosted HTTP service
+- current implementation status: the first broker-abstraction layer is now in place, with IBKR wired behind a generic paper-broker adapter and the IBKR side now upgraded from a placeholder to a bridge-based contract that expects a VM-hosted HTTP service
 - current implementation status: a minimal `ibkr_bridge/` Flask service scaffold now exists in the repo so the GCP VM side has a concrete starting point and endpoint contract
 - current implementation status: VM deployment scaffolding now exists under `ibkr_bridge/systemd/` with a service unit, env template, and bridge runbook for the GCP VM path
 - current implementation status: the first real IBKR bridge read-path is now implemented for account, positions, and open-order reads, and the app-side paper flow now also uses bridge-backed write paths for sync, cancel, close, and paper order placement
@@ -186,15 +186,15 @@ Parallel IBKR evaluation strategy:
 - current implementation status: the bridge now supports operational write-path actions for cancel-by-symbol, market close-position flows, and paper bracket placement used by the app-side IBKR paper flow
 - current implementation status: holiday-aware VM control is now implemented in the main Cloud Run app through `POST /scheduler/ibkr-vm-control`, which reuses the NYSE calendar before starting the VM on trading days
 - current implementation status: IBKR login-required alerting now exists through `POST /scheduler/ibkr-login-alert`, which sends Telegram bot alerts during the configured alert window
-- current implementation status: the persistence model is being extended to tag paper-trading rows by broker so Alpaca and IBKR orders, trade events, lifecycles, and attempts can be compared cleanly from the database
-- current implementation status: the scan flow is now being split into two true parallel tracks instead of one shared candidate set, so Alpaca continues to evaluate from Twelve Data while IBKR evaluates from IBKR market data before placing to its own paper account
+- current implementation status: the persistence model is being extended to tag paper-trading rows by broker so IBKR and IBKR orders, trade events, lifecycles, and attempts can be compared cleanly from the database
+- current implementation status: the scan flow is now being split into two true parallel tracks instead of one shared candidate set, so IBKR continues to evaluate from Twelve Data while IBKR evaluates from IBKR market data before placing to its own paper account
 - target architecture:
 - `1.` Cloud Run remains the main app, dashboard, scheduler, and Neon-backed API
 - `2.` a GCP VM runs IB Gateway plus a small authenticated IBKR bridge service
 - `3.` Cloud Run reaches the VM over an internal path using a Serverless VPC Access connector plus the VM internal IP, rather than a public bridge URL
 - `4.` the main app talks to the bridge service rather than directly to IB Gateway
 - scan-path split:
-- `1.` Alpaca paper flow uses Twelve Data candles plus Alpaca paper placement
+- `1.` IBKR paper flow uses Twelve Data candles plus IBKR paper placement
 - `2.` IBKR paper flow uses IBKR market data plus IBKR paper placement
 - `3.` both flows run from the same scheduler invocation and persist separately with broker-tagged records for later comparison
 - VM operating window:
@@ -223,16 +223,16 @@ Parallel IBKR evaluation strategy:
 - `POST /positions/close`
 - implementation order:
 - `1.` add a broker interface/abstraction layer in the app
-- `2.` refactor the existing Alpaca path to implement that interface without changing behavior
+- `2.` refactor the existing IBKR path to implement that interface without changing behavior
 - `3.` build the IBKR bridge on the VM for paper trading only
 - `4.` add an IBKR adapter in the app for account, orders, positions, cancel, close, sync, and reconcile operations
-- `5.` keep Alpaca as the primary paper broker while IBKR runs in shadow mode
+- `5.` keep IBKR as the primary paper broker while IBKR runs in shadow mode
 - `6.` log broker-side comparisons for market data, order acceptance, fill behavior, and lifecycle outcomes
 - comparison goals:
 - `1.` compare market-data completeness and opening-range reliability
 - `2.` compare paper fill behavior and rejection patterns
 - `3.` compare operational overhead, stability, and cost
-- `4.` compare broker-tagged DB records directly so dashboard and SQL analysis can distinguish Alpaca vs IBKR behavior without code-specific heuristics
+- `4.` compare broker-tagged DB records directly so dashboard and SQL analysis can distinguish IBKR vs IBKR behavior without code-specific heuristics
 - decision point: only consider changing direction after enough parallel sessions show a clear advantage in data quality or execution quality
 
 ### 5.5 Operational checklist
@@ -269,8 +269,8 @@ Current paper-trading config defaults:
 - `PAPER_TRADE_MAX_POSITIONS=10` as the dormant future cap when the flag is re-enabled
 - instrument watchlists are intentionally split across multiple categories to stay below the per-category Twelve Data symbol ceiling
 - these values are now carried through deployment config in `cloudbuild.yaml`, so future changes can be made at deploy-time without editing strategy logic
-- placement sizing is additionally clamped by `ALPACA_MAX_NOTIONAL`, so confidence-based sizing cannot expand a paper trade above the broker-side per-trade hard cap
-- Alpaca HTTP audit logging is now opt-in for successful requests via `ENABLE_ALPACA_HTTP_AUDIT`; failures are always persisted
+- placement sizing is additionally clamped by `PAPER_MAX_NOTIONAL`, so confidence-based sizing cannot expand a paper trade above the broker-side per-trade hard cap
+- IBKR HTTP audit logging is now opt-in for successful requests via `ENABLE_BROKER_HTTP_AUDIT`; failures are always persisted
 - the Cloud Run container now starts Gunicorn with a 300-second worker timeout so the `daily-post-close` scheduler flow has enough time to finish reconciliation and exports without being killed at the default 30-second boundary
 
 ---
@@ -324,13 +324,13 @@ Target direction:
 ### Broker integration
 - `brokers/`
   - `base.py`
-  - `alpaca_adapter.py`
   - `ibkr_adapter.py`
-- `alpaca/`
-  - `alpaca_http.py`
-  - `alpaca_client.py`
-  - `alpaca_orders.py`
-  - `alpaca_positions.py`
+  - `ibkr_adapter.py`
+- `ibkr/`
+  - `ibkr_http.py`
+  - `ibkr_client.py`
+  - `ibkr_orders.py`
+  - `ibkr_positions.py`
   - `paper.py`
   - `sync.py`
   - `reconcile.py`
@@ -357,7 +357,7 @@ Current code reality:
 - this cleanup is in progress; repair and backfill scripts are being moved out of the repository root first because they are low-risk and contribute heavily to perceived root-level sprawl
 - export-related runtime modules have now been consolidated under `exports/`, which reduces root-level noise without changing hot-path scan/sync behavior
 - analytics and scan modules have now been consolidated under `analytics/`, which makes the repository shape clearer without changing the service boundaries used by the runtime
-- Alpaca integration wrappers have now been folded into the existing `alpaca/` package, so broker code no longer spills across the repository root
+- IBKR integration wrappers have now been folded into the existing `ibkr/` package, so broker code no longer spills across the repository root
 - orchestration and context helpers have now been consolidated under `orchestration/`, which leaves the repository root focused on app entrypoints and shared foundations
 - the unused `export_to_github.py` stub has been removed from the root
 - shared foundations have now been consolidated under `core/`, so DB access, structured logging, and trade math are no longer scattered at the repository root
@@ -429,13 +429,13 @@ Current code reality:
 Responsible for:
 - running market scan flow
 - producing trade candidates
-- placing Alpaca paper trades
+- placing IBKR paper trades
 - recording scan output
 - creating OPEN lifecycle records
 
 #### Sync service
 Responsible for:
-- checking open paper trades against Alpaca
+- checking open paper trades against IBKR
 - detecting exits (stop, target, manual, broker-side closure)
 - recording close events
 - updating lifecycle records to CLOSED
@@ -455,7 +455,7 @@ Responsible for:
 
 ## 8. External Integrations
 
-### 8.1 Alpaca
+### 8.1 IBKR
 
 Used for:
 - paper order placement
@@ -464,7 +464,7 @@ Used for:
 - order status lookup
 - order synchronization
 
-All Alpaca requests should be logged into `broker_api_logs` where practical.
+All IBKR requests should be logged into `broker_api_logs` where practical.
 
 ### 8.2 GitHub
 
@@ -554,7 +554,7 @@ Stores summary-level reconciliation run results.
 Stores row-level reconciliation comparisons.
 
 #### `broker_api_logs`
-Stores Alpaca request/response logging with fields including:
+Stores IBKR request/response logging with fields including:
 - logged_at
 - method
 - url
@@ -592,7 +592,7 @@ A stable trade key should be derived from:
 ### 9.4 Lifecycle state transitions
 - OPEN created when paper order placement is successful
 - CLOSED updated when exit is confirmed or forced
-- CLOSED must also be updated when Alpaca position flattening is detected through a separate broker-side exit order that is not the original TP/SL child leg
+- CLOSED must also be updated when IBKR position flattening is detected through a separate broker-side exit order that is not the original TP/SL child leg
 
 ### 9.5 Current status
 **Implemented with a narrower residual ambiguity still worth monitoring**
@@ -612,16 +612,16 @@ Implemented behavior now includes:
 - sync logic can identify separate filled broker-side exit orders that flattened a position outside the original bracket leg flow
 - lifecycle rows are updated to CLOSED using the detected exit time, exit price, and an external/manual close style exit reason
 - reconciliation treats `MANUAL_CLOSE` and `EXTERNAL_EXIT` as equivalent for comparison purposes
-- sync can auto-heal leftover Alpaca positions when the database shows no open paper trades but Alpaca still shows an open position
+- sync can auto-heal leftover IBKR positions when the database shows no open paper trades but IBKR still shows an open position
 
 Remaining investigation:
 - if multiple historical trades exist for the same symbol, the system must continue ensuring that a delayed broker-side exit is mapped to the correct parent trade
 - AAPL-style same-symbol rapid re-entry cases are now surfaced as explicit `exit_not_resolved` ambiguity warnings when multiple external exits remain plausible for the same parent trade
 
 Primary implementation areas:
-- `alpaca_sync.py`
+- `ibkr_sync.py`
 - `services/sync_service.py`
-- `alpaca_reconcile.py`
+- `ibkr_reconcile.py`
 
 ---
 
@@ -745,7 +745,7 @@ This logic should be applied in:
 - `services/scan_service.py` (candidate evaluation and sizing)
 
 Optional enforcement layer:
-- `paper_alpaca.py` (final validation before order placement)
+- `paper_ibkr.py` (final validation before order placement)
 
 #### 10.7.5 Current status
 
@@ -921,7 +921,7 @@ Analytics are generated from trade data and signal data.
 - trade paired trades output
 - signal analysis summary
 - signal analysis row output
-- Alpaca reconciliation report
+- IBKR reconciliation report
 
 ### Export destinations
 - runtime export staging directories
@@ -955,7 +955,7 @@ The dashboard is a React/Vite frontend backed by Flask API endpoints.
 - filters
 - insight cards
 - reconciliation detail/history tables
-- Alpaca API log views
+- IBKR API log views
 - execution insight panels for `paper_trade_attempts`
 
 ### Backend dashboard summary returns
@@ -974,7 +974,7 @@ The dashboard is a React/Vite frontend backed by Flask API endpoints.
 - system health controls such as manual refresh and manual reconciliation trigger are implemented
 - risk / exposure / adaptive sizing visibility has been materially improved in backend and UI support
 - data quality is now materially improved after lifecycle, sync, and reconciliation fixes
-- Alpaca logs/errors section is now implemented
+- IBKR logs/errors section is now implemented
 - focused views, drilldowns, refresh-state visibility, execution insights, and reconciliation/admin views are implemented
 - hosted static deployment is active via Vercel, while the backend remains on Cloud Run
 ### 13.1 Implemented UI capabilities
@@ -985,7 +985,7 @@ The dashboard UI currently includes:
 - open trades table
 - trade lifecycle table
 - system health section
-- Alpaca vs DB open-position mismatch display
+- IBKR vs DB open-position mismatch display
 - mismatch severity label driven by backend reconciliation output
 - reconciliation summary section
 - reconciliation breakdown section
@@ -1088,24 +1088,24 @@ Reconciliation compares local trade data and broker-side order/exit data.
 - Flask / gunicorn runtime logs
 - trade event logs
 - broker order records
-- Alpaca API logs in DB
+- IBKR API logs in DB
 - export failure logs
 - reconciliation output
 
 ### Required observability goals
 - identify failed scheduler runs quickly
-- inspect Alpaca API failures and latency
+- inspect IBKR API failures and latency
 - inspect reconciliation mismatch patterns
 - inspect export and GitHub push failures
 
 ### Current status
 **Partially implemented, but improved operationally**
-- DB-level Alpaca logging exists
-- Alpaca HTTP failures are always stored, while successful request auditing is now controlled by `ENABLE_ALPACA_HTTP_AUDIT`
+- DB-level IBKR logging exists
+- IBKR HTTP failures are always stored, while successful request auditing is now controlled by `ENABLE_BROKER_HTTP_AUDIT`
 - Cloud Run logs are useful for runtime debugging
 - reconciliation observability in the dashboard now exists
 - sync and auto-heal behavior can now be inspected through endpoint responses and runtime logs
-- dashboard views for Alpaca API logs/errors now exist, but deeper runtime alerting and correlation can still improve
+- dashboard views for IBKR API logs/errors now exist, but deeper runtime alerting and correlation can still improve
 
 ---
 
@@ -1118,7 +1118,7 @@ Reconciliation compares local trade data and broker-side order/exit data.
 - `GITHUB_BRANCH`
 - `DATABASE_URL`
 - `DB_SCHEMA`
-- Alpaca API keys
+- IBKR API keys
 - export path variables
 
 ### Security requirements
@@ -1143,7 +1143,7 @@ Reconciliation compares local trade data and broker-side order/exit data.
 - consolidated Cloud Scheduler architecture with three production jobs
 - PostgreSQL schema for core operational tables
 - repository-based persistence split with `storage.py` compatibility layer
-- Alpaca API DB logging
+- IBKR API DB logging
 - daily snapshot export to GitHub
 - React dashboard multi-view UI
 - reconciliation summary/detail/history UI structure

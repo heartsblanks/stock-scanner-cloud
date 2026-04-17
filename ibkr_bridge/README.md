@@ -5,7 +5,7 @@ This service is intended to run on a GCP VM next to IB Gateway.
 Purpose:
 - keep IB Gateway off Cloud Run
 - expose a small authenticated HTTP API that the main app can call
-- support parallel paper-trading evaluation against the current Alpaca setup
+- support parallel paper-trading evaluation against the current IBKR setup
 
 Current status:
 - read-path implementation started
@@ -218,7 +218,7 @@ When the VM bridge is reachable and implemented, configure the main app with:
 - `IBKR_BRIDGE_TOKEN=...`
 
 For parallel evaluation, keep:
-- `PAPER_BROKER=alpaca`
+- `PAPER_BROKER=ibkr`
 - and use shadow/compare flags separately until IBKR is proven stable
 
 ## Why VM Deployment Is Separate From `git push`
