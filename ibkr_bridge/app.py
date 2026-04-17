@@ -237,11 +237,23 @@ def get_bridge_journal():
 
         result = subprocess.run(
             ["journalctl", "-u", unit, "--since", since, "--until", until, "--no-pager"],
-            check=True,
+            check=False,
             capture_output=True,
             text=True,
         )
-        lines = result.stdout.splitlines()
+        stdout_lines = result.stdout.splitlines()
+        no_entries = (
+            result.returncode == 1
+            and len(stdout_lines) == 1
+            and stdout_lines[0].strip().lower().startswith("-- no entries")
+        )
+        if result.returncode not in (0, 1) or (result.returncode == 1 and not no_entries):
+            raise RuntimeError(
+                "journalctl failed "
+                f"(code={result.returncode}) "
+                f"stderr={result.stderr.strip()!r} stdout={result.stdout.strip()!r}"
+            )
+        lines = [] if no_entries else stdout_lines
         payload = {
             "ok": True,
             "unit": unit,
