@@ -108,7 +108,7 @@ class IbkrPaperBroker:
         self._ensure_bridge_enabled()
         return ibkr_bridge_get(
             f"/orders/{order_id}/sync",
-            timeout=_bridge_timeout("IBKR_BRIDGE_ORDER_SYNC_TIMEOUT_SECONDS", 15),
+            timeout=_bridge_timeout("IBKR_BRIDGE_ORDER_SYNC_TIMEOUT_SECONDS", 8),
         )
 
     def get_order_by_id(self, order_id: str, nested: bool = False) -> dict[str, Any]:

@@ -255,7 +255,7 @@ def _run_ibkr_shadow_scans(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def handle_sync_paper_trades():
-    return runtime_handle_sync_paper_trades(
+    result = runtime_handle_sync_paper_trades(
         run_handle_sync_paper_trades=run_handle_sync_paper_trades,
         execute_sync_paper_trades=execute_sync_paper_trades,
         get_open_paper_trades=get_open_paper_trades,
@@ -274,6 +274,39 @@ def handle_sync_paper_trades():
         get_open_state_for_broker_name=get_open_state_for_broker_name,
         close_position_for_broker_name=close_position_for_broker_name,
     )
+    body = result[0] if isinstance(result, tuple) and len(result) == 2 else result
+    status_code = result[1] if isinstance(result, tuple) and len(result) == 2 else None
+
+    auto_repair_enabled = str(os.getenv("AUTO_IBKR_REPAIR_AFTER_PARTIAL_SYNC", "true")).strip().lower() in {"1", "true", "yes", "on"}
+    if isinstance(body, dict) and auto_repair_enabled:
+        partial = bool(body.get("partial"))
+        stopped_reason = str(body.get("stopped_reason", "") or "").strip().lower()
+        if partial and stopped_reason.startswith("ibkr_"):
+            target_date = datetime.now(NY_TZ).date().isoformat()
+            try:
+                repair_result = run_ibkr_stale_close_repair(target_date=target_date)
+                body["post_sync_repair"] = repair_result
+                log_info(
+                    "Automatic IBKR stale-close repair completed after partial sync",
+                    component="app",
+                    operation="handle_sync_paper_trades",
+                    target_date=target_date,
+                    stopped_reason=stopped_reason,
+                    repaired_count=(repair_result or {}).get("repaired_count"),
+                    skipped_count=(repair_result or {}).get("skipped_count"),
+                )
+            except Exception as repair_error:
+                body["post_sync_repair"] = {"ok": False, "error": str(repair_error), "target_date": target_date}
+                log_info(
+                    "Automatic IBKR stale-close repair failed after partial sync",
+                    component="app",
+                    operation="handle_sync_paper_trades",
+                    target_date=target_date,
+                    stopped_reason=stopped_reason,
+                    error=str(repair_error),
+                )
+
+    return (body, status_code) if status_code is not None else body
 
 def handle_scan_request(payload):
     return runtime_handle_scan_request(

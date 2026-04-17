@@ -45,6 +45,20 @@ def _close_time_budget_seconds(*, broker_name: str) -> float | None:
     return value
 
 
+def _ibkr_eod_poll_config() -> tuple[int, float]:
+    attempts_raw = str(os.getenv("IBKR_EOD_CLOSE_POLL_ATTEMPTS", "5")).strip()
+    interval_raw = str(os.getenv("IBKR_EOD_CLOSE_POLL_INTERVAL_SECONDS", "3")).strip()
+    try:
+        attempts = max(int(attempts_raw), 0)
+    except Exception:
+        attempts = 5
+    try:
+        interval = max(float(interval_raw), 0.0)
+    except Exception:
+        interval = 3.0
+    return attempts, interval
+
+
 def execute_close_all_paper_positions(
     *,
     get_open_positions: Callable[[], list[dict[str, Any]]],
@@ -217,16 +231,73 @@ def execute_close_all_paper_positions(
         if close_response_filled_qty not in (None, "", 0, 0.0, "0", "0.0"):
             close_filled_qty = str(close_response_filled_qty).strip()
 
+        if broker_name == "IBKR" and close_order_id and not close_filled:
+            poll_attempts, poll_interval = _ibkr_eod_poll_config()
+            for poll_idx in range(poll_attempts):
+                if poll_interval > 0:
+                    time.sleep(poll_interval)
+                try:
+                    polled_order = get_order_by_id(close_order_id, nested=False)
+                except Exception as poll_error:
+                    log_exception(
+                        "Paper EOD close follow-up poll failed",
+                        poll_error,
+                        component="trade_service",
+                        operation="execute_close_all_paper_positions",
+                        symbol=symbol,
+                        broker=broker_name,
+                        order_id=close_order_id,
+                        poll_attempt=poll_idx + 1,
+                    )
+                    continue
+
+                polled_status = str(polled_order.get("status", close_order_status)).strip()
+                polled_filled_qty = str(polled_order.get("filled_qty", close_filled_qty)).strip()
+                polled_avg_fill = polled_order.get("filled_avg_price", close_filled_avg_price)
+                if polled_avg_fill not in (None, ""):
+                    close_filled_avg_price = str(polled_avg_fill).strip()
+
+                close_order_status = polled_status
+                close_filled_qty = polled_filled_qty
+                close_filled = close_order_status.lower() == "filled" or close_filled_avg_price not in ("", None)
+                if close_filled:
+                    log_info(
+                        "Paper EOD close resolved during follow-up polling",
+                        component="trade_service",
+                        operation="execute_close_all_paper_positions",
+                        symbol=symbol,
+                        broker=broker_name,
+                        order_id=close_order_id,
+                        poll_attempt=poll_idx + 1,
+                        status=close_order_status,
+                    )
+                    break
+
         if close_position_closed and not close_filled:
             if broker_name == "IBKR":
-                log_warning(
-                    "Paper EOD close detected flattened IBKR position without confirmed fill; lifecycle update deferred",
-                    component="trade_service",
-                    operation="execute_close_all_paper_positions",
-                    symbol=symbol,
-                    broker=broker_name,
-                    order_id=close_order_id,
-                )
+                filled_qty_value = to_float_or_none(close_filled_qty)
+                if filled_qty_value and filled_qty_value > 0 and current_price not in (None, "", "None"):
+                    close_filled = True
+                    if not close_filled_avg_price:
+                        close_filled_avg_price = str(current_price).strip()
+                    log_warning(
+                        "Paper EOD close inferred exit price after broker confirmed flat position",
+                        component="trade_service",
+                        operation="execute_close_all_paper_positions",
+                        symbol=symbol,
+                        broker=broker_name,
+                        order_id=close_order_id,
+                        inferred_exit_price=close_filled_avg_price,
+                    )
+                else:
+                    log_warning(
+                        "Paper EOD close detected flattened IBKR position without confirmed fill; lifecycle update deferred",
+                        component="trade_service",
+                        operation="execute_close_all_paper_positions",
+                        symbol=symbol,
+                        broker=broker_name,
+                        order_id=close_order_id,
+                    )
             else:
                 close_filled = True
                 if not close_filled_avg_price and current_price not in (None, "", "None"):
