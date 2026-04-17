@@ -60,6 +60,29 @@ def _normalize_ibkr_client_order_id(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _parse_sync_timestamp(raw_value: Any) -> datetime | None:
+    text = str(raw_value or "").strip()
+    if not text:
+        return None
+    try:
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _first_sync_timestamp(sync_result: dict[str, Any], keys: tuple[str, ...]) -> datetime | None:
+    for key in keys:
+        parsed = _parse_sync_timestamp(sync_result.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
 def _expected_ibkr_client_order_id(
     open_row: dict[str, Any],
     *,
@@ -126,6 +149,37 @@ def _validate_ibkr_sync_identity(
         allowed_share_delta = max(1.0, stored_shares * 0.05)
         if abs(stored_shares - synced_shares) > allowed_share_delta:
             return False, f"entry_qty_mismatch:{stored_shares}->{synced_shares}"
+
+    open_entry_time = _first_sync_timestamp(
+        open_row,
+        ("entry_time", "timestamp_utc", "created_at"),
+    )
+    synced_exit_time = _first_sync_timestamp(
+        sync_result,
+        ("exit_filled_at", "exit_time", "filled_at", "updated_at"),
+    )
+    if open_entry_time is not None and synced_exit_time is not None:
+        # Protect against IBKR order-id reuse returning stale fills from a prior session.
+        if synced_exit_time < open_entry_time:
+            return False, f"exit_time_before_entry:{open_entry_time.isoformat()}->{synced_exit_time.isoformat()}"
+
+    synced_exit_price = to_float_or_none(
+        sync_result.get("exit_filled_avg_price", "") or sync_result.get("exit_price", "")
+    )
+    if stored_entry_price is not None and synced_exit_price is not None and stored_entry_price > 0:
+        max_multiplier_raw = str(os.getenv("IBKR_SYNC_EXIT_PRICE_MAX_MULTIPLIER", "3.0")).strip()
+        min_multiplier_raw = str(os.getenv("IBKR_SYNC_EXIT_PRICE_MIN_MULTIPLIER", "0.2")).strip()
+        try:
+            max_multiplier = max(float(max_multiplier_raw), 1.0)
+        except Exception:
+            max_multiplier = 3.0
+        try:
+            min_multiplier = max(min(float(min_multiplier_raw), 1.0), 0.01)
+        except Exception:
+            min_multiplier = 0.2
+        ratio = synced_exit_price / stored_entry_price
+        if ratio > max_multiplier or ratio < min_multiplier:
+            return False, f"exit_price_ratio_outlier:{round(ratio, 6)}"
 
     return True, None
 

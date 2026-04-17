@@ -168,6 +168,7 @@ CREATE INDEX IF NOT EXISTS idx_scan_runs_time ON scan_runs(scan_time);
 CREATE INDEX IF NOT EXISTS idx_signal_logs_timestamp ON signal_logs(timestamp_utc);
 CREATE INDEX IF NOT EXISTS idx_signal_logs_top_symbol ON signal_logs(top_symbol);
 CREATE INDEX IF NOT EXISTS idx_broker_orders_order_id ON broker_orders(order_id);
+CREATE INDEX IF NOT EXISTS idx_broker_orders_broker_order_symbol ON broker_orders(broker, order_id, symbol);
 CREATE INDEX IF NOT EXISTS idx_paper_trade_attempts_timestamp ON paper_trade_attempts(timestamp_utc);
 CREATE INDEX IF NOT EXISTS idx_paper_trade_attempts_scan_id ON paper_trade_attempts(scan_id);
 CREATE INDEX IF NOT EXISTS idx_paper_trade_attempts_symbol_timestamp ON paper_trade_attempts(symbol, timestamp_utc);
@@ -249,7 +250,6 @@ CREATE INDEX IF NOT EXISTS idx_trade_lifecycles_status ON trade_lifecycles(statu
 CREATE INDEX IF NOT EXISTS idx_trade_lifecycles_entry_time ON trade_lifecycles(entry_time);
 CREATE INDEX IF NOT EXISTS idx_trade_lifecycles_trade_key ON trade_lifecycles(trade_key);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_trade_lifecycles_trade_key ON trade_lifecycles(trade_key);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_broker_orders_order_id ON broker_orders(order_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_scan_runs_scan_time_mode_source ON scan_runs(scan_time, mode, scan_source);
 
 -- Mode rankings: rolling broker-specific ordering used by scheduled scans

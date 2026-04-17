@@ -20,11 +20,23 @@ def insert_broker_order(
     submitted_at: Optional[datetime] = None,
     filled_at: Optional[datetime] = None,
 ) -> None:
+    normalized_broker = str(broker or "").strip().upper()
+    normalized_symbol = str(symbol or "").strip().upper()
     existing = fetch_one(
         """
-        SELECT id FROM broker_orders WHERE order_id = %(order_id)s ORDER BY created_at DESC, id DESC LIMIT 1
+        SELECT id
+        FROM broker_orders
+        WHERE order_id = %(order_id)s
+          AND UPPER(COALESCE(NULLIF(broker, ''), 'IBKR')) = %(broker)s
+          AND UPPER(COALESCE(symbol, '')) = %(symbol)s
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
         """,
-        {"order_id": order_id},
+        {
+            "order_id": order_id,
+            "broker": normalized_broker or "IBKR",
+            "symbol": normalized_symbol,
+        },
     )
     if existing:
         execute(

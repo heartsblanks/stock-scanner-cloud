@@ -59,7 +59,7 @@ def _build_lifecycle_repair_payload(
 def _repair_payload_from_trade_event(
     *,
     row: dict[str, Any],
-    get_latest_exit_trade_event_for_parent_order_id: Callable[[str, str | None], dict[str, Any] | None] | None,
+    get_latest_exit_trade_event_for_parent_order_id: Callable[[str, str | None, str | None], dict[str, Any] | None] | None,
     parse_iso_utc: Callable[[str], Any],
     to_float_or_none: Callable[[Any], float | None],
 ) -> dict[str, Any] | None:
@@ -70,7 +70,12 @@ def _repair_payload_from_trade_event(
     if not parent_order_id:
         return None
 
-    event = get_latest_exit_trade_event_for_parent_order_id(parent_order_id, "IBKR") or {}
+    symbol = str(row.get("symbol", "") or "").strip().upper()
+    try:
+        event = get_latest_exit_trade_event_for_parent_order_id(parent_order_id, "IBKR", symbol) or {}
+    except TypeError:
+        # Backward compatibility for call sites/tests still passing the older 2-arg callback.
+        event = get_latest_exit_trade_event_for_parent_order_id(parent_order_id, "IBKR") or {}
     if not event:
         return None
 
@@ -138,7 +143,7 @@ def repair_ibkr_stale_closes(
     target_date: str,
     get_stale_ibkr_closed_trade_lifecycles: Callable[..., list[dict[str, Any]]],
     sync_order_by_id_for_broker: Callable[[str, str], dict[str, Any]],
-    get_latest_exit_trade_event_for_parent_order_id: Callable[[str, str | None], dict[str, Any] | None] | None = None,
+    get_latest_exit_trade_event_for_parent_order_id: Callable[[str, str | None, str | None], dict[str, Any] | None] | None = None,
     upsert_trade_lifecycle: Callable[..., None],
     safe_insert_broker_order: Callable[..., None],
     parse_iso_utc: Callable[[str], Any],
