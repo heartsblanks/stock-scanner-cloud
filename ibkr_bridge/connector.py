@@ -741,6 +741,9 @@ class IbkrGatewayClient:
         ib = self._connect()
         total_started_at = time.monotonic()
 
+        resolved_by_order_id: dict[str, dict[str, Any]] = {}
+        unknown_fallback_by_order_id: dict[str, dict[str, Any]] = {}
+
         fills_started_at = time.monotonic()
         fills = self._fetch_recent_fills(ib)
         fills_duration_ms = int((time.monotonic() - fills_started_at) * 1000)
@@ -751,57 +754,91 @@ class IbkrGatewayClient:
             fills_count=len(fills),
         )
 
-        completed_started_at = time.monotonic()
-        completed_trades = self._fetch_completed_trades(ib)
-        completed_duration_ms = int((time.monotonic() - completed_started_at) * 1000)
-        self._log_sync_batch_stage(
-            stage="completed",
-            duration_ms=completed_duration_ms,
-            order_count=len(normalized_order_ids),
-            completed_count=len(completed_trades),
-        )
-
-        open_started_at = time.monotonic()
-        open_trades = self._fetch_open_trades(ib)
-        open_duration_ms = int((time.monotonic() - open_started_at) * 1000)
-        self._log_sync_batch_stage(
-            stage="open_trades",
-            duration_ms=open_duration_ms,
-            order_count=len(normalized_order_ids),
-            open_trade_count=len(open_trades),
-        )
-
-        results: list[dict[str, Any]] = []
-        synced_count = 0
+        unresolved_after_fills: list[str] = []
         for order_id in normalized_order_ids:
             fills_result = self._sync_order_from_fills_snapshot(
                 fills=fills,
                 order_id=order_id,
             )
             if str(fills_result.get("status", "")).strip().lower() != "unknown":
-                synced_count += 1
-                results.append(fills_result)
-                continue
+                resolved_by_order_id[order_id] = fills_result
+            else:
+                unknown_fallback_by_order_id[order_id] = fills_result
+                unresolved_after_fills.append(order_id)
 
-            completed_result = self._sync_order_from_completed_trades_snapshot(
-                trades=completed_trades,
-                order_id=order_id,
+        completed_duration_ms = 0
+        unresolved_after_completed = list(unresolved_after_fills)
+        if unresolved_after_fills:
+            completed_started_at = time.monotonic()
+            completed_trades = self._fetch_completed_trades(ib)
+            completed_duration_ms = int((time.monotonic() - completed_started_at) * 1000)
+            self._log_sync_batch_stage(
+                stage="completed",
+                duration_ms=completed_duration_ms,
+                order_count=len(unresolved_after_fills),
+                completed_count=len(completed_trades),
             )
-            if str(completed_result.get("status", "")).strip().lower() != "unknown":
-                synced_count += 1
-                results.append(completed_result)
-                continue
 
-            open_result = self._sync_order_from_open_trades_snapshot(
-                open_trades=open_trades,
-                order_id=order_id,
+            unresolved_after_completed = []
+            for order_id in unresolved_after_fills:
+                completed_result = self._sync_order_from_completed_trades_snapshot(
+                    trades=completed_trades,
+                    order_id=order_id,
+                )
+                if str(completed_result.get("status", "")).strip().lower() != "unknown":
+                    resolved_by_order_id[order_id] = completed_result
+                else:
+                    unknown_fallback_by_order_id[order_id] = completed_result
+                    unresolved_after_completed.append(order_id)
+        else:
+            self._log_sync_batch_stage(
+                stage="completed",
+                duration_ms=0,
+                order_count=0,
+                completed_count=0,
             )
-            if str(open_result.get("status", "")).strip().lower() != "unknown":
+
+        open_duration_ms = 0
+        if unresolved_after_completed:
+            open_started_at = time.monotonic()
+            open_trades = self._fetch_open_trades(ib)
+            open_duration_ms = int((time.monotonic() - open_started_at) * 1000)
+            self._log_sync_batch_stage(
+                stage="open_trades",
+                duration_ms=open_duration_ms,
+                order_count=len(unresolved_after_completed),
+                open_trade_count=len(open_trades),
+            )
+
+            for order_id in unresolved_after_completed:
+                open_result = self._sync_order_from_open_trades_snapshot(
+                    open_trades=open_trades,
+                    order_id=order_id,
+                )
+                if str(open_result.get("status", "")).strip().lower() != "unknown":
+                    resolved_by_order_id[order_id] = open_result
+        else:
+            self._log_sync_batch_stage(
+                stage="open_trades",
+                duration_ms=0,
+                order_count=0,
+                open_trade_count=0,
+            )
+
+        results: list[dict[str, Any]] = []
+        synced_count = 0
+        for order_id in normalized_order_ids:
+            resolved = resolved_by_order_id.get(order_id)
+            if isinstance(resolved, dict):
                 synced_count += 1
-                results.append(open_result)
+                results.append(resolved)
                 continue
 
-            results.append(completed_result)
+            fallback_unknown = unknown_fallback_by_order_id.get(order_id)
+            if isinstance(fallback_unknown, dict):
+                results.append(fallback_unknown)
+                continue
+            results.append(self._unknown_sync_payload(order_id, "Order was not found in IBKR batch sync stages."))
 
         total_duration_ms = int((time.monotonic() - total_started_at) * 1000)
         unknown_count = max(len(normalized_order_ids) - synced_count, 0)
