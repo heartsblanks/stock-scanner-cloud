@@ -62,6 +62,7 @@ from repositories.trades_repo import (
     get_trade_lifecycle_summary_for_date,
     get_trade_lifecycle_summary_from_table,
     get_trade_lifecycles,
+    get_trade_lifecycles_page,
     get_trade_lifecycles_for_date,
     insert_trade_event,
     refresh_mode_rankings,

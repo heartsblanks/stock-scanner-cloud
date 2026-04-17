@@ -69,12 +69,31 @@ def register_trade_routes(
     get_recent_trade_event_rows,
     get_latest_scan_summary,
     get_trade_lifecycles,
+    get_trade_lifecycles_page=None,
     get_trade_lifecycle_summary_from_table,
     get_open_positions_for_broker_name=None,
     get_open_orders_for_broker_name=None,
     get_open_state_for_broker_name=None,
     upsert_trade_lifecycle,
 ):
+    def _parse_cursor():
+        cursor_ts_raw = str(request.args.get("cursor_ts", "")).strip()
+        cursor_id_raw = str(request.args.get("cursor_id", "")).strip()
+        if not cursor_ts_raw and not cursor_id_raw:
+            return None, None, None
+        if not cursor_ts_raw or not cursor_id_raw:
+            return None, None, "cursor_ts and cursor_id must be provided together"
+        try:
+            normalized_ts = cursor_ts_raw[:-1] + "+00:00" if cursor_ts_raw.endswith("Z") else cursor_ts_raw
+            cursor_ts = datetime.fromisoformat(normalized_ts)
+        except Exception:
+            return None, None, "cursor_ts must be an ISO timestamp"
+        try:
+            cursor_id = int(cursor_id_raw)
+        except Exception:
+            return None, None, "cursor_id must be an integer"
+        return cursor_ts, cursor_id, None
+
     def _enrich_open_trade_rows(rows: list[dict], broker_filter: str | None = None) -> tuple[list[dict], dict]:
         normalized_broker_filter = str(broker_filter or "").strip().upper()
         should_enrich_ibkr = not normalized_broker_filter or normalized_broker_filter == "IBKR"
@@ -586,12 +605,41 @@ def register_trade_routes(
         try:
             limit = int(request.args.get("limit", 100))
             broker = request.args.get("broker")
-            rows = get_trade_lifecycles(limit=limit, status="OPEN", broker=broker)
+            cursor_ts, cursor_id, cursor_error = _parse_cursor()
+            if cursor_error:
+                return jsonify({"ok": False, "error": cursor_error}), 400
+
+            if get_trade_lifecycles_page is not None:
+                page = get_trade_lifecycles_page(
+                    limit=limit,
+                    status="OPEN",
+                    broker=broker,
+                    cursor_sort_time=cursor_ts,
+                    cursor_id=cursor_id,
+                )
+                rows = list(page.get("rows") or [])
+                has_more = bool(page.get("has_more"))
+                next_cursor_ts = page.get("next_cursor_ts")
+                next_cursor_id = page.get("next_cursor_id")
+                applied_limit = int(page.get("limit") or limit)
+            else:
+                rows = get_trade_lifecycles(limit=limit, status="OPEN", broker=broker)
+                has_more = False
+                next_cursor_ts = None
+                next_cursor_id = None
+                applied_limit = limit
+
             enriched_rows, enrichment = _enrich_open_trade_rows(rows, broker_filter=broker)
             return jsonify({
                 "ok": True,
                 "count": len(enriched_rows),
+                "limit": applied_limit,
                 "broker_filter": broker,
+                "has_more": has_more,
+                "next_cursor_ts": next_cursor_ts,
+                "next_cursor_id": next_cursor_id,
+                "cursor_ts": cursor_ts.isoformat() if cursor_ts else None,
+                "cursor_id": cursor_id,
                 "rows": enriched_rows,
                 **enrichment,
             })
@@ -659,14 +707,41 @@ def register_trade_routes(
             except Exception:
                 return jsonify({"ok": False, "error": "limit must be an integer"}), 400
 
-            rows = get_trade_lifecycles(limit=limit, status=status, broker=broker)
+            cursor_ts, cursor_id, cursor_error = _parse_cursor()
+            if cursor_error:
+                return jsonify({"ok": False, "error": cursor_error}), 400
+
+            if get_trade_lifecycles_page is not None:
+                page = get_trade_lifecycles_page(
+                    limit=limit,
+                    status=status,
+                    broker=broker,
+                    cursor_sort_time=cursor_ts,
+                    cursor_id=cursor_id,
+                )
+                rows = list(page.get("rows") or [])
+                has_more = bool(page.get("has_more"))
+                next_cursor_ts = page.get("next_cursor_ts")
+                next_cursor_id = page.get("next_cursor_id")
+                applied_limit = int(page.get("limit") or limit)
+            else:
+                rows = get_trade_lifecycles(limit=limit, status=status, broker=broker)
+                has_more = False
+                next_cursor_ts = None
+                next_cursor_id = None
+                applied_limit = limit
 
             return jsonify({
                 "ok": True,
                 "count": len(rows),
-                "limit": limit,
+                "limit": applied_limit,
                 "status_filter": status,
                 "broker_filter": broker,
+                "has_more": has_more,
+                "next_cursor_ts": next_cursor_ts,
+                "next_cursor_id": next_cursor_id,
+                "cursor_ts": cursor_ts.isoformat() if cursor_ts else None,
+                "cursor_id": cursor_id,
                 "rows": rows,
             })
         except Exception as e:

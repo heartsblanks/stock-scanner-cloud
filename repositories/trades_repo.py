@@ -438,6 +438,86 @@ def get_trade_lifecycles(limit: int = 100, status: Optional[str] = None, broker:
     )
 
 
+def get_trade_lifecycles_page(
+    *,
+    limit: int = 100,
+    status: Optional[str] = None,
+    broker: Optional[str] = None,
+    cursor_sort_time: Optional[datetime] = None,
+    cursor_id: Optional[int] = None,
+) -> dict[str, Any]:
+    normalized_status = normalize_text(status).upper() if status else ""
+    normalized_broker = normalize_text(broker).upper() if broker else ""
+
+    params: dict[str, Any] = {
+        "limit_plus_one": max(1, min(1000, int(limit))) + 1,
+    }
+    where_clauses: list[str] = []
+
+    if normalized_status:
+        where_clauses.append("UPPER(COALESCE(status, '')) = %(status)s")
+        params["status"] = normalized_status
+
+    if normalized_broker:
+        where_clauses.append("UPPER(COALESCE(broker, '')) = %(broker)s")
+        params["broker"] = normalized_broker
+
+    if cursor_sort_time is not None and cursor_id is not None:
+        where_clauses.append(
+            """
+            (
+                COALESCE(entry_time, created_at) < %(cursor_sort_time)s
+                OR (
+                    COALESCE(entry_time, created_at) = %(cursor_sort_time)s
+                    AND id < %(cursor_id)s
+                )
+            )
+            """
+        )
+        params["cursor_sort_time"] = cursor_sort_time
+        params["cursor_id"] = int(cursor_id)
+
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    rows = fetch_all(
+        f"""
+        SELECT *, COALESCE(entry_time, created_at) AS sort_timestamp
+        FROM trade_lifecycles
+        {where_sql}
+        ORDER BY COALESCE(entry_time, created_at) DESC, id DESC
+        LIMIT %(limit_plus_one)s
+        """,
+        params,
+    )
+
+    requested_limit = max(1, min(1000, int(limit)))
+    has_more = len(rows) > requested_limit
+    sliced_rows = rows[:requested_limit]
+
+    next_cursor_ts = None
+    next_cursor_id = None
+    if has_more and sliced_rows:
+        last_row = sliced_rows[-1]
+        sort_timestamp = last_row.get("sort_timestamp")
+        next_cursor_id = int(last_row.get("id")) if last_row.get("id") is not None else None
+        if hasattr(sort_timestamp, "isoformat"):
+            next_cursor_ts = sort_timestamp.isoformat()
+        elif sort_timestamp:
+            next_cursor_ts = str(sort_timestamp)
+
+    for row in sliced_rows:
+        row.pop("sort_timestamp", None)
+
+    return {
+        "rows": sliced_rows,
+        "has_more": has_more,
+        "next_cursor_ts": next_cursor_ts,
+        "next_cursor_id": next_cursor_id,
+        "limit": requested_limit,
+        "status_filter": normalized_status or None,
+        "broker_filter": normalized_broker or None,
+    }
+
+
 def get_stale_ibkr_closed_trade_lifecycles(*, target_date: Optional[str] = None, limit: int = 100) -> list[dict]:
     params: dict[str, Any] = {"limit": limit}
     date_clause = ""

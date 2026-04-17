@@ -20,11 +20,39 @@ export async function fetchDashboardSummary(date) {
   };
 }
 
-export async function fetchOpenTrades(limit = 100, broker) {
-  const params = { limit };
+function resolvePagedArgs(limitOrOptions, broker, status) {
+  if (typeof limitOrOptions === "object" && limitOrOptions !== null) {
+    const options = limitOrOptions;
+    const params = {
+      limit: Number(options.limit ?? 100),
+    };
+    if (options.broker) {
+      params.broker = options.broker;
+    }
+    if (options.status) {
+      params.status = options.status;
+    }
+    if (options.cursorTs) {
+      params.cursor_ts = options.cursorTs;
+    }
+    if (options.cursorId !== undefined && options.cursorId !== null && options.cursorId !== "") {
+      params.cursor_id = String(options.cursorId);
+    }
+    return params;
+  }
+
+  const params = { limit: Number(limitOrOptions ?? 100) };
   if (broker) {
     params.broker = broker;
   }
+  if (status) {
+    params.status = status;
+  }
+  return params;
+}
+
+export async function fetchOpenTrades(limitOrOptions = 100, broker) {
+  const params = resolvePagedArgs(limitOrOptions, broker);
 
   const response = await apiClient.get("/open-trades", {
     params,
@@ -44,14 +72,8 @@ export async function fetchClosedTrades(limit = 100, broker) {
   return response.data;
 }
 
-export async function fetchTradeLifecycle(limit = 100, status, broker) {
-  const params = { limit };
-  if (status) {
-    params.status = status;
-  }
-  if (broker) {
-    params.broker = broker;
-  }
+export async function fetchTradeLifecycle(limitOrOptions = 100, status, broker) {
+  const params = resolvePagedArgs(limitOrOptions, broker, status);
 
   const response = await apiClient.get("/trade-lifecycle", { params });
   return response.data;

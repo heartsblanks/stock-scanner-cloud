@@ -21,6 +21,8 @@ import {
 const AUTO_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
 const DASHBOARD_POLLING_WINDOW_START_MINUTES = 9 * 60 + 35;
 const DASHBOARD_POLLING_WINDOW_END_MINUTES = 16 * 60 + 30;
+const IBKR_OPEN_TRADES_PAGE_SIZE = 120;
+const IBKR_LIFECYCLE_PAGE_SIZE = 180;
 
 function getEasternMarketSnapshot(now = new Date()) {
   const formatter = new Intl.DateTimeFormat("en-US", {
@@ -76,6 +78,14 @@ export function useDashboardData(activeView = "overview") {
   const [lifecycle, setLifecycle] = useState([]);
   const [ibkrOpenTrades, setIbkrOpenTrades] = useState([]);
   const [ibkrLifecycle, setIbkrLifecycle] = useState([]);
+  const [ibkrOpenTradesHasMore, setIbkrOpenTradesHasMore] = useState(false);
+  const [ibkrLifecycleHasMore, setIbkrLifecycleHasMore] = useState(false);
+  const [ibkrOpenTradesCursorTs, setIbkrOpenTradesCursorTs] = useState(null);
+  const [ibkrOpenTradesCursorId, setIbkrOpenTradesCursorId] = useState(null);
+  const [ibkrLifecycleCursorTs, setIbkrLifecycleCursorTs] = useState(null);
+  const [ibkrLifecycleCursorId, setIbkrLifecycleCursorId] = useState(null);
+  const [isLoadingMoreIbkrOpenTrades, setIsLoadingMoreIbkrOpenTrades] = useState(false);
+  const [isLoadingMoreIbkrLifecycle, setIsLoadingMoreIbkrLifecycle] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [sectionLoading, setSectionLoading] = useState(() => getInitialSectionLoading(activeView));
@@ -105,34 +115,51 @@ export function useDashboardData(activeView = "overview") {
   const filtersRef = useRef(filters);
   const loadDataRef = useRef(null);
 
+  function mergeUniqueRows(existingRows = [], newRows = []) {
+    const merged = [];
+    const seen = new Set();
+    [...existingRows, ...newRows].forEach((row) => {
+      const stableKey =
+        row?.id ??
+        row?.trade_key ??
+        `${row?.symbol || ""}:${row?.status || ""}:${row?.entry_time || row?.timestamp_utc || row?.created_at || ""}`;
+      if (seen.has(stableKey)) {
+        return;
+      }
+      seen.add(stableKey);
+      merged.push(row);
+    });
+    return merged;
+  }
+
   const loadOverviewSection = useCallback(async (activeFilters = filtersRef.current) => {
     try {
       setSectionLoading((prev) => ({ ...prev, overview: true, sizing: true }));
       const [
         summaryRes,
-        openRes,
-        lifecycleRes,
         ibkrOpenRes,
         ibkrLifecycleRes,
         latestScanRes,
       ] = await Promise.all([
         fetchDashboardSummary(activeFilters?.date || undefined),
-        fetchOpenTrades(100),
-        fetchTradeLifecycle(200),
-        fetchOpenTrades(100, "IBKR"),
-        fetchTradeLifecycle(200, undefined, "IBKR"),
+        fetchOpenTrades({ limit: IBKR_OPEN_TRADES_PAGE_SIZE, broker: "IBKR" }),
+        fetchTradeLifecycle({ limit: IBKR_LIFECYCLE_PAGE_SIZE, broker: "IBKR" }),
         fetchLatestScanSummary(),
       ]);
 
-      const openRows = openRes?.rows || [];
-      const lifecycleRows = lifecycleRes?.rows || [];
       const ibkrOpenRows = ibkrOpenRes?.rows || [];
       const ibkrLifecycleRows = ibkrLifecycleRes?.rows || [];
 
-      setOpenTrades(openRows);
-      setLifecycle(lifecycleRows);
+      setOpenTrades(ibkrOpenRows);
+      setLifecycle(ibkrLifecycleRows);
       setIbkrOpenTrades(ibkrOpenRows);
       setIbkrLifecycle(ibkrLifecycleRows);
+      setIbkrOpenTradesHasMore(Boolean(ibkrOpenRes?.has_more));
+      setIbkrLifecycleHasMore(Boolean(ibkrLifecycleRes?.has_more));
+      setIbkrOpenTradesCursorTs(ibkrOpenRes?.next_cursor_ts || null);
+      setIbkrOpenTradesCursorId(ibkrOpenRes?.next_cursor_id ?? null);
+      setIbkrLifecycleCursorTs(ibkrLifecycleRes?.next_cursor_ts || null);
+      setIbkrLifecycleCursorId(ibkrLifecycleRes?.next_cursor_id ?? null);
 
       setSummary(summaryRes || null);
       setLatestScanSummary(latestScanRes || null);
@@ -455,6 +482,56 @@ export function useDashboardData(activeView = "overview") {
     }
   }
 
+  async function loadMoreIbkrOpenTrades() {
+    if (!ibkrOpenTradesHasMore || !ibkrOpenTradesCursorTs || ibkrOpenTradesCursorId === null || ibkrOpenTradesCursorId === undefined) {
+      return;
+    }
+    try {
+      setIsLoadingMoreIbkrOpenTrades(true);
+      const nextPage = await fetchOpenTrades({
+        limit: IBKR_OPEN_TRADES_PAGE_SIZE,
+        broker: "IBKR",
+        cursorTs: ibkrOpenTradesCursorTs,
+        cursorId: ibkrOpenTradesCursorId,
+      });
+      const newRows = Array.isArray(nextPage?.rows) ? nextPage.rows : [];
+      setIbkrOpenTrades((current) => mergeUniqueRows(current, newRows));
+      setOpenTrades((current) => mergeUniqueRows(current, newRows));
+      setIbkrOpenTradesHasMore(Boolean(nextPage?.has_more));
+      setIbkrOpenTradesCursorTs(nextPage?.next_cursor_ts || null);
+      setIbkrOpenTradesCursorId(nextPage?.next_cursor_id ?? null);
+    } catch (err) {
+      setToast({ type: "error", message: err?.message || "Failed to load more IBKR open trades" });
+    } finally {
+      setIsLoadingMoreIbkrOpenTrades(false);
+    }
+  }
+
+  async function loadMoreIbkrLifecycle() {
+    if (!ibkrLifecycleHasMore || !ibkrLifecycleCursorTs || ibkrLifecycleCursorId === null || ibkrLifecycleCursorId === undefined) {
+      return;
+    }
+    try {
+      setIsLoadingMoreIbkrLifecycle(true);
+      const nextPage = await fetchTradeLifecycle({
+        limit: IBKR_LIFECYCLE_PAGE_SIZE,
+        broker: "IBKR",
+        cursorTs: ibkrLifecycleCursorTs,
+        cursorId: ibkrLifecycleCursorId,
+      });
+      const newRows = Array.isArray(nextPage?.rows) ? nextPage.rows : [];
+      setIbkrLifecycle((current) => mergeUniqueRows(current, newRows));
+      setLifecycle((current) => mergeUniqueRows(current, newRows));
+      setIbkrLifecycleHasMore(Boolean(nextPage?.has_more));
+      setIbkrLifecycleCursorTs(nextPage?.next_cursor_ts || null);
+      setIbkrLifecycleCursorId(nextPage?.next_cursor_id ?? null);
+    } catch (err) {
+      setToast({ type: "error", message: err?.message || "Failed to load more IBKR lifecycle rows" });
+    } finally {
+      setIsLoadingMoreIbkrLifecycle(false);
+    }
+  }
+
   async function rerunReconciliation() {
     try {
       setIsRefreshing(true);
@@ -631,24 +708,6 @@ export function useDashboardData(activeView = "overview") {
   const totalResolvedAttempts = placedCount + rejectedCount;
   const paperTradePlacementRate = totalResolvedAttempts > 0 ? (placedCount / totalResolvedAttempts) * 100 : null;
 
-  if ((topAttemptReasons[0]?.count ?? 0) > 0) {
-    attentionItems.push({
-      id: "top-reason",
-      severity: "warning",
-      title: "Most common non-placement reason",
-      detail: `${topAttemptReasons[0].final_reason} (${topAttemptReasons[0].count})`,
-    });
-  }
-
-  if (!autoRefreshActive) {
-    attentionItems.push({
-      id: "refresh-window",
-      severity: "info",
-      title: "Auto-refresh is paused",
-      detail: `Polling resumes during ${refreshWindowLabel}. Current market clock: ${autoRefreshSnapshot.label}.`,
-    });
-  }
-
   return {
     summary,
     openTrades,
@@ -713,5 +772,11 @@ export function useDashboardData(activeView = "overview") {
     refreshIbkrStatusLive,
     rerunReconciliation,
     syncPaperTrades,
+    ibkrOpenTradesHasMore,
+    ibkrLifecycleHasMore,
+    isLoadingMoreIbkrOpenTrades,
+    isLoadingMoreIbkrLifecycle,
+    loadMoreIbkrOpenTrades,
+    loadMoreIbkrLifecycle,
   };
 }

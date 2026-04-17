@@ -261,6 +261,12 @@ export default function DashboardPage() {
     refreshIbkrStatusLive,
     rerunReconciliation,
     syncPaperTrades,
+    ibkrOpenTradesHasMore,
+    ibkrLifecycleHasMore,
+    isLoadingMoreIbkrOpenTrades,
+    isLoadingMoreIbkrLifecycle,
+    loadMoreIbkrOpenTrades,
+    loadMoreIbkrLifecycle,
   } = useDashboardData(activeView);
 
   const mismatchTone =
@@ -757,32 +763,28 @@ export default function DashboardPage() {
           {activeView === "trades" && (
             <>
               <section className="dashboard-section">
-                <div className="dashboard-panel dashboard-panel-strong">
-                  <div className="dashboard-panel-body dashboard-panel-body-tight dashboard-inline-actions">
-                    <div className="dashboard-panel-heading">
-                      <div>
-                        <h2 className="dashboard-panel-title">Trade Actions</h2>
-                      </div>
-                      <div className="dashboard-toolbar">
-                        <button
-                          onClick={syncPaperTrades}
-                          disabled={isRefreshing || isRunningSync}
-                          className="dashboard-button dashboard-button-secondary"
-                        >
-                          {isRunningSync ? "Syncing Trades..." : "Sync Paper Trades"}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <section className="dashboard-section">
                 <div className="dashboard-panel">
                   <div className="dashboard-panel-body">
                     <div className="dashboard-panel-heading">
                       <div>
                         <h2 className="dashboard-panel-title">IBKR Open Trades</h2>
+                      </div>
+                      <div className="dashboard-toolbar">
+                        <button
+                          onClick={syncPaperTrades}
+                          disabled={isRefreshing || isRunningSync}
+                          className="dashboard-button dashboard-button-secondary dashboard-button-compact"
+                        >
+                          {isRunningSync ? "Syncing..." : "Sync"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={loadMoreIbkrOpenTrades}
+                          disabled={!ibkrOpenTradesHasMore || isLoadingMoreIbkrOpenTrades}
+                          className="dashboard-button dashboard-button-neutral dashboard-button-compact"
+                        >
+                          {isLoadingMoreIbkrOpenTrades ? "Loading..." : ibkrOpenTradesHasMore ? "Load More" : "All Loaded"}
+                        </button>
                       </div>
                     </div>
                     <LazySection>
@@ -798,6 +800,16 @@ export default function DashboardPage() {
                     <div className="dashboard-panel-heading">
                       <div>
                         <h2 className="dashboard-panel-title">IBKR Lifecycle</h2>
+                      </div>
+                      <div className="dashboard-toolbar">
+                        <button
+                          type="button"
+                          onClick={loadMoreIbkrLifecycle}
+                          disabled={!ibkrLifecycleHasMore || isLoadingMoreIbkrLifecycle}
+                          className="dashboard-button dashboard-button-neutral dashboard-button-compact"
+                        >
+                          {isLoadingMoreIbkrLifecycle ? "Loading..." : ibkrLifecycleHasMore ? "Load More" : "All Loaded"}
+                        </button>
                       </div>
                     </div>
                     <LazySection>

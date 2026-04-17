@@ -186,9 +186,6 @@ export default function ExecutionInsightsSection({
               <div className="dashboard-panel-heading">
                 <div>
                   <h3>Broker Status</h3>
-                  <p className="dashboard-panel-subtitle">
-                    Quick check that IBKR is active and whether it needs a manual login.
-                  </p>
                 </div>
               </div>
 
@@ -231,9 +228,6 @@ export default function ExecutionInsightsSection({
               <div className="dashboard-panel-heading">
                 <div>
                   <h3>Hourly Outcome Pattern</h3>
-                  <p className="dashboard-panel-subtitle">
-                    Placement rate and dominant non-placement reason by New York session hour.
-                  </p>
                 </div>
               </div>
 
@@ -293,9 +287,6 @@ export default function ExecutionInsightsSection({
               <div className="dashboard-panel-heading">
                 <div>
                   <h3>Conversion vs Quality</h3>
-                  <p className="dashboard-panel-subtitle">
-                    Compare where the system converts candidates well against where strategy-managed realized trade outcomes are actually strongest.
-                  </p>
                 </div>
               </div>
 
