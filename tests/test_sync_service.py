@@ -386,7 +386,7 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(broker_order_calls, [])
 
     def test_ibkr_sync_stops_after_batch_time_budget(self):
-        with patch("services.sync_service.time.monotonic", side_effect=[0.0, 1.0, 91.0, 91.0]):
+        with patch("services.sync_service.time.monotonic", side_effect=[0.0, 1.0, 1.0, 91.0, 91.0]):
             result = execute_sync_paper_trades(
                 get_open_paper_trades=lambda: [
                     {"symbol": "PLTR", "broker_parent_order_id": "136", "broker": "IBKR"},
@@ -437,7 +437,7 @@ class SyncServiceTests(unittest.TestCase):
                 "exit_filled_at": "2026-04-14T14:25:02+00:00",
             }
 
-        with patch("services.sync_service.time.monotonic", side_effect=[0.0, 1.0, 91.0, 91.0]):
+        with patch("services.sync_service.time.monotonic", side_effect=[0.0, 1.0, 1.0, 91.0, 91.0]):
             result = execute_sync_paper_trades(
                 get_open_paper_trades=lambda: [
                     {
@@ -483,6 +483,78 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(synced_parent_ids, ["64"])
         self.assertEqual(result["results"][0]["parent_order_id"], "64")
         self.assertEqual(result["results"][0]["reason"], "missing_exit_fill_data")
+
+    def test_ibkr_sync_respects_per_run_sync_cap(self):
+        synced_parent_ids = []
+
+        with patch.dict("os.environ", {"IBKR_SYNC_MAX_PER_RUN": "1"}, clear=False):
+            result = execute_sync_paper_trades(
+                get_open_paper_trades=lambda: [
+                    {"symbol": "PLTR", "broker_parent_order_id": "136", "broker": "IBKR"},
+                    {"symbol": "SMCI", "broker_parent_order_id": "112", "broker": "IBKR"},
+                ],
+                sync_order_by_id_for_broker=lambda broker, parent_id: synced_parent_ids.append(parent_id) or {
+                    "parent_status": "submitted",
+                },
+                paper_trade_exit_already_logged=lambda parent_order_id, exit_event: False,
+                append_trade_log=lambda row: None,
+                safe_insert_trade_event=lambda **kwargs: None,
+                safe_insert_broker_order=lambda **kwargs: None,
+                upsert_trade_lifecycle=lambda **kwargs: None,
+                parse_iso_utc=parse_iso_utc,
+                to_float_or_none=to_float_or_none,
+                get_open_positions_for_broker=lambda broker: [],
+                close_position_for_broker=lambda broker, symbol: {"ok": True},
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["ibkr_sync_attempted"], 1)
+        self.assertEqual(synced_parent_ids, ["112"])
+        self.assertEqual(result["results"][0]["reason"], "still_open")
+        self.assertEqual(result["results"][1]["reason"], "sync_cap_reached")
+
+    def test_ibkr_sync_timeout_cooldown_skips_remaining_rows(self):
+        synced_parent_ids = []
+
+        with patch.dict(
+            "os.environ",
+            {
+                "IBKR_SYNC_TIMEOUT_CIRCUIT_THRESHOLD": "2",
+                "IBKR_SYNC_TIMEOUT_CIRCUIT_COOLDOWN_SECONDS": "300",
+                "IBKR_SYNC_MAX_PER_RUN": "10",
+            },
+            clear=False,
+        ):
+            result = execute_sync_paper_trades(
+                get_open_paper_trades=lambda: [
+                    {"symbol": "PLTR", "broker_parent_order_id": "136", "broker": "IBKR"},
+                    {"symbol": "SMCI", "broker_parent_order_id": "112", "broker": "IBKR"},
+                    {"symbol": "NVDA", "broker_parent_order_id": "88", "broker": "IBKR"},
+                ],
+                sync_order_by_id_for_broker=lambda broker, parent_id: (
+                    synced_parent_ids.append(parent_id)
+                    or (_ for _ in ()).throw(
+                        RuntimeError(f"IBKR bridge timeout during GET /orders/{parent_id}/sync after 8s")
+                    )
+                ),
+                paper_trade_exit_already_logged=lambda parent_order_id, exit_event: False,
+                append_trade_log=lambda row: None,
+                safe_insert_trade_event=lambda **kwargs: None,
+                safe_insert_broker_order=lambda **kwargs: None,
+                upsert_trade_lifecycle=lambda **kwargs: None,
+                parse_iso_utc=parse_iso_utc,
+                to_float_or_none=to_float_or_none,
+                get_open_positions_for_broker=lambda broker: [{"symbol": "PLTR"}, {"symbol": "SMCI"}, {"symbol": "NVDA"}],
+                close_position_for_broker=lambda broker, symbol: {"ok": True},
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(synced_parent_ids, ["112", "136"])
+        self.assertEqual(result["ibkr_timeout_streak"], 2)
+        self.assertTrue(result["ibkr_cooldown_active"])
+        self.assertEqual(result["results"][0]["reason"], "bridge_timeout")
+        self.assertEqual(result["results"][1]["reason"], "bridge_timeout")
+        self.assertEqual(result["results"][2]["reason"], "bridge_cooldown_active")
 
 
 if __name__ == "__main__":

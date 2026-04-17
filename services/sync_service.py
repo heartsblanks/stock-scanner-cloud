@@ -68,6 +68,16 @@ def _sync_time_budget_seconds(*, broker_name: str) -> float | None:
     return value
 
 
+def _int_env(name: str, default: int) -> int:
+    raw_value = str(os.getenv(name, "")).strip()
+    if not raw_value:
+        return default
+    try:
+        return int(raw_value)
+    except Exception:
+        return default
+
+
 def _normalize_ibkr_client_order_id(value: Any) -> str:
     return str(value or "").strip()
 
@@ -487,6 +497,12 @@ def execute_sync_paper_trades(
     batch_started_at = time.monotonic()
     partial = False
     stopped_reason: str | None = None
+    ibkr_sync_max_per_run = max(_int_env("IBKR_SYNC_MAX_PER_RUN", 8), 0)
+    ibkr_timeout_circuit_threshold = max(_int_env("IBKR_SYNC_TIMEOUT_CIRCUIT_THRESHOLD", 3), 1)
+    ibkr_timeout_circuit_cooldown_seconds = max(_int_env("IBKR_SYNC_TIMEOUT_CIRCUIT_COOLDOWN_SECONDS", 30), 1)
+    ibkr_timeout_streak = 0
+    ibkr_cooldown_until_monotonic: float | None = None
+    ibkr_sync_attempted = 0
 
     for open_row in open_rows:
         parent_order_id = str(open_row.get("broker_parent_order_id", "")).strip()
@@ -528,7 +544,60 @@ def execute_sync_paper_trades(
             skipped_count += 1
             continue
 
+        if broker_name == "IBKR":
+            now_monotonic = time.monotonic()
+            if (
+                ibkr_cooldown_until_monotonic is not None
+                and now_monotonic < ibkr_cooldown_until_monotonic
+            ):
+                remaining_seconds = max(0.0, ibkr_cooldown_until_monotonic - now_monotonic)
+                log_warning(
+                    "IBKR sync skipped while timeout cooldown is active",
+                    component="sync_service",
+                    operation="execute_sync_paper_trades",
+                    symbol=symbol,
+                    parent_order_id=parent_order_id,
+                    broker=broker_name,
+                    ibkr_timeout_streak=ibkr_timeout_streak,
+                    cooldown_remaining_seconds=round(remaining_seconds, 3),
+                )
+                results.append({
+                    "symbol": symbol,
+                    "broker": broker_name,
+                    "parent_order_id": parent_order_id,
+                    "synced": False,
+                    "reason": "bridge_cooldown_active",
+                    "details": f"IBKR sync cooldown active ({remaining_seconds:.1f}s remaining)",
+                    "ibkr_timeout_streak": ibkr_timeout_streak,
+                })
+                skipped_count += 1
+                continue
+
+            if ibkr_sync_max_per_run > 0 and ibkr_sync_attempted >= ibkr_sync_max_per_run:
+                log_warning(
+                    "IBKR sync skipped after per-run sync cap was reached",
+                    component="sync_service",
+                    operation="execute_sync_paper_trades",
+                    symbol=symbol,
+                    parent_order_id=parent_order_id,
+                    broker=broker_name,
+                    ibkr_sync_attempted=ibkr_sync_attempted,
+                    ibkr_sync_max_per_run=ibkr_sync_max_per_run,
+                )
+                results.append({
+                    "symbol": symbol,
+                    "broker": broker_name,
+                    "parent_order_id": parent_order_id,
+                    "synced": False,
+                    "reason": "sync_cap_reached",
+                    "details": f"IBKR sync cap reached ({ibkr_sync_attempted}/{ibkr_sync_max_per_run})",
+                })
+                skipped_count += 1
+                continue
+
         try:
+            if broker_name == "IBKR":
+                ibkr_sync_attempted += 1
             if sync_order_by_id_for_broker is not None:
                 sync_result = sync_order_by_id_for_broker(broker_name, parent_order_id)
             elif sync_order_by_id is not None:
@@ -536,6 +605,9 @@ def execute_sync_paper_trades(
             else:
                 raise RuntimeError("sync_order_by_id is not configured")
             stale_reconciled = False
+            if broker_name == "IBKR":
+                ibkr_timeout_streak = 0
+                ibkr_cooldown_until_monotonic = None
         except Exception as e:
             failure_reason, bridge_issue = _classify_ibkr_bridge_issue(e, broker_name=broker_name)
             recovered_from_timeout = False
@@ -551,6 +623,26 @@ def execute_sync_paper_trades(
                     failure_reason=failure_reason,
                     bridge_issue=bridge_issue,
                 )
+                if failure_reason == "bridge_timeout":
+                    ibkr_timeout_streak += 1
+                    if ibkr_timeout_streak >= ibkr_timeout_circuit_threshold:
+                        ibkr_cooldown_until_monotonic = (
+                            time.monotonic() + float(ibkr_timeout_circuit_cooldown_seconds)
+                        )
+                        log_warning(
+                            "IBKR timeout circuit opened after consecutive bridge timeouts",
+                            component="sync_service",
+                            operation="execute_sync_paper_trades",
+                            symbol=symbol,
+                            parent_order_id=parent_order_id,
+                            broker=broker_name,
+                            ibkr_timeout_streak=ibkr_timeout_streak,
+                            ibkr_timeout_circuit_threshold=ibkr_timeout_circuit_threshold,
+                            ibkr_timeout_circuit_cooldown_seconds=ibkr_timeout_circuit_cooldown_seconds,
+                        )
+                else:
+                    ibkr_timeout_streak = 0
+                    ibkr_cooldown_until_monotonic = None
             if broker_name == "IBKR" and failure_reason == "bridge_timeout":
                 reconciled_sync_result, stale_reconciled = _reconcile_ibkr_stale_open_trade(
                     broker_name=broker_name,
@@ -981,4 +1073,10 @@ def execute_sync_paper_trades(
         "auto_healed_positions": auto_healed_positions,
         "auto_heal_error_count": len(auto_heal_errors),
         "auto_heal_errors": auto_heal_errors,
+        "ibkr_sync_attempted": ibkr_sync_attempted,
+        "ibkr_sync_max_per_run": ibkr_sync_max_per_run,
+        "ibkr_timeout_streak": ibkr_timeout_streak,
+        "ibkr_cooldown_active": bool(
+            ibkr_cooldown_until_monotonic is not None and time.monotonic() < ibkr_cooldown_until_monotonic
+        ),
     }
