@@ -200,6 +200,13 @@ Recommended consolidated scheduler setup:
   - Calls `POST /scheduler/ibkr-login-alert`
   - Applies a low-call check gate (default `30` minutes) and only sends an alert when the IBKR bridge reports `LOGIN_REQUIRED` and Telegram alert credentials are configured
 
+Low-call mode toggle:
+
+- Set `IBKR_LOW_CALL_MODE=true` in Cloud Run to enable reduced IBKR polling behavior.
+- Optional overrides:
+  - `IBKR_LOGIN_ALERT_CHECK_INTERVAL_MINUTES` (default `30` in low-call mode)
+  - `IBKR_ACCOUNT_EQUITY_CACHE_TTL_SECONDS` (default `1800`)
+
 ---
 
 ## 🔔 IBKR Login Alerts

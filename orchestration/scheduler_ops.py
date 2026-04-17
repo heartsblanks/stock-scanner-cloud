@@ -31,6 +31,11 @@ def is_weekday(now_ny: datetime) -> bool:
     return now_ny.weekday() < 5
 
 
+def _low_call_mode_enabled() -> bool:
+    raw = str(os.getenv("IBKR_LOW_CALL_MODE", "false")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def should_run_market_sync(now_ny: datetime) -> bool:
     if not is_weekday(now_ny):
         return False
@@ -38,12 +43,18 @@ def should_run_market_sync(now_ny: datetime) -> bool:
         return False
     if should_run_market_scan(now_ny):
         return False
-    # Low-call mode: keep sync on a 30-minute cadence.
+    if _low_call_mode_enabled():
+        # Low-call mode: keep sync on a 30-minute cadence.
+        if now_ny.hour == 9:
+            return now_ny.minute == 30
+        if now_ny.hour == 15:
+            return now_ny.minute in {0, 30, 50}
+        return 10 <= now_ny.hour <= 14 and now_ny.minute in {0, 30}
     if now_ny.hour == 9:
-        return now_ny.minute == 30
+        return now_ny.minute in {30, 35, 40, 50, 55}
     if now_ny.hour == 15:
-        return now_ny.minute in {0, 30}
-    return 10 <= now_ny.hour <= 14 and now_ny.minute in {0, 30}
+        return now_ny.minute in {0, 10, 20, 30, 40, 50}
+    return 10 <= now_ny.hour <= 14 and now_ny.minute in {0, 10, 20, 30, 40, 50}
 
 
 def should_run_market_scan(now_ny: datetime) -> bool:
@@ -59,9 +70,16 @@ def should_run_market_scan(now_ny: datetime) -> bool:
 
 
 def should_run_periodic_health_probe(now_ny: datetime) -> bool:
-    # Low-call mode: disable periodic health probes.
-    # Health is still captured via pre-close prep and health_on_failure.
-    del now_ny
+    if _low_call_mode_enabled():
+        # Low-call mode: disable periodic health probes.
+        # Health is still captured via pre-close prep and health_on_failure.
+        return False
+    if not is_weekday(now_ny):
+        return False
+    if now_ny.hour == 9:
+        return now_ny.minute == 30
+    if 10 <= now_ny.hour <= 15:
+        return now_ny.minute in {0, 30}
     return False
 
 
@@ -349,18 +367,19 @@ def execute_ibkr_login_alert(
             "reason": "outside_alert_window",
         }
 
-    try:
-        check_interval_minutes = max(1, int(os.getenv("IBKR_LOGIN_ALERT_CHECK_INTERVAL_MINUTES", "30")))
-    except Exception:
-        check_interval_minutes = 30
-    if now_ny.minute % check_interval_minutes != 0:
-        return {
-            "ok": True,
-            "scheduler": "ibkr-login-alert",
-            "current_new_york_time": now_ny.strftime("%Y-%m-%d %H:%M"),
-            "noop": True,
-            "reason": "check_interval_gate",
-        }
+    if _low_call_mode_enabled():
+        try:
+            check_interval_minutes = max(1, int(os.getenv("IBKR_LOGIN_ALERT_CHECK_INTERVAL_MINUTES", "30")))
+        except Exception:
+            check_interval_minutes = 30
+        if now_ny.minute % check_interval_minutes != 0:
+            return {
+                "ok": True,
+                "scheduler": "ibkr-login-alert",
+                "current_new_york_time": now_ny.strftime("%Y-%m-%d %H:%M"),
+                "noop": True,
+                "reason": "check_interval_gate",
+            }
 
     status = get_ibkr_operational_status() or {}
     if not bool(status.get("enabled")):

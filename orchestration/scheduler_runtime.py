@@ -43,8 +43,11 @@ def build_ibkr_operational_status(
     account_timeout = int(os.getenv("IBKR_BRIDGE_ACCOUNT_TIMEOUT_SECONDS", "5"))
     positions_timeout = int(os.getenv("IBKR_BRIDGE_POSITIONS_TIMEOUT_SECONDS", "8"))
     market_timeout = int(os.getenv("IBKR_BRIDGE_STATUS_MARKET_DATA_TIMEOUT_SECONDS", "8"))
-    include_account_probe = _truthy_env("IBKR_STATUS_INCLUDE_ACCOUNT_PROBE", False)
-    include_market_data_probe = _truthy_env("IBKR_STATUS_INCLUDE_MARKET_DATA_PROBE", False)
+    low_call_mode = _truthy_env("IBKR_LOW_CALL_MODE", False)
+    include_account_probe_default = not low_call_mode
+    include_market_data_probe_default = not low_call_mode
+    include_account_probe = _truthy_env("IBKR_STATUS_INCLUDE_ACCOUNT_PROBE", include_account_probe_default)
+    include_market_data_probe = _truthy_env("IBKR_STATUS_INCLUDE_MARKET_DATA_PROBE", include_market_data_probe_default)
 
     try:
         bridge_payload = ibkr_bridge_get("/health", timeout=bridge_timeout) or {}
