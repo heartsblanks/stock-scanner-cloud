@@ -360,7 +360,7 @@ class IbkrConnectorTests(unittest.TestCase):
 
         client._connect = lambda: _FakeIb()
         client._find_position_row = lambda ib, symbol: fake_position
-        client._load_order_classes = lambda: (None, _FakeMarketOrder, None, _FakeContract)
+        client._load_order_classes = lambda: (None, _FakeMarketOrder, None, None, _FakeContract)
         client._normalize_trade = lambda trade: {"id": "65", "status": "Submitted"}
         client._close_poll_config = lambda: (1, 0.0)
         client._order_status_snapshot = lambda trade: {
@@ -397,7 +397,7 @@ class IbkrConnectorTests(unittest.TestCase):
 
         client._connect = lambda: fake_ib
         client._find_position_row = lambda ib, symbol: fake_position
-        client._load_order_classes = lambda: (None, _FakeMarketOrder, None, _FakeContract)
+        client._load_order_classes = lambda: (None, _FakeMarketOrder, None, None, _FakeContract)
         client._normalize_trade = lambda trade: {"id": "65", "status": "Submitted"}
         client._close_poll_config = lambda: (1, 0.0)
         client._cancel_settle_config = lambda: (2, 0.0)

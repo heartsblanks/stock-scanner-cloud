@@ -327,7 +327,7 @@ class IbkrGatewayClient:
             raise RuntimeError("unsupported interval")
 
         ib = self._reset_connection()
-        _LimitOrder, _MarketOrder, _StopOrder, Stock = self._load_order_classes()
+        _LimitOrder, _MarketOrder, _StopOrder, _Order, Stock = self._load_order_classes()
         contract = Stock(normalized_symbol, "SMART", "USD")
         log_info(
             "IBKR bridge intraday request started",
@@ -1267,7 +1267,7 @@ class IbkrGatewayClient:
                 "reason": "no_open_position",
             }
 
-        _LimitOrder, MarketOrder, _StopOrder, Stock = self._load_order_classes()
+        _LimitOrder, MarketOrder, _StopOrder, _Order, Stock = self._load_order_classes()
         contract = getattr(target_position, "contract", None)
         if contract is None:
             contract = Stock(normalized_symbol, "SMART", "USD")
