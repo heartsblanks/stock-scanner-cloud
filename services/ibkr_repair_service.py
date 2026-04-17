@@ -127,12 +127,16 @@ def _repair_payload_from_existing_lifecycle(
             return None
         parsed_exit_time = parse_iso_utc(parsed_exit_time_raw)
 
+    existing_exit_reason = str(row.get("exit_reason", "") or "").strip()
+    if existing_exit_reason.upper() == "STALE_OPEN_RECONCILED":
+        existing_exit_reason = "BROKER_FILLED_EXIT_REPAIRED"
+
     return _build_lifecycle_repair_payload(
         row=row,
         exit_order_id=str(row.get("exit_order_id", "") or row.get("parent_order_id", "") or row.get("order_id", "")),
         exit_price=exit_price,
         exit_time=parsed_exit_time,
-        exit_reason=str(row.get("exit_reason", "") or "STALE_OPEN_RECONCILED"),
+        exit_reason=existing_exit_reason or "BROKER_FILLED_EXIT_REPAIRED",
         exit_status="reconciled_closed",
         to_float_or_none=to_float_or_none,
     )

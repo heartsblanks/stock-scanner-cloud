@@ -41,6 +41,18 @@ def _resolve_exit_timestamp(sync_result: dict[str, Any], timestamp_utc: str, par
     return parse_iso_utc(timestamp_utc)
 
 
+def _resolve_confirmed_exit_timestamp(sync_result: dict[str, Any], parse_iso_utc: Callable[[str], Any]):
+    for key in ("exit_filled_at", "exit_time", "filled_at"):
+        raw_value = str(sync_result.get(key, "") or "").strip()
+        if not raw_value:
+            continue
+        try:
+            return parse_iso_utc(raw_value)
+        except Exception:
+            continue
+    return None
+
+
 def _sync_time_budget_seconds(*, broker_name: str) -> float | None:
     normalized = str(broker_name or "").strip().upper()
     env_name = "IBKR_SYNC_BATCH_TIME_BUDGET_SECONDS" if normalized == "IBKR" else "PAPER_SYNC_BATCH_TIME_BUDGET_SECONDS"
@@ -317,10 +329,14 @@ def _build_ibkr_stale_reconciled_sync_result(
     source = sync_result or {}
     exit_price = str(source.get("exit_price", "") or "").strip()
     exit_filled_avg_price = str(source.get("exit_filled_avg_price", "") or "").strip()
-    exit_reason = str(source.get("exit_reason", "") or "STALE_OPEN_RECONCILED").strip() or "STALE_OPEN_RECONCILED"
+    has_fill_data = bool(exit_filled_avg_price or exit_price) and bool(
+        str(source.get("exit_filled_at", "") or source.get("exit_time", "") or source.get("filled_at", "")).strip()
+    )
+    default_exit_reason = "BROKER_FILLED_EXIT_REPAIRED" if has_fill_data else "BROKER_POSITION_FLAT_PENDING_FILL_SYNC"
+    exit_reason = str(source.get("exit_reason", "") or default_exit_reason).strip() or default_exit_reason
     return {
         **source,
-        "exit_event": "MANUAL_CLOSE",
+        "exit_event": "MANUAL_CLOSE" if has_fill_data else "",
         "exit_reason": exit_reason,
         "exit_status": str(source.get("exit_status", "") or "reconciled_closed"),
         "exit_order_id": str(source.get("exit_order_id", "") or parent_order_id),
@@ -688,6 +704,38 @@ def execute_sync_paper_trades(
             skipped_count += 1
             continue
 
+        if broker_name == "IBKR":
+            confirmed_exit_timestamp = _resolve_confirmed_exit_timestamp(sync_result, parse_iso_utc)
+            confirmed_exit_price = to_float_or_none(
+                sync_result.get("exit_filled_avg_price", "") or sync_result.get("exit_price", "")
+            )
+            if confirmed_exit_timestamp is None or confirmed_exit_price is None:
+                log_warning(
+                    "IBKR close detected but fill evidence is incomplete; lifecycle close skipped",
+                    component="sync_service",
+                    operation="execute_sync_paper_trades",
+                    symbol=symbol,
+                    parent_order_id=parent_order_id,
+                    broker=broker_name,
+                    stale_reconciled=stale_reconciled,
+                    exit_event=exit_event,
+                    exit_filled_at=sync_result.get("exit_filled_at", ""),
+                    exit_time=sync_result.get("exit_time", ""),
+                    exit_filled_avg_price=sync_result.get("exit_filled_avg_price", ""),
+                    exit_price=sync_result.get("exit_price", ""),
+                )
+                results.append({
+                    "symbol": symbol,
+                    "broker": broker_name,
+                    "parent_order_id": parent_order_id,
+                    "synced": False,
+                    "reason": "missing_exit_fill_data",
+                    "stale_reconciled": stale_reconciled,
+                    "exit_event": exit_event,
+                })
+                skipped_count += 1
+                continue
+
         exit_already_logged = paper_trade_exit_already_logged(parent_order_id, exit_event)
         if exit_already_logged:
             log_info(
@@ -704,13 +752,15 @@ def execute_sync_paper_trades(
         timestamp_utc = datetime.now(timezone.utc).isoformat()
 
         try:
-            exit_timestamp = _resolve_exit_timestamp(sync_result, timestamp_utc, parse_iso_utc)
+            exit_timestamp = _resolve_confirmed_exit_timestamp(sync_result, parse_iso_utc)
+            if exit_timestamp is None:
+                exit_timestamp = _resolve_exit_timestamp(sync_result, timestamp_utc, parse_iso_utc)
             exit_timestamp_utc = exit_timestamp.astimezone(timezone.utc).isoformat() if exit_timestamp else timestamp_utc
 
             entry_price = open_row.get("entry_price", "")
             stop_price = open_row.get("stop_price", "")
             target_price = open_row.get("target_price", "")
-            exit_price = sync_result.get("exit_price", "")
+            exit_price = sync_result.get("exit_filled_avg_price", "") or sync_result.get("exit_price", "")
             direction = infer_direction(entry_price, exit_price, stop_price, target_price, open_row.get("side", ""))
             lifecycle_side = resolve_lifecycle_side(open_row, direction)
             trade_source = str(open_row.get("trade_source", f"{broker_name}_PAPER")).strip().upper() or f"{broker_name}_PAPER"

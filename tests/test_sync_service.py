@@ -103,16 +103,11 @@ class SyncServiceTests(unittest.TestCase):
         )
 
         self.assertTrue(result["ok"])
-        self.assertEqual(result["synced_count"], 1)
+        self.assertEqual(result["synced_count"], 0)
         self.assertEqual(result["results"][0]["broker"], "IBKR")
         self.assertTrue(result["results"][0]["stale_reconciled"])
-        self.assertEqual(result["results"][0]["exit_event"], "MANUAL_CLOSE")
-        self.assertEqual(captured_lifecycle["symbol"], "NIO")
-        self.assertEqual(captured_lifecycle["broker"], "IBKR")
-        self.assertEqual(captured_lifecycle["status"], "CLOSED")
-        self.assertEqual(captured_lifecycle["exit_reason"], "STALE_OPEN_RECONCILED")
-        self.assertIsNone(captured_lifecycle["exit_price"])
-        self.assertIsNone(captured_lifecycle["realized_pnl"])
+        self.assertEqual(result["results"][0]["reason"], "missing_exit_fill_data")
+        self.assertEqual(captured_lifecycle, {})
 
     def test_ibkr_sync_timeout_is_classified_explicitly(self):
         result = execute_sync_paper_trades(
@@ -182,15 +177,9 @@ class SyncServiceTests(unittest.TestCase):
         )
 
         self.assertTrue(result["ok"])
-        self.assertEqual(result["synced_count"], 1)
-        self.assertTrue(result["results"][0]["stale_reconciled"])
-        self.assertEqual(result["results"][0]["exit_event"], "MANUAL_CLOSE")
-        self.assertEqual(captured_lifecycle["symbol"], "SOFI")
-        self.assertEqual(captured_lifecycle["broker"], "IBKR")
-        self.assertEqual(captured_lifecycle["status"], "CLOSED")
-        self.assertEqual(captured_lifecycle["exit_reason"], "STALE_OPEN_RECONCILED")
-        self.assertIsNone(captured_lifecycle["exit_price"])
-        self.assertIsNone(captured_lifecycle["realized_pnl"])
+        self.assertEqual(result["synced_count"], 0)
+        self.assertEqual(result["results"][0]["reason"], "bridge_timeout")
+        self.assertEqual(captured_lifecycle, {})
 
     def test_ibkr_sync_timeout_does_not_reconcile_when_related_order_still_open(self):
         result = execute_sync_paper_trades(
@@ -389,15 +378,9 @@ class SyncServiceTests(unittest.TestCase):
         )
 
         self.assertTrue(result["ok"])
-        self.assertEqual(result["synced_count"], 1)
-        self.assertTrue(result["results"][0]["stale_reconciled"])
-        self.assertTrue(result["results"][0]["exit_already_logged"])
-        self.assertEqual(captured_lifecycle["symbol"], "SOFI")
-        self.assertEqual(captured_lifecycle["broker"], "IBKR")
-        self.assertEqual(captured_lifecycle["status"], "CLOSED")
-        self.assertEqual(captured_lifecycle["exit_reason"], "STALE_OPEN_RECONCILED")
-        self.assertIsNone(captured_lifecycle["exit_price"])
-        self.assertIsNone(captured_lifecycle["realized_pnl"])
+        self.assertEqual(result["synced_count"], 0)
+        self.assertEqual(result["results"][0]["reason"], "bridge_timeout")
+        self.assertEqual(captured_lifecycle, {})
         self.assertEqual(append_calls, [])
         self.assertEqual(trade_event_calls, [])
         self.assertEqual(broker_order_calls, [])
@@ -496,9 +479,10 @@ class SyncServiceTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertTrue(result["partial"])
-        self.assertEqual(result["synced_count"], 1)
+        self.assertEqual(result["synced_count"], 0)
         self.assertEqual(synced_parent_ids, ["64"])
         self.assertEqual(result["results"][0]["parent_order_id"], "64")
+        self.assertEqual(result["results"][0]["reason"], "missing_exit_fill_data")
 
 
 if __name__ == "__main__":

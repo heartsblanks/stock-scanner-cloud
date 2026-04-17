@@ -450,7 +450,12 @@ def get_stale_ibkr_closed_trade_lifecycles(*, target_date: Optional[str] = None,
         FROM trade_lifecycles
         WHERE UPPER(COALESCE(broker, '')) = 'IBKR'
           AND UPPER(COALESCE(status, '')) = 'CLOSED'
-          AND COALESCE(exit_reason, '') = 'STALE_OPEN_RECONCILED'
+          AND (
+            UPPER(COALESCE(exit_reason, '')) = 'STALE_OPEN_RECONCILED'
+            OR exit_time IS NULL
+            OR exit_price IS NULL
+            OR realized_pnl IS NULL
+          )
           {date_clause}
         ORDER BY COALESCE(exit_time, updated_at, created_at) DESC, id DESC
         LIMIT %(limit)s
