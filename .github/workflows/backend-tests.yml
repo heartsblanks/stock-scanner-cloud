@@ -39,7 +39,6 @@ jobs:
             orchestration/*.py \
             exports/*.py \
             analytics/*.py \
-            alpaca/*.py \
             routes/*.py \
             services/*.py \
             repositories/*.py \
