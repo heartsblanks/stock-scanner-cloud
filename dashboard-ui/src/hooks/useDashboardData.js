@@ -97,6 +97,7 @@ export function useDashboardData(activeView = "overview") {
   const [nextRefreshAt, setNextRefreshAt] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRunningSync, setIsRunningSync] = useState(false);
+  const [isRefreshingIbkrStatus, setIsRefreshingIbkrStatus] = useState(false);
   const [toast, setToast] = useState(null);
   const [lastReconciliationStatus, setLastReconciliationStatus] = useState(null);
   const [lastReconciliationAt, setLastReconciliationAt] = useState(null);
@@ -490,6 +491,24 @@ export function useDashboardData(activeView = "overview") {
     }
   }
 
+  async function refreshIbkrStatusLive() {
+    try {
+      setIsRefreshingIbkrStatus(true);
+      const data = await fetchIbkrStatus({ live: true, ttlSeconds: 15 });
+      setIbkrStatus(data || null);
+      setSectionErrors((prev) => ({ ...prev, ibkr: null }));
+      setLastUpdated(new Date().toISOString());
+    } catch (err) {
+      setSectionErrors((prev) => ({
+        ...prev,
+        ibkr: err?.message || "Failed to refresh IBKR live status",
+      }));
+      throw err;
+    } finally {
+      setIsRefreshingIbkrStatus(false);
+    }
+  }
+
   const symbolPerformance = summary?.symbol_performance || [];
   const modePerformance = summary?.mode_performance || [];
   const hourlyPerformance = summary?.hourly_performance || [];
@@ -654,6 +673,7 @@ export function useDashboardData(activeView = "overview") {
     autoRefreshMarketTime: autoRefreshSnapshot.label,
     isRefreshing,
     isRunningSync,
+    isRefreshingIbkrStatus,
     toast,
     pushToast,
     lastReconciliationStatus,
@@ -679,6 +699,7 @@ export function useDashboardData(activeView = "overview") {
     multiplierStatus,
     handleApplyFilters,
     refreshData,
+    refreshIbkrStatusLive,
     rerunReconciliation,
     syncPaperTrades,
   };

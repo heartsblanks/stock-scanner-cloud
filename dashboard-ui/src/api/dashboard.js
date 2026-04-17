@@ -74,8 +74,17 @@ export async function fetchOpsSummary() {
   return response.data;
 }
 
-export async function fetchIbkrStatus() {
-  const response = await apiClient.get("/ibkr-status");
+export async function fetchIbkrStatus(options = {}) {
+  const params = {};
+  if (options.live) {
+    params.live = "1";
+    if (options.ttlSeconds !== undefined && options.ttlSeconds !== null && options.ttlSeconds !== "") {
+      params.ttl = String(options.ttlSeconds);
+    }
+  }
+  const response = await apiClient.get("/ibkr-status", {
+    params,
+  });
   return response.data || {};
 }
 

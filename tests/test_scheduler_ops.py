@@ -20,12 +20,12 @@ NY_TZ = ZoneInfo("America/New_York")
 
 
 class SchedulerOpsTests(unittest.TestCase):
-    def test_market_ops_plan_at_935_runs_sync_and_scan(self):
+    def test_market_ops_plan_at_935_runs_sync_only(self):
         now_ny = datetime(2026, 4, 1, 9, 35, tzinfo=NY_TZ)
         self.assertTrue(should_run_market_sync(now_ny))
-        self.assertTrue(should_run_market_scan(now_ny))
+        self.assertFalse(should_run_market_scan(now_ny))
         self.assertFalse(should_run_eod_close(now_ny))
-        self.assertEqual(build_market_ops_plan(now_ny), ["sync", "scan"])
+        self.assertEqual(build_market_ops_plan(now_ny), ["sync"])
 
     def test_market_ops_plan_at_1555_runs_close_only(self):
         now_ny = datetime(2026, 4, 1, 15, 55, tzinfo=NY_TZ)
@@ -41,25 +41,31 @@ class SchedulerOpsTests(unittest.TestCase):
         self.assertFalse(should_run_market_scan(now_ny))
         self.assertTrue(should_run_pre_close_prep(now_ny))
         self.assertFalse(should_run_eod_close(now_ny))
-        self.assertEqual(build_market_ops_plan(now_ny), ["sync", "pre_close_prep"])
+        self.assertEqual(build_market_ops_plan(now_ny), ["sync", "health", "pre_close_prep"])
 
-    def test_market_ops_plan_at_1005_runs_sync_and_scan(self):
+    def test_market_ops_plan_at_1005_runs_scan_only(self):
         now_ny = datetime(2026, 4, 1, 10, 5, tzinfo=NY_TZ)
-        self.assertEqual(build_market_ops_plan(now_ny), ["sync", "scan"])
+        self.assertEqual(build_market_ops_plan(now_ny), ["scan"])
 
-    def test_market_ops_plan_at_955_runs_sync_and_scan(self):
+    def test_market_ops_plan_at_955_runs_scan_only(self):
         now_ny = datetime(2026, 4, 1, 9, 55, tzinfo=NY_TZ)
-        self.assertTrue(should_run_market_sync(now_ny))
+        self.assertFalse(should_run_market_sync(now_ny))
         self.assertTrue(should_run_market_scan(now_ny))
         self.assertFalse(should_run_eod_close(now_ny))
-        self.assertEqual(build_market_ops_plan(now_ny), ["sync", "scan"])
+        self.assertEqual(build_market_ops_plan(now_ny), ["scan"])
 
-    def test_market_ops_plan_at_1055_runs_sync_and_scan(self):
+    def test_market_ops_plan_at_1055_runs_scan_only(self):
         now_ny = datetime(2026, 4, 1, 10, 55, tzinfo=NY_TZ)
-        self.assertTrue(should_run_market_sync(now_ny))
+        self.assertFalse(should_run_market_sync(now_ny))
         self.assertTrue(should_run_market_scan(now_ny))
         self.assertFalse(should_run_eod_close(now_ny))
-        self.assertEqual(build_market_ops_plan(now_ny), ["sync", "scan"])
+        self.assertEqual(build_market_ops_plan(now_ny), ["scan"])
+
+    def test_market_ops_plan_at_1000_runs_sync_and_periodic_health(self):
+        now_ny = datetime(2026, 4, 1, 10, 0, tzinfo=NY_TZ)
+        self.assertTrue(should_run_market_sync(now_ny))
+        self.assertFalse(should_run_market_scan(now_ny))
+        self.assertEqual(build_market_ops_plan(now_ny), ["sync", "health"])
 
     def test_post_close_ops_runs_all_tasks(self):
         now_ny = datetime(2026, 4, 1, 16, 30, tzinfo=NY_TZ)

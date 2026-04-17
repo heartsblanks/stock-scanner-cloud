@@ -184,9 +184,9 @@ Cloud Scheduler triggers:
 Recommended consolidated scheduler setup:
 
 - `market-ops`
-  - `5,15,25,35,45,50,55 9-15 * * 1-5 (America/New_York)`
+  - `*/5 9-15 * * 1-5 (America/New_York)`
   - Calls `POST /scheduler/market-ops`
-  - Internally no-ops the early `9:05`, `9:15`, and `9:25` ticks, then runs sync and scheduled scans on the 10-minute offset cadence from `9:35` through `15:45`, uses the `15:50` tick for pre-close sync plus IBKR readiness prep, and keeps the `15:55` tick for end-of-day close only
+  - Internally starts sync at `9:30`, starts scheduled scans at `9:45`, keeps scans on the 10-minute offset cadence through `15:45`, runs periodic IBKR health probes every `30` minutes, reserves `15:50` for pre-close sync plus readiness prep, and keeps `15:55` for end-of-day close only
 - `daily-post-close`
   - `30 16 * * 1-5 (America/New_York)`
   - Calls `POST /scheduler/daily-post-close`

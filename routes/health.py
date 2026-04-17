@@ -32,6 +32,12 @@ def register_health_routes(
         cache[cache_key] = (now, payload)
         return payload
 
+    def get_cache_snapshot(cache_key: tuple[str, str]):
+        cached = cache.get(cache_key)
+        if not cached:
+            return None, None
+        return cached[1], max(0.0, time.time() - cached[0])
+
     @app.get("/")
     def home():
         return jsonify({
@@ -149,7 +155,49 @@ def register_health_routes(
     @app.get("/ibkr-status")
     def ibkr_status():
         try:
-            payload = get_cached_json(("ibkr-status", ""), 20, lambda: get_ibkr_operational_status())
+            live_requested = str(request.args.get("live", "")).strip().lower() in {"1", "true", "yes", "on"}
+            live_ttl_raw = str(request.args.get("ttl", "")).strip()
+            try:
+                live_ttl = max(0, min(300, int(live_ttl_raw))) if live_ttl_raw else 15
+            except Exception:
+                live_ttl = 15
+
+            if live_requested:
+                payload = get_cached_json(("ibkr-status", "live"), live_ttl, lambda: get_ibkr_operational_status())
+                cache[("ibkr-status", "snapshot")] = (time.time(), payload)
+                if isinstance(payload, dict):
+                    return jsonify({
+                        **payload,
+                        "source": "live",
+                        "cache_ttl_seconds": live_ttl,
+                    })
+                return jsonify(payload)
+
+            snapshot_payload, age_seconds = get_cache_snapshot(("ibkr-status", "snapshot"))
+            if snapshot_payload is None:
+                snapshot_payload, age_seconds = get_cache_snapshot(("ibkr-status", "live"))
+
+            if isinstance(snapshot_payload, dict):
+                return jsonify({
+                    **snapshot_payload,
+                    "source": "cache",
+                    "age_seconds": round(float(age_seconds or 0.0), 3),
+                })
+
+            payload = {
+                "ok": True,
+                "enabled": True,
+                "state": "UNKNOWN",
+                "bridge_health_ok": False,
+                "account_ok": False,
+                "session_probe_ok": False,
+                "market_data_ok": False,
+                "login_required": False,
+                "message": "No cached IBKR status available yet. Run a live check explicitly to refresh status.",
+                "errors": [],
+                "source": "cache",
+                "age_seconds": None,
+            }
             return jsonify(payload)
         except Exception as e:
             log_exception("IBKR status failed", e, route="/ibkr-status")

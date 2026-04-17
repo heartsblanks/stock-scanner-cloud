@@ -35,11 +35,13 @@ def should_run_market_sync(now_ny: datetime) -> bool:
         return False
     if now_ny.hour == 15 and now_ny.minute == 55:
         return False
+    if should_run_market_scan(now_ny):
+        return False
     if now_ny.hour == 9:
-        return now_ny.minute in {35, 45, 55}
+        return now_ny.minute in {30, 35, 40, 50, 55}
     if now_ny.hour == 15:
-        return now_ny.minute in {5, 15, 25, 35, 45, 50}
-    return 10 <= now_ny.hour <= 15 and now_ny.minute in {5, 15, 25, 35, 45, 55}
+        return now_ny.minute in {0, 10, 20, 30, 40, 50}
+    return 10 <= now_ny.hour <= 14 and now_ny.minute in {0, 10, 20, 30, 40, 50}
 
 
 def should_run_market_scan(now_ny: datetime) -> bool:
@@ -48,8 +50,20 @@ def should_run_market_scan(now_ny: datetime) -> bool:
     if now_ny.hour == 15 and now_ny.minute in {50, 55}:
         return False
     if now_ny.hour == 9:
-        return now_ny.minute in {35, 45, 55}
-    return 10 <= now_ny.hour <= 15 and now_ny.minute in {5, 15, 25, 35, 45, 55}
+        return now_ny.minute in {45, 55}
+    if now_ny.hour == 15:
+        return now_ny.minute in {5, 15, 25, 35, 45}
+    return 10 <= now_ny.hour <= 14 and now_ny.minute in {5, 15, 25, 35, 45, 55}
+
+
+def should_run_periodic_health_probe(now_ny: datetime) -> bool:
+    if not is_weekday(now_ny):
+        return False
+    if now_ny.hour == 9:
+        return now_ny.minute == 30
+    if 10 <= now_ny.hour <= 15:
+        return now_ny.minute in {0, 30}
+    return False
 
 
 def should_run_eod_close(now_ny: datetime) -> bool:
@@ -64,14 +78,24 @@ def build_market_ops_plan(now_ny: datetime) -> list[str]:
     if should_run_eod_close(now_ny):
         return ["close"]
     if should_run_pre_close_prep(now_ny):
-        return ["sync", "pre_close_prep"]
+        return ["sync", "health", "pre_close_prep"]
 
     actions: list[str] = []
-    if should_run_market_sync(now_ny):
-        actions.append("sync")
     if should_run_market_scan(now_ny):
         actions.append("scan")
-    return actions
+    elif should_run_market_sync(now_ny):
+        actions.append("sync")
+    if should_run_periodic_health_probe(now_ny):
+        actions.append("health")
+    if actions and actions[0] == "scan" and "sync" in actions:
+        actions = [action for action in actions if action != "sync"]
+    if actions and actions[0] == "sync" and "scan" in actions:
+        actions = [action for action in actions if action != "scan"]
+    deduped_actions: list[str] = []
+    for action in actions:
+        if action not in deduped_actions:
+            deduped_actions.append(action)
+    return deduped_actions
 
 
 def execute_market_ops(
@@ -81,6 +105,7 @@ def execute_market_ops(
     run_scan: Callable[[dict[str, Any]], Any],
     run_close: Callable[[], Any],
     run_pre_close_prep: Callable[[], Any] | None = None,
+    run_health_probe: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
     actions = build_market_ops_plan(now_ny)
     results: dict[str, Any] = {}
@@ -92,8 +117,19 @@ def execute_market_ops(
             results[action] = _normalize_handler_result(run_scan({}))
         elif action == "close":
             results[action] = _normalize_handler_result(run_close())
+        elif action == "health" and run_health_probe is not None:
+            results[action] = _normalize_handler_result(run_health_probe())
         elif action == "pre_close_prep" and run_pre_close_prep is not None:
             results[action] = _normalize_handler_result(run_pre_close_prep())
+
+    primary_action = next((action for action in actions if action in {"sync", "scan"}), None)
+    if (
+        primary_action is not None
+        and run_health_probe is not None
+        and not bool(results.get(primary_action, {}).get("ok", False))
+        and "health" not in results
+    ):
+        results["health_on_failure"] = _normalize_handler_result(run_health_probe())
 
     return {
         "ok": all(item.get("ok", False) for item in results.values()) if results else True,

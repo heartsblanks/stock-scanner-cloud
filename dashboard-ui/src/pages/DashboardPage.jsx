@@ -129,6 +129,7 @@ export default function DashboardPage() {
     lastUpdated,
     isRefreshing,
     isRunningSync,
+    isRefreshingIbkrStatus,
     toast,
     pushToast,
     lastReconciliationStatus,
@@ -167,6 +168,7 @@ export default function DashboardPage() {
     ibkrStatus,
     handleApplyFilters,
     refreshData,
+    refreshIbkrStatusLive,
     rerunReconciliation,
     syncPaperTrades,
   } = useDashboardData(activeView);
@@ -272,6 +274,15 @@ export default function DashboardPage() {
       pushToast({ type: "error", message: err?.message || "Failed to run IBKR deep repair" });
     } finally {
       setIsRunningIbkrDeepRepair(false);
+    }
+  }
+
+  async function handleRefreshIbkrLiveStatus() {
+    try {
+      await refreshIbkrStatusLive();
+      pushToast({ type: "success", message: "IBKR live status refreshed." });
+    } catch (err) {
+      pushToast({ type: "error", message: err?.message || "Failed to refresh IBKR live status" });
     }
   }
 
@@ -398,6 +409,14 @@ export default function DashboardPage() {
                   className="dashboard-button dashboard-button-secondary dashboard-button-compact"
                 >
                   {isRunningIbkrDeepRepair ? "Deep Repair..." : "Deep Repair"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRefreshIbkrLiveStatus}
+                  disabled={isRefreshingIbkrStatus}
+                  className="dashboard-button dashboard-button-neutral dashboard-button-compact"
+                >
+                  {isRefreshingIbkrStatus ? "Checking IBKR..." : "Refresh IBKR Live"}
                 </button>
                 <button
                   type="button"

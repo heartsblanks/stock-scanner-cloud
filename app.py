@@ -383,6 +383,7 @@ def run_market_ops_scheduler(*, now_ny: datetime):
         run_sync=handle_sync_paper_trades,
         run_scan=run_scheduled_paper_scan_wrapper,
         run_close=close_all_paper_positions,
+        run_health_probe=get_ibkr_operational_status,
         run_pre_close_prep=lambda: build_execute_pre_close_prep(
             now_ny=now_ny,
             get_ibkr_operational_status=get_ibkr_operational_status,
