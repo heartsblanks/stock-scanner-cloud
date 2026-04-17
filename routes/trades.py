@@ -605,6 +605,8 @@ def register_trade_routes(
         try:
             limit = int(request.args.get("limit", 100))
             broker = request.args.get("broker")
+            enrich_live_raw = str(request.args.get("enrich_live", "1")).strip().lower()
+            enrich_live = enrich_live_raw not in {"0", "false", "no", "off"}
             cursor_ts, cursor_id, cursor_error = _parse_cursor()
             if cursor_error:
                 return jsonify({"ok": False, "error": cursor_error}), 400
@@ -629,12 +631,21 @@ def register_trade_routes(
                 next_cursor_id = None
                 applied_limit = limit
 
-            enriched_rows, enrichment = _enrich_open_trade_rows(rows, broker_filter=broker)
+            if enrich_live:
+                enriched_rows, enrichment = _enrich_open_trade_rows(rows, broker_filter=broker)
+            else:
+                enriched_rows = list(rows or [])
+                enrichment = {
+                    "ibkr_live_available": False,
+                    "ibkr_live_error": None,
+                    "live_enrichment_skipped": True,
+                }
             return jsonify({
                 "ok": True,
                 "count": len(enriched_rows),
                 "limit": applied_limit,
                 "broker_filter": broker,
+                "enrich_live": enrich_live,
                 "has_more": has_more,
                 "next_cursor_ts": next_cursor_ts,
                 "next_cursor_id": next_cursor_id,

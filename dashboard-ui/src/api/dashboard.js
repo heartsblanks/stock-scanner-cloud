@@ -32,6 +32,9 @@ function resolvePagedArgs(limitOrOptions, broker, status) {
     if (options.status) {
       params.status = options.status;
     }
+    if (options.enrichLive !== undefined) {
+      params.enrich_live = options.enrichLive ? "1" : "0";
+    }
     if (options.cursorTs) {
       params.cursor_ts = options.cursorTs;
     }

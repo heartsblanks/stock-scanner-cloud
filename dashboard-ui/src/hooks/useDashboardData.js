@@ -142,7 +142,7 @@ export function useDashboardData(activeView = "overview") {
         latestScanRes,
       ] = await Promise.all([
         fetchDashboardSummary(activeFilters?.date || undefined),
-        fetchOpenTrades({ limit: IBKR_OPEN_TRADES_PAGE_SIZE, broker: "IBKR" }),
+        fetchOpenTrades({ limit: IBKR_OPEN_TRADES_PAGE_SIZE, broker: "IBKR", enrichLive: false }),
         fetchTradeLifecycle({ limit: IBKR_LIFECYCLE_PAGE_SIZE, broker: "IBKR" }),
         fetchLatestScanSummary(),
       ]);
@@ -338,7 +338,7 @@ export function useDashboardData(activeView = "overview") {
       );
     }
 
-    await Promise.all(tasks);
+    await Promise.allSettled(tasks);
   }, [
     activeView,
     loadAttemptsSection,
@@ -350,7 +350,7 @@ export function useDashboardData(activeView = "overview") {
 
   const loadInitialViewData = useCallback(async (view = activeView, activeFilters = filtersRef.current) => {
     if (view === "overview") {
-      await Promise.all([
+      await Promise.allSettled([
         loadOverviewSection(activeFilters),
         loadAttemptsSection(),
         loadReconciliationOverviewSection(),
@@ -360,7 +360,7 @@ export function useDashboardData(activeView = "overview") {
     }
 
     if (view === "trades") {
-      await Promise.all([loadOverviewSection(activeFilters), loadRiskSection()]);
+      await Promise.allSettled([loadOverviewSection(activeFilters), loadRiskSection()]);
       return;
     }
 
@@ -370,7 +370,7 @@ export function useDashboardData(activeView = "overview") {
     }
 
     if (view === "analytics") {
-      await Promise.all([loadOverviewSection(activeFilters), loadAttemptsSection()]);
+      await Promise.allSettled([loadOverviewSection(activeFilters), loadAttemptsSection()]);
       return;
     }
 
@@ -491,6 +491,7 @@ export function useDashboardData(activeView = "overview") {
       const nextPage = await fetchOpenTrades({
         limit: IBKR_OPEN_TRADES_PAGE_SIZE,
         broker: "IBKR",
+        enrichLive: false,
         cursorTs: ibkrOpenTradesCursorTs,
         cursorId: ibkrOpenTradesCursorId,
       });
