@@ -17,6 +17,16 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _to_float_or_none(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed):
+        return None
+    return parsed
+
+
 def _truthy_env(name: str, default: bool = False) -> bool:
     raw = str(os.getenv(name, str(default))).strip().lower()
     return raw in {"1", "true", "yes", "on"}
@@ -508,6 +518,15 @@ class IbkrGatewayClient:
             "message": message,
         }
 
+    def _fill_realized_pnl(self, fill: Any) -> float | None:
+        commission_report = getattr(fill, "commissionReport", None)
+        if commission_report is not None:
+            value = _to_float_or_none(getattr(commission_report, "realizedPNL", None))
+            if value is not None:
+                return value
+        execution = getattr(fill, "execution", None)
+        return _to_float_or_none(getattr(execution, "realizedPNL", None))
+
     def _sync_order_from_fills(self, ib, order_id: str) -> dict[str, Any]:
         return self._sync_order_from_fills_snapshot(
             fills=self._fetch_recent_fills(ib),
@@ -546,6 +565,7 @@ class IbkrGatewayClient:
         latest_qty = _to_float(getattr(latest_execution, "shares", 0.0))
         latest_avg_price = _to_float(getattr(latest_execution, "avgPrice", 0.0), latest_price)
         latest_side = str(getattr(latest_execution, "side", "")).strip().upper()
+        latest_realized_pnl = self._fill_realized_pnl(latest_fill)
 
         result = {
             "id": order_id_text,
@@ -574,6 +594,8 @@ class IbkrGatewayClient:
                     "exit_filled_at": self._execution_time_value(latest_fill),
                 }
             )
+            if latest_realized_pnl is not None:
+                result["exit_realized_pnl"] = round(latest_realized_pnl, 6)
 
         return result
 
@@ -592,6 +614,7 @@ class IbkrGatewayClient:
             "avg_fill_price": order_status_avg_fill_price if order_status_avg_fill_price > 0 else avg_price,
             "last_fill_price": order_status_last_fill_price if order_status_last_fill_price > 0 else last_price,
             "filled_at": self._execution_time_value(latest_fill) if latest_fill is not None else "",
+            "realized_pnl": self._fill_realized_pnl(latest_fill) if latest_fill is not None else None,
         }
 
     def _sync_order_from_completed_trades(self, ib, order_id: str) -> dict[str, Any]:
@@ -670,6 +693,8 @@ class IbkrGatewayClient:
                     "exit_filled_at": str(latest_snapshot["filled_at"] or ""),
                 }
             )
+            if latest_snapshot.get("realized_pnl") is not None:
+                result["exit_realized_pnl"] = round(_to_float(latest_snapshot["realized_pnl"]), 6)
 
         return result
 

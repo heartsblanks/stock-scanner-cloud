@@ -78,6 +78,11 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
+def _bool_env(name: str, default: bool) -> bool:
+    raw_value = str(os.getenv(name, str(default))).strip().lower()
+    return raw_value in {"1", "true", "yes", "on"}
+
+
 def _normalize_ibkr_client_order_id(value: Any) -> str:
     return str(value or "").strip()
 
@@ -601,6 +606,7 @@ def execute_sync_paper_trades(
     ibkr_timeout_streak = 0
     ibkr_cooldown_until_monotonic: float | None = None
     ibkr_sync_attempted = 0
+    ibkr_batch_only_mode = _bool_env("IBKR_SYNC_BATCH_ONLY_MODE", True)
     ibkr_batch_sync_parent_ids: set[str] = set()
     ibkr_batch_sync_results: dict[str, dict[str, Any]] = {}
 
@@ -649,9 +655,30 @@ def execute_sync_paper_trades(
                     operation="execute_sync_paper_trades",
                     requested_count=len(ibkr_batch_candidate_parent_ids),
                 )
-                ibkr_batch_sync_parent_ids = set()
-                ibkr_batch_sync_results = {}
-                ibkr_sync_attempted = 0
+                if ibkr_batch_only_mode and ibkr_batch_candidate_parent_ids:
+                    # Batch-only mode prevents N single-order bridge calls after a batch failure.
+                    ibkr_batch_sync_parent_ids = set(ibkr_batch_candidate_parent_ids)
+                    ibkr_sync_attempted = len(ibkr_batch_sync_parent_ids)
+                    batch_error_message = str(batch_error)
+                    ibkr_batch_sync_results = {
+                        parent_order_id: {
+                            "id": parent_order_id,
+                            "status": "unknown",
+                            "message": "IBKR batch sync prefetch failed in batch-only mode.",
+                            "batch_prefetch_error": batch_error_message,
+                        }
+                        for parent_order_id in ibkr_batch_candidate_parent_ids
+                    }
+                    log_warning(
+                        "IBKR batch sync prefetch failed in batch-only mode; skipping per-order fallback",
+                        component="sync_service",
+                        operation="execute_sync_paper_trades",
+                        requested_count=len(ibkr_batch_candidate_parent_ids),
+                    )
+                else:
+                    ibkr_batch_sync_parent_ids = set()
+                    ibkr_batch_sync_results = {}
+                    ibkr_sync_attempted = 0
 
     for open_row in open_rows:
         parent_order_id = str(open_row.get("broker_parent_order_id", "")).strip()
@@ -973,6 +1000,29 @@ def execute_sync_paper_trades(
                 if fallback_exit_price is None:
                     fallback_exit_price = to_float_or_none(sync_result.get("exit_price", ""))
                 if fallback_exit_price is None:
+                    sync_realized_pnl = to_float_or_none(sync_result.get("exit_realized_pnl", ""))
+                    entry_price_value = to_float_or_none(open_row.get("entry_price", ""))
+                    shares_value = to_float_or_none(open_row.get("shares", ""))
+                    fallback_direction = infer_direction(
+                        open_row.get("entry_price", ""),
+                        "",
+                        open_row.get("stop_price", ""),
+                        open_row.get("target_price", ""),
+                        open_row.get("side", ""),
+                    )
+                    if (
+                        sync_realized_pnl is not None
+                        and entry_price_value is not None
+                        and shares_value is not None
+                        and shares_value > 0
+                        and fallback_direction in {"LONG", "SHORT"}
+                    ):
+                        per_share_delta = sync_realized_pnl / shares_value
+                        if fallback_direction == "LONG":
+                            fallback_exit_price = entry_price_value + per_share_delta
+                        else:
+                            fallback_exit_price = entry_price_value - per_share_delta
+                if fallback_exit_price is None:
                     # Keep lifecycle numerics usable even when broker omits fill details.
                     fallback_exit_price = to_float_or_none(open_row.get("entry_price", ""))
 
@@ -1099,8 +1149,23 @@ def execute_sync_paper_trades(
             linked_signal_timestamp_utc = str(open_row.get("linked_signal_timestamp_utc", "")).strip()
             broker_order_id = str(open_row.get("broker_order_id", "") or parent_order_id)
             broker_parent_order_id = str(open_row.get("broker_parent_order_id", "") or parent_order_id)
-            realized_pnl = compute_realized_pnl(entry_price, exit_price, shares_value, direction)
-            realized_pnl_percent = compute_realized_pnl_percent(entry_price, exit_price, direction)
+            entry_price_value = to_float_or_none(entry_price)
+            shares_float = to_float_or_none(shares_value)
+            synced_realized_pnl = to_float_or_none(sync_result.get("exit_realized_pnl", ""))
+            if synced_realized_pnl is not None:
+                realized_pnl = round(synced_realized_pnl, 6)
+                if (
+                    entry_price_value is not None
+                    and shares_float is not None
+                    and entry_price_value > 0
+                    and shares_float > 0
+                ):
+                    realized_pnl_percent = round((realized_pnl / (entry_price_value * shares_float)) * 100.0, 6)
+                else:
+                    realized_pnl_percent = compute_realized_pnl_percent(entry_price, exit_price, direction)
+            else:
+                realized_pnl = compute_realized_pnl(entry_price, exit_price, shares_value, direction)
+                realized_pnl_percent = compute_realized_pnl_percent(entry_price, exit_price, direction)
             duration_minutes = compute_duration_minutes(entry_timestamp, exit_timestamp)
             trade_key = normalize_trade_key(symbol, broker_parent_order_id, broker_order_id, broker_name)
 
@@ -1252,6 +1317,7 @@ def execute_sync_paper_trades(
         "auto_heal_errors": auto_heal_errors,
         "ibkr_sync_attempted": ibkr_sync_attempted,
         "ibkr_sync_max_per_run": ibkr_sync_max_per_run,
+        "ibkr_batch_only_mode": ibkr_batch_only_mode,
         "ibkr_timeout_streak": ibkr_timeout_streak,
         "ibkr_cooldown_active": bool(
             ibkr_cooldown_until_monotonic is not None and time.monotonic() < ibkr_cooldown_until_monotonic

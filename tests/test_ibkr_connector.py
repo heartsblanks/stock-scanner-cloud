@@ -57,10 +57,16 @@ class _FakeExecution:
         self.time = time
 
 
+class _FakeCommissionReport:
+    def __init__(self, *, realized_pnl=None):
+        self.realizedPNL = realized_pnl
+
+
 class _FakeFill:
-    def __init__(self, *, symbol, execution):
+    def __init__(self, *, symbol, execution, realized_pnl=None):
         self.contract = _FakeContract(symbol)
         self.execution = execution
+        self.commissionReport = _FakeCommissionReport(realized_pnl=realized_pnl)
 
 
 class _FakePositionRow:
@@ -205,6 +211,7 @@ class IbkrConnectorTests(unittest.TestCase):
             _FakeFill(
                 symbol="RIVN",
                 execution=_FakeExecution(order_id=36, order_ref="scanner-RIVN-BUY-157100-317", price=15.47, shares=317, side="SLD", time="2026-04-10T16:01:09+00:00"),
+                realized_pnl=-76.08,
             ),
         ]
 
@@ -214,6 +221,7 @@ class IbkrConnectorTests(unittest.TestCase):
         self.assertEqual(result["exit_order_id"], "36")
         self.assertEqual(result["exit_price"], 15.47)
         self.assertEqual(result["exit_reason"], "BROKER_FILLED_EXIT")
+        self.assertEqual(result["exit_realized_pnl"], -76.08)
 
     def test_sync_order_prefers_execution_fills_before_open_trade_lookup(self):
         client = IbkrGatewayClient.__new__(IbkrGatewayClient)
@@ -309,6 +317,7 @@ class IbkrConnectorTests(unittest.TestCase):
                     side="SLD",
                     time="2026-04-13T19:55:00+00:00",
                 ),
+                realized_pnl=-47.84,
             )
         ]
 
@@ -320,6 +329,7 @@ class IbkrConnectorTests(unittest.TestCase):
         self.assertEqual(result["exit_order_id"], "78")
         self.assertEqual(result["exit_price"], 16.52)
         self.assertEqual(result["exit_reason"], "BROKER_FILLED_EXIT")
+        self.assertEqual(result["exit_realized_pnl"], -47.84)
 
     def test_get_positions_skips_ticker_enrichment_by_default(self):
         fake_ib = _FakeIbForPositions([

@@ -693,6 +693,47 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(result["synced_count"], 2)
         self.assertEqual(len(captured_lifecycles), 2)
 
+    def test_ibkr_batch_only_mode_skips_per_order_fallback_after_batch_failure(self):
+        single_sync_calls = []
+
+        with patch.dict("os.environ", {"IBKR_SYNC_BATCH_ONLY_MODE": "true"}, clear=False):
+            result = execute_sync_paper_trades(
+                get_open_paper_trades=lambda: [
+                    {"symbol": "PLTR", "broker_parent_order_id": "136", "broker": "IBKR"},
+                    {"symbol": "SMCI", "broker_parent_order_id": "112", "broker": "IBKR"},
+                ],
+                sync_order_by_id_for_broker=lambda broker, parent_id: (
+                    single_sync_calls.append((broker, parent_id))
+                    or {"status": "filled"}
+                ),
+                sync_orders_by_ids_for_broker=lambda broker, order_ids: (_ for _ in ()).throw(
+                    RuntimeError("batch bridge timeout")
+                ),
+                paper_trade_exit_already_logged=lambda parent_order_id, exit_event: False,
+                append_trade_log=lambda row: None,
+                safe_insert_trade_event=lambda **kwargs: None,
+                safe_insert_broker_order=lambda **kwargs: None,
+                upsert_trade_lifecycle=lambda **kwargs: None,
+                parse_iso_utc=parse_iso_utc,
+                to_float_or_none=to_float_or_none,
+                get_open_state_for_broker=lambda broker: {
+                    "positions": [
+                        {"symbol": "PLTR"},
+                        {"symbol": "SMCI"},
+                    ],
+                    "orders": [],
+                },
+                close_position_for_broker=lambda broker, symbol: {"ok": True},
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(single_sync_calls, [])
+        self.assertTrue(result["ibkr_batch_only_mode"])
+        self.assertEqual(result["ibkr_sync_attempted"], 2)
+        self.assertEqual(result["ibkr_batch_sync_prefetched"], 2)
+        self.assertEqual(result["results"][0]["reason"], "still_open")
+        self.assertEqual(result["results"][1]["reason"], "still_open")
+
 
 if __name__ == "__main__":
     unittest.main()
