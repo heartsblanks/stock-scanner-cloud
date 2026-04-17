@@ -53,6 +53,10 @@ export default function SchedulerHealthSection({
   opsSummary,
   ibkrRecentAttempts,
   ibkrStatus,
+  panelFreshnessLabel,
+  panelFreshnessTone,
+  onRetry,
+  isRetrying = false,
 }) {
   const latestScanRun = opsSummary?.latest_scan_run || null;
   const latestReconciliationAt = opsSummary?.latest_reconciliation_run_time || null;
@@ -79,9 +83,21 @@ export default function SchedulerHealthSection({
           <div className="dashboard-panel-heading">
             <div>
               <h2 className="dashboard-panel-title">Scheduler Watch</h2>
-              <p className="dashboard-panel-subtitle">
-                Freshness view for intraday scans, post-close reconciliation, broker activity, and IBKR readiness.
-              </p>
+            </div>
+            <div className="dashboard-panel-tools">
+              <span className={`dashboard-badge ${panelFreshnessTone || "dashboard-badge-neutral"}`}>
+                {panelFreshnessLabel || "No freshness data"}
+              </span>
+              <button
+                type="button"
+                className="dashboard-icon-button"
+                onClick={onRetry}
+                disabled={isRetrying}
+                title="Retry panel"
+                aria-label="Retry panel"
+              >
+                {isRetrying ? "…" : "↻"}
+              </button>
             </div>
           </div>
 

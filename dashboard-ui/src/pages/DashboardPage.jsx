@@ -4,6 +4,7 @@ import AttentionRequiredPanel from "../components/dashboard/AttentionRequiredPan
 import ExecutionInsightsSection from "../components/dashboard/ExecutionInsightsSection";
 import HealthOverviewSection from "../components/dashboard/HealthOverviewSection";
 import SchedulerHealthSection from "../components/dashboard/SchedulerHealthSection";
+import RiskExposurePanel from "../components/dashboard/RiskExposurePanel";
 import HourlyAttemptOutcomeChart from "../components/HourlyAttemptOutcomeChart";
 import HourlyOutcomeQualityTable from "../components/HourlyOutcomeQualityTable";
 import HourlyPerformanceChart from "../components/HourlyPerformanceChart";
@@ -48,6 +49,113 @@ function getEntryHourUtc(row) {
   return String(parsed.getUTCHours()).padStart(2, "0");
 }
 
+function buildFreshness(timestamp, freshMinutes = 10, staleMinutes = 45) {
+  if (!timestamp) {
+    return { label: "No data", tone: "dashboard-badge-neutral" };
+  }
+
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) {
+    return { label: "Unknown age", tone: "dashboard-badge-neutral" };
+  }
+
+  const ageMinutes = Math.max(0, Math.round((Date.now() - parsed.getTime()) / 60000));
+  if (ageMinutes <= freshMinutes) {
+    return { label: `Fresh ${ageMinutes}m`, tone: "dashboard-badge-ok" };
+  }
+  if (ageMinutes <= staleMinutes) {
+    return { label: `Aging ${ageMinutes}m`, tone: "dashboard-badge-warn" };
+  }
+  return { label: `Stale ${ageMinutes}m`, tone: "dashboard-badge-danger" };
+}
+
+function deriveSystemState({ backendHealthStatus, mismatchLabel, ibkrStatus }) {
+  const ibkrState = String(ibkrStatus?.state || "UNKNOWN").toUpperCase();
+
+  if (ibkrStatus?.enabled && ibkrStatus?.login_required) {
+    return {
+      label: "LOGIN_REQUIRED",
+      tone: "dashboard-badge-warn",
+      detail: ibkrStatus?.message || "IBKR login is required before orders can run.",
+    };
+  }
+
+  if (ibkrState === "MARKET_DATA_UNAVAILABLE") {
+    return {
+      label: "MARKET_DATA_UNAVAILABLE",
+      tone: "dashboard-badge-warn",
+      detail: ibkrStatus?.message || "IBKR market data is unavailable.",
+    };
+  }
+
+  if (backendHealthStatus !== "OK" || mismatchLabel === "CRITICAL") {
+    return {
+      label: "DEGRADED",
+      tone: "dashboard-badge-danger",
+      detail: "Backend or reconciliation health needs attention.",
+    };
+  }
+
+  if (mismatchLabel === "WARNING") {
+    return {
+      label: "DEGRADED",
+      tone: "dashboard-badge-warn",
+      detail: "Reconciliation drift is elevated and should be checked.",
+    };
+  }
+
+  if (ibkrState === "DISABLED") {
+    return {
+      label: "DISABLED",
+      tone: "dashboard-badge-info",
+      detail: "IBKR bridge is disabled in current environment.",
+    };
+  }
+
+  if (ibkrState !== "READY" && ibkrState !== "UNKNOWN") {
+    return {
+      label: "DEGRADED",
+      tone: "dashboard-badge-warn",
+      detail: `IBKR state is ${ibkrState}.`,
+    };
+  }
+
+  return {
+    label: "READY",
+    tone: "dashboard-badge-ok",
+    detail: "Core systems are healthy and trading workflows are available.",
+  };
+}
+
+function Sparkline({ points }) {
+  if (!Array.isArray(points) || points.length < 2) {
+    return null;
+  }
+
+  const numeric = points.map((value) => Number(value)).filter((value) => Number.isFinite(value));
+  if (numeric.length < 2) {
+    return null;
+  }
+
+  const min = Math.min(...numeric);
+  const max = Math.max(...numeric);
+  const range = max - min || 1;
+
+  const polyline = numeric
+    .map((value, index) => {
+      const x = (index / (numeric.length - 1)) * 100;
+      const y = 100 - ((value - min) / range) * 100;
+      return `${x},${y}`;
+    })
+    .join(" ");
+
+  return (
+    <svg className="dashboard-sparkline" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+      <polyline points={polyline} className="dashboard-sparkline-line" />
+    </svg>
+  );
+}
+
 function LazySection({ children }) {
   return <Suspense fallback={<div className="dashboard-empty">Loading section...</div>}>{children}</Suspense>;
 }
@@ -80,7 +188,6 @@ function getInitialView() {
   if (typeof window === "undefined") {
     return "overview";
   }
-
   const params = new URLSearchParams(window.location.search);
   const view = String(params.get("view") || "").trim().toLowerCase();
   return DASHBOARD_VIEWS.some((item) => item.id === view) ? view : "overview";
@@ -96,6 +203,8 @@ export default function DashboardPage() {
   const [isSendingTestAlert, setIsSendingTestAlert] = useState(false);
   const [isRunningIbkrRepair, setIsRunningIbkrRepair] = useState(false);
   const [isRunningIbkrDeepRepair, setIsRunningIbkrDeepRepair] = useState(false);
+  const [isRunningMorningCheck, setIsRunningMorningCheck] = useState(false);
+  const [adminDrawerOpen, setAdminDrawerOpen] = useState(false);
   const [ibkrRepairDate, setIbkrRepairDate] = useState(todayDateInputValue);
 
   const {
@@ -134,10 +243,6 @@ export default function DashboardPage() {
     backendHealthStatus,
     syncHealthStatus,
     reconciliationHealthStatus,
-    confidenceMultiplier,
-    lossMultiplier,
-    finalSizingMultiplier,
-    multiplierStatus,
     topAttemptReasons,
     stageCounts,
     paperTradePlacementRate,
@@ -187,6 +292,35 @@ export default function DashboardPage() {
     summary?.summary?.win_rate_percent !== null && summary?.summary?.win_rate_percent !== undefined
       ? `${Number(summary.summary.win_rate_percent).toFixed(1)}%`
       : "-";
+
+  const systemState = deriveSystemState({
+    backendHealthStatus,
+    mismatchLabel,
+    ibkrStatus,
+  });
+  const panelFreshness = buildFreshness(lastUpdated, 8, 30);
+  const scanFreshness = buildFreshness(opsSummary?.latest_scan_run?.scan_time, 15, 60);
+  const pollingFreshness = buildFreshness(lastUpdated, 10, 40);
+
+  const pnlSpark = (equityCurve || []).slice(-28).map((row) => Number(row?.cumulative_pnl || 0));
+  const tradesSpark = (equityCurve || []).slice(-28).map((_, index) => index + 1);
+  const attemptSpark = (paperTradeAttemptHourlySummary || [])
+    .slice(-24)
+    .map((row) => Number(row?.total_attempts || 0));
+  const placementSpark = (paperTradeAttemptHourlySummary || [])
+    .slice(-24)
+    .map((row) => Number(row?.placement_rate || 0));
+  const closedLifecycleRows = [...(ibkrLifecycle || [])]
+    .filter((row) => String(row?.status || "").toUpperCase() === "CLOSED")
+    .sort((left, right) => new Date(left?.exit_time || 0).getTime() - new Date(right?.exit_time || 0).getTime())
+    .slice(-24);
+  let runningWins = 0;
+  const winRateSpark = closedLifecycleRows.map((row, index) => {
+    if (Number(row?.realized_pnl || 0) > 0) {
+      runningWins += 1;
+    }
+    return ((runningWins / (index + 1)) * 100).toFixed(2);
+  });
 
   const filteredIbkrOpenTrades = ibkrOpenTrades.filter((row) => {
     const symbolMatch = !drilldown.symbol || String(row?.symbol || "").trim().toUpperCase() === drilldown.symbol;
@@ -279,8 +413,33 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleMorningCheck() {
+    try {
+      setIsRunningMorningCheck(true);
+      await refreshIbkrStatusLive();
+      await syncPaperTrades();
+      await rerunReconciliation();
+      pushToast({ type: "success", message: "Morning Check completed." });
+    } catch (err) {
+      pushToast({ type: "error", message: err?.message || "Morning Check failed" });
+    } finally {
+      setIsRunningMorningCheck(false);
+    }
+  }
+
   useEffect(() => {
     document.documentElement.dataset.theme = "dark";
+  }, []);
+
+  useEffect(() => {
+    function handleEscape(event) {
+      if (event.key === "Escape") {
+        setAdminDrawerOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
   }, []);
 
   useEffect(() => {
@@ -312,6 +471,10 @@ export default function DashboardPage() {
           <div className="dashboard-command-main">
             <div className="dashboard-command-kicker">IBKR Command Grid</div>
             <h1 className="dashboard-command-title">Stock Scanner Operations</h1>
+            <div className="dashboard-system-state">
+              <span className={`dashboard-badge ${systemState.tone}`}>System {systemState.label}</span>
+              <span className="dashboard-system-state-detail">{systemState.detail}</span>
+            </div>
             <div className="dashboard-command-meta">
               <span
                 className={`dashboard-pill dashboard-pill-status ${
@@ -339,16 +502,6 @@ export default function DashboardPage() {
           <div className="dashboard-command-controls">
             <div className="dashboard-command-row">
               <DashboardFilters onApply={handleApplyFilters} />
-              <div className="dashboard-date-filter-inline">
-                <label htmlFor="ibkr-repair-date">Repair Date</label>
-                <input
-                  id="ibkr-repair-date"
-                  type="date"
-                  value={ibkrRepairDate}
-                  onChange={(event) => setIbkrRepairDate(event.target.value)}
-                  className="dashboard-input dashboard-input-inline-date"
-                />
-              </div>
             </div>
             <div className="dashboard-command-row">
               <button
@@ -375,27 +528,18 @@ export default function DashboardPage() {
               </button>
               <button
                 type="button"
-                onClick={handleRunIbkrRepair}
-                disabled={isRunningIbkrRepair || !ibkrRepairDate}
-                className="dashboard-button dashboard-button-neutral dashboard-button-compact"
-              >
-                {isRunningIbkrRepair ? "Repairing..." : "Repair"}
-              </button>
-              <button
-                type="button"
-                onClick={handleRunIbkrDeepRepair}
-                disabled={isRunningIbkrDeepRepair || !ibkrRepairDate}
+                onClick={handleMorningCheck}
+                disabled={isRunningMorningCheck || isRefreshing || isRunningSync}
                 className="dashboard-button dashboard-button-secondary dashboard-button-compact"
               >
-                {isRunningIbkrDeepRepair ? "Deep..." : "Deep Repair"}
+                {isRunningMorningCheck ? "Morning Check..." : "Morning Check"}
               </button>
               <button
                 type="button"
-                onClick={handleSendTestAlert}
-                disabled={isSendingTestAlert}
+                onClick={() => setAdminDrawerOpen(true)}
                 className="dashboard-button dashboard-button-neutral dashboard-button-compact"
               >
-                {isSendingTestAlert ? "Sending..." : "Test Alert"}
+                Admin
               </button>
             </div>
             <div className="dashboard-command-row dashboard-command-row-meta">
@@ -412,6 +556,60 @@ export default function DashboardPage() {
           </div>
         </section>
 
+        {adminDrawerOpen && (
+          <div className="dashboard-admin-overlay" onClick={() => setAdminDrawerOpen(false)}>
+            <aside className="dashboard-admin-drawer" onClick={(event) => event.stopPropagation()}>
+              <div className="dashboard-admin-header">
+                <h3>Admin Actions</h3>
+                <button
+                  type="button"
+                  className="dashboard-icon-button"
+                  onClick={() => setAdminDrawerOpen(false)}
+                  aria-label="Close admin drawer"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="dashboard-admin-body">
+                <div className="dashboard-date-filter-inline">
+                  <label htmlFor="ibkr-repair-date">Repair Date</label>
+                  <input
+                    id="ibkr-repair-date"
+                    type="date"
+                    value={ibkrRepairDate}
+                    onChange={(event) => setIbkrRepairDate(event.target.value)}
+                    className="dashboard-input dashboard-input-inline-date"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRunIbkrRepair}
+                  disabled={isRunningIbkrRepair || !ibkrRepairDate}
+                  className="dashboard-button dashboard-button-neutral"
+                >
+                  {isRunningIbkrRepair ? "Repairing..." : "Repair IBKR"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRunIbkrDeepRepair}
+                  disabled={isRunningIbkrDeepRepair || !ibkrRepairDate}
+                  className="dashboard-button dashboard-button-secondary"
+                >
+                  {isRunningIbkrDeepRepair ? "Deep Repair..." : "Deep Repair"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSendTestAlert}
+                  disabled={isSendingTestAlert}
+                  className="dashboard-button dashboard-button-neutral"
+                >
+                  {isSendingTestAlert ? "Sending..." : "Send Test Alert"}
+                </button>
+              </div>
+            </aside>
+          </div>
+        )}
+
         {toast && (
           <div
             className={`dashboard-toast ${
@@ -426,22 +624,27 @@ export default function DashboardPage() {
           <article className="dashboard-quick-card">
             <span className="dashboard-quick-label">Realized P&amp;L</span>
             <strong className="dashboard-quick-value">{realizedPnl}</strong>
+            <Sparkline points={pnlSpark} />
           </article>
           <article className="dashboard-quick-card">
             <span className="dashboard-quick-label">Trades</span>
             <strong className="dashboard-quick-value">{totalTrades}</strong>
+            <Sparkline points={tradesSpark} />
           </article>
           <article className="dashboard-quick-card">
             <span className="dashboard-quick-label">Win Rate</span>
             <strong className="dashboard-quick-value">{winRate}</strong>
+            <Sparkline points={winRateSpark} />
           </article>
           <article className="dashboard-quick-card">
             <span className="dashboard-quick-label">Open IBKR</span>
             <strong className="dashboard-quick-value">{ibkrOpenTrades.length}</strong>
+            <Sparkline points={attemptSpark} />
           </article>
           <article className="dashboard-quick-card">
             <span className="dashboard-quick-label">Recent IBKR Placements</span>
             <strong className="dashboard-quick-value">{recentIbkrPlacedCount}</strong>
+            <Sparkline points={placementSpark} />
           </article>
         </section>
 
@@ -482,44 +685,57 @@ export default function DashboardPage() {
               {sectionLoading.overview && <div className="dashboard-empty">Loading overview...</div>}
               {sectionErrors.overview && <div className="dashboard-error">{sectionErrors.overview}</div>}
 
+              <HealthOverviewSection
+                lastUpdated={lastUpdated}
+                sectionLoading={sectionLoading}
+                sectionErrors={sectionErrors}
+                ibkrOpenCount={ibkrOpenTrades.length}
+                mismatch={mismatch}
+                mismatchLabel={mismatchLabel}
+                backendHealthStatus={backendHealthStatus}
+                syncHealthStatus={syncHealthStatus}
+                reconciliationHealthStatus={reconciliationHealthStatus}
+                lastReconciliationAt={lastReconciliationAt}
+                isRunningSync={isRunningSync}
+                ibkrStatus={ibkrStatus}
+                panelFreshnessLabel={panelFreshness.label}
+                panelFreshnessTone={panelFreshness.tone}
+                onRetry={refreshData}
+                isRetrying={isRefreshing}
+              />
+
               <div className="dashboard-split">
-                <div className="dashboard-stack">
-                  <HealthOverviewSection
-                    lastUpdated={lastUpdated}
-                    sectionLoading={sectionLoading}
-                    sectionErrors={sectionErrors}
-                    ibkrOpenCount={ibkrOpenTrades.length}
-                    mismatch={mismatch}
-                    mismatchLabel={mismatchLabel}
-                    backendHealthStatus={backendHealthStatus}
-                    syncHealthStatus={syncHealthStatus}
-                    reconciliationHealthStatus={reconciliationHealthStatus}
-                    lastReconciliationAt={lastReconciliationAt}
-                    isRunningSync={isRunningSync}
-                    ibkrStatus={ibkrStatus}
-                    riskExposureSummary={riskExposureSummary}
-                    confidenceMultiplier={confidenceMultiplier}
-                    lossMultiplier={lossMultiplier}
-                    finalSizingMultiplier={finalSizingMultiplier}
-                    multiplierStatus={multiplierStatus}
-                    compact
-                  />
-                  <SchedulerHealthSection
-                    opsSummary={opsSummary}
-                    ibkrRecentAttempts={ibkrRecentAttempts}
-                    ibkrStatus={ibkrStatus}
-                  />
-                </div>
-                <div className="dashboard-stack">
-                  <RefreshStatusPanel
-                    lastUpdated={lastUpdated}
-                    nextRefreshAt={nextRefreshAt}
-                    autoRefreshActive={autoRefreshActive}
-                    refreshWindowLabel={refreshWindowLabel}
-                    autoRefreshMarketTime={autoRefreshMarketTime}
-                  />
-                </div>
+                <RiskExposurePanel
+                  sectionLoading={sectionLoading}
+                  sectionErrors={sectionErrors}
+                  riskExposureSummary={riskExposureSummary}
+                  panelFreshnessLabel={panelFreshness.label}
+                  panelFreshnessTone={panelFreshness.tone}
+                  onRetry={refreshData}
+                  isRetrying={isRefreshing}
+                />
+                <SchedulerHealthSection
+                  opsSummary={opsSummary}
+                  ibkrRecentAttempts={ibkrRecentAttempts}
+                  ibkrStatus={ibkrStatus}
+                  panelFreshnessLabel={scanFreshness.label}
+                  panelFreshnessTone={scanFreshness.tone}
+                  onRetry={refreshData}
+                  isRetrying={isRefreshing}
+                />
               </div>
+
+              <RefreshStatusPanel
+                lastUpdated={lastUpdated}
+                nextRefreshAt={nextRefreshAt}
+                autoRefreshActive={autoRefreshActive}
+                refreshWindowLabel={refreshWindowLabel}
+                autoRefreshMarketTime={autoRefreshMarketTime}
+                panelFreshnessLabel={pollingFreshness.label}
+                panelFreshnessTone={pollingFreshness.tone}
+                onRetry={refreshData}
+                isRetrying={isRefreshing}
+              />
 
               <section className="dashboard-section">
                 <div className="dashboard-panel">
@@ -649,6 +865,10 @@ export default function DashboardPage() {
                 ibkrStatus={ibkrStatus}
                 hourlyOutcomeQuality={strategyHourlyOutcomeQuality}
                 externalExitSummary={externalExitSummary}
+                panelFreshnessLabel={panelFreshness.label}
+                panelFreshnessTone={panelFreshness.tone}
+                onRetry={refreshData}
+                isRetrying={isRefreshing}
               />
 
               <section className="dashboard-section">

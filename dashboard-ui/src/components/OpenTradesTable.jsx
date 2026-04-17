@@ -1,4 +1,5 @@
 import { formatCurrency, formatNumber, formatTimestamp, formatValue, sortRowsByLatest } from "./tableFormatters";
+import { useVirtualizedTableRows } from "./useVirtualizedTableRows";
 
 function getStatusBadge(status) {
   if (status === "OPEN") {
@@ -19,12 +20,28 @@ function getBrokerBadge(broker) {
 }
 
 export default function OpenTradesTable({ trades }) {
-  if (!trades || trades.length === 0) {
+  const sortedTrades = sortRowsByLatest(Array.isArray(trades) ? trades : [], ["entry_time", "timestamp_utc", "created_at"]);
+  const showLiveComparison = sortedTrades.some((trade) => String(trade.broker || "").trim().toUpperCase() === "IBKR");
+  const columnCount = 12 + (showLiveComparison ? 2 : 0);
+  const {
+    containerRef,
+    handleScroll,
+    virtualizationEnabled,
+    startIndex,
+    endIndex,
+    topPadding,
+    bottomPadding,
+  } = useVirtualizedTableRows({
+    rowCount: sortedTrades.length,
+    rowHeight: showLiveComparison ? 92 : 76,
+    overscan: 8,
+    minRowsToVirtualize: 40,
+  });
+  const visibleTrades = sortedTrades.slice(startIndex, endIndex);
+
+  if (!sortedTrades.length) {
     return <div className="dashboard-empty">No open trades.</div>;
   }
-
-  const sortedTrades = sortRowsByLatest(trades, ["entry_time", "timestamp_utc", "created_at"]);
-  const showLiveComparison = sortedTrades.some((trade) => String(trade.broker || "").trim().toUpperCase() === "IBKR");
 
   function renderStoredLiveCurrency(storedValue, liveValue, mismatch, liveLabel = "Live", liveFallbackText = "-") {
     const hasStored = storedValue !== null && storedValue !== undefined && storedValue !== "";
@@ -79,7 +96,11 @@ export default function OpenTradesTable({ trades }) {
   }
 
   return (
-    <div className="dashboard-table-wrap">
+    <div
+      ref={containerRef}
+      onScroll={handleScroll}
+      className={`dashboard-table-wrap ${virtualizationEnabled ? "dashboard-table-wrap-virtualized" : ""}`}
+    >
       <table className="dashboard-table">
         <thead>
           <tr>
@@ -100,8 +121,13 @@ export default function OpenTradesTable({ trades }) {
           </tr>
         </thead>
         <tbody>
-          {sortedTrades.map((trade, index) => (
-            <tr key={`${trade.trade_key || trade.symbol || "trade"}-${index}`}>
+          {topPadding > 0 ? (
+            <tr className="dashboard-virtual-spacer" aria-hidden="true">
+              <td colSpan={columnCount} style={{ height: `${topPadding}px` }} />
+            </tr>
+          ) : null}
+          {visibleTrades.map((trade, index) => (
+            <tr key={`${trade.trade_key || trade.symbol || "trade"}-${startIndex + index}`}>
               <td data-label="Symbol" className="dashboard-cell-strong">{formatValue(trade.symbol)}</td>
               <td data-label="Broker">
                 <span className={getBrokerBadge(trade.broker)}>{formatValue(trade.broker)}</span>
@@ -179,6 +205,11 @@ export default function OpenTradesTable({ trades }) {
               <td data-label="Entry Time" className="dashboard-cell-muted">{formatTimestamp(trade.entry_time)}</td>
             </tr>
           ))}
+          {bottomPadding > 0 ? (
+            <tr className="dashboard-virtual-spacer" aria-hidden="true">
+              <td colSpan={columnCount} style={{ height: `${bottomPadding}px` }} />
+            </tr>
+          ) : null}
         </tbody>
       </table>
     </div>

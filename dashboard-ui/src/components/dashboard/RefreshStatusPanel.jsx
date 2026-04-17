@@ -4,6 +4,10 @@ export default function RefreshStatusPanel({
   autoRefreshActive,
   refreshWindowLabel,
   autoRefreshMarketTime,
+  panelFreshnessLabel,
+  panelFreshnessTone,
+  onRetry,
+  isRetrying = false,
 }) {
   return (
     <section className="dashboard-section">
@@ -12,6 +16,21 @@ export default function RefreshStatusPanel({
           <div className="dashboard-panel-heading">
             <div>
               <h3>Dashboard Polling</h3>
+            </div>
+            <div className="dashboard-panel-tools">
+              <span className={`dashboard-badge ${panelFreshnessTone || "dashboard-badge-neutral"}`}>
+                {panelFreshnessLabel || "No freshness data"}
+              </span>
+              <button
+                type="button"
+                className="dashboard-icon-button"
+                onClick={onRetry}
+                disabled={isRetrying}
+                title="Retry panel"
+                aria-label="Retry panel"
+              >
+                {isRetrying ? "…" : "↻"}
+              </button>
             </div>
           </div>
 

@@ -7,6 +7,7 @@ import {
   signedTone,
   sortRowsByLatest,
 } from "./tableFormatters";
+import { useVirtualizedTableRows } from "./useVirtualizedTableRows";
 
 function statusBadge(status) {
   if (status === "CLOSED") {
@@ -37,14 +38,34 @@ function brokerBadge(broker) {
 }
 
 export default function TradeLifecycleTable({ rows }) {
-  if (!rows || rows.length === 0) {
+  const sortedRows = sortRowsByLatest(Array.isArray(rows) ? rows : [], ["entry_time", "exit_time", "created_at"]);
+  const columnCount = 18;
+  const {
+    containerRef,
+    handleScroll,
+    virtualizationEnabled,
+    startIndex,
+    endIndex,
+    topPadding,
+    bottomPadding,
+  } = useVirtualizedTableRows({
+    rowCount: sortedRows.length,
+    rowHeight: 66,
+    overscan: 8,
+    minRowsToVirtualize: 50,
+  });
+  const visibleRows = sortedRows.slice(startIndex, endIndex);
+
+  if (!sortedRows.length) {
     return <div className="dashboard-empty">No trade lifecycle data.</div>;
   }
 
-  const sortedRows = sortRowsByLatest(rows, ["entry_time", "exit_time", "created_at"]);
-
   return (
-    <div className="dashboard-table-wrap">
+    <div
+      ref={containerRef}
+      onScroll={handleScroll}
+      className={`dashboard-table-wrap ${virtualizationEnabled ? "dashboard-table-wrap-virtualized" : ""}`}
+    >
       <table className="dashboard-table">
         <thead>
           <tr>
@@ -69,7 +90,12 @@ export default function TradeLifecycleTable({ rows }) {
           </tr>
         </thead>
         <tbody>
-          {sortedRows.map((row, index) => {
+          {topPadding > 0 ? (
+            <tr className="dashboard-virtual-spacer" aria-hidden="true">
+              <td colSpan={columnCount} style={{ height: `${topPadding}px` }} />
+            </tr>
+          ) : null}
+          {visibleRows.map((row, index) => {
             const pnlTone = signedTone(row.realized_pnl);
             const rowTone =
               pnlTone === "dashboard-cell-positive"
@@ -79,7 +105,7 @@ export default function TradeLifecycleTable({ rows }) {
                   : "";
 
             return (
-              <tr key={`${row.trade_key || row.symbol || "lifecycle"}-${index}`} className={rowTone}>
+              <tr key={`${row.trade_key || row.symbol || "lifecycle"}-${startIndex + index}`} className={rowTone}>
                 <td data-label="Symbol" className="dashboard-cell-strong">{formatValue(row.symbol)}</td>
                 <td data-label="Broker">
                   <span className={brokerBadge(row.broker)}>{formatValue(row.broker)}</span>
@@ -107,6 +133,11 @@ export default function TradeLifecycleTable({ rows }) {
               </tr>
             );
           })}
+          {bottomPadding > 0 ? (
+            <tr className="dashboard-virtual-spacer" aria-hidden="true">
+              <td colSpan={columnCount} style={{ height: `${bottomPadding}px` }} />
+            </tr>
+          ) : null}
         </tbody>
       </table>
     </div>

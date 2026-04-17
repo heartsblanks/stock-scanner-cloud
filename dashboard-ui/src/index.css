@@ -1897,3 +1897,104 @@ h3 {
     width: 100%;
   }
 }
+
+.dashboard-system-state {
+  display: grid;
+  gap: 6px;
+}
+
+.dashboard-system-state-detail {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.dashboard-panel-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dashboard-icon-button {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid rgba(93, 255, 159, 0.28);
+  background: rgba(11, 35, 26, 0.9);
+  color: var(--text-strong);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.dashboard-icon-button:disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
+}
+
+.dashboard-admin-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.48);
+  backdrop-filter: blur(2px);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.dashboard-admin-drawer {
+  width: min(360px, 100%);
+  height: 100%;
+  background: rgba(2, 16, 11, 0.97);
+  border-left: 1px solid rgba(93, 255, 159, 0.28);
+  box-shadow: -16px 0 42px rgba(0, 0, 0, 0.42);
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.dashboard-admin-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px;
+  border-bottom: 1px solid rgba(93, 255, 159, 0.2);
+}
+
+.dashboard-admin-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.dashboard-admin-body {
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.dashboard-quick-card {
+  display: grid;
+  gap: 4px;
+}
+
+.dashboard-sparkline {
+  width: 100%;
+  height: 28px;
+  opacity: 0.9;
+}
+
+.dashboard-sparkline-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.dashboard-table-wrap-virtualized {
+  overflow: auto;
+}
+
+.dashboard-virtual-spacer td {
+  padding: 0 !important;
+  border-bottom: none !important;
+  background: transparent !important;
+}

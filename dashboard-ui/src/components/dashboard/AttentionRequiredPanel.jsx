@@ -9,6 +9,10 @@ function severityClass(severity) {
 }
 
 export default function AttentionRequiredPanel({ items = [] }) {
+  if (!items.length) {
+    return null;
+  }
+
   return (
     <section className="dashboard-section">
       <div className="dashboard-panel dashboard-panel-strong">
@@ -18,19 +22,14 @@ export default function AttentionRequiredPanel({ items = [] }) {
               <h2 className="dashboard-panel-title">Attention Required</h2>
             </div>
           </div>
-
-          {items.length === 0 ? (
-            <div className="dashboard-empty">No immediate issues are standing out right now.</div>
-          ) : (
-            <div className="dashboard-attention-list">
-              {items.map((item) => (
-                <div key={item.id} className={severityClass(item.severity)}>
-                  <div className="dashboard-attention-title">{item.title}</div>
-                  <div className="dashboard-attention-detail">{item.detail}</div>
-                </div>
-              ))}
-            </div>
-          )}
+          <div className="dashboard-attention-list">
+            {items.map((item) => (
+              <div key={item.id} className={severityClass(item.severity)}>
+                <div className="dashboard-attention-title">{item.title}</div>
+                <div className="dashboard-attention-detail">{item.detail}</div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </section>

@@ -35,6 +35,10 @@ export default function ExecutionInsightsSection({
   ibkrStatus,
   hourlyOutcomeQuality,
   externalExitSummary,
+  panelFreshnessLabel,
+  panelFreshnessTone,
+  onRetry,
+  isRetrying = false,
 }) {
   const stageCountMap = Object.fromEntries((stageCounts || []).map((row) => [row.decision_stage, Number(row.count || 0)]));
   const placedCount = stageCountMap.PLACED ?? 0;
@@ -94,9 +98,21 @@ export default function ExecutionInsightsSection({
           <div className="dashboard-panel-heading">
             <div>
               <h2 className="dashboard-panel-title">Execution Insights</h2>
-              <p className="dashboard-panel-subtitle">
-                Why trades are being placed, skipped, or rejected, using the new per-attempt data instead of summary text.
-              </p>
+            </div>
+            <div className="dashboard-panel-tools">
+              <span className={`dashboard-badge ${panelFreshnessTone || "dashboard-badge-neutral"}`}>
+                {panelFreshnessLabel || "No freshness data"}
+              </span>
+              <button
+                type="button"
+                className="dashboard-icon-button"
+                onClick={onRetry}
+                disabled={isRetrying}
+                title="Retry panel"
+                aria-label="Retry panel"
+              >
+                {isRetrying ? "…" : "↻"}
+              </button>
             </div>
           </div>
 
