@@ -1,3 +1,4 @@
+import math
 from datetime import datetime, timezone
 
 from flask import jsonify, request
@@ -36,6 +37,19 @@ def _format_trade_log_time(timestamp_value) -> str:
         return text
 
 
+def _safe_live_float(value):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed):
+        return None
+    # IBKR can emit DBL_MAX-like sentinel values for unset trailing stop fields.
+    if abs(parsed) > 1e12:
+        return None
+    return parsed
+
+
 def register_trade_routes(
     app,
     *,
@@ -61,12 +75,6 @@ def register_trade_routes(
     get_open_state_for_broker_name=None,
     upsert_trade_lifecycle,
 ):
-    def _safe_float(value):
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
-
     def _enrich_open_trade_rows(rows: list[dict], broker_filter: str | None = None) -> tuple[list[dict], dict]:
         normalized_broker_filter = str(broker_filter or "").strip().upper()
         should_enrich_ibkr = not normalized_broker_filter or normalized_broker_filter == "IBKR"
@@ -144,25 +152,25 @@ def register_trade_routes(
             ] or matched_orders
 
             live_target_order = next(
-                (order for order in exit_orders if _safe_float(order.get("limit_price")) not in (None, 0.0)),
+                (order for order in exit_orders if _safe_live_float(order.get("limit_price")) not in (None, 0.0)),
                 None,
             )
             live_stop_order = next(
-                (order for order in exit_orders if _safe_float(order.get("stop_price")) not in (None, 0.0)),
+                (order for order in exit_orders if _safe_live_float(order.get("stop_price")) not in (None, 0.0)),
                 None,
             )
 
-            stored_entry_price = _safe_float(row.get("entry_price"))
-            stored_stop_price = _safe_float(row.get("stop_price"))
-            stored_target_price = _safe_float(row.get("target_price"))
-            stored_shares = _safe_float(row.get("shares"))
-            live_entry_price = _safe_float((position or {}).get("avg_entry_price"))
-            live_current_price = _safe_float((position or {}).get("current_price"))
-            live_market_value = _safe_float((position or {}).get("market_value"))
-            live_unrealized_pl = _safe_float((position or {}).get("unrealized_pl"))
-            live_shares = _safe_float((position or {}).get("qty"))
-            live_target_price = _safe_float((live_target_order or {}).get("limit_price"))
-            live_stop_price = _safe_float((live_stop_order or {}).get("stop_price"))
+            stored_entry_price = _safe_live_float(row.get("entry_price"))
+            stored_stop_price = _safe_live_float(row.get("stop_price"))
+            stored_target_price = _safe_live_float(row.get("target_price"))
+            stored_shares = _safe_live_float(row.get("shares"))
+            live_entry_price = _safe_live_float((position or {}).get("avg_entry_price"))
+            live_current_price = _safe_live_float((position or {}).get("current_price"))
+            live_market_value = _safe_live_float((position or {}).get("market_value"))
+            live_unrealized_pl = _safe_live_float((position or {}).get("unrealized_pl"))
+            live_shares = _safe_live_float((position or {}).get("qty"))
+            live_target_price = _safe_live_float((live_target_order or {}).get("limit_price"))
+            live_stop_price = _safe_live_float((live_stop_order or {}).get("stop_price"))
 
             enriched_row.update({
                 "stored_entry_price": stored_entry_price,
