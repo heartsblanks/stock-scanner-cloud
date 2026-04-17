@@ -224,6 +224,56 @@ def get_current_open_position_state() -> tuple[int, float]:
 
 
 def get_risk_exposure_summary() -> dict:
+    low_call_mode = str(os.getenv("IBKR_LOW_CALL_MODE", "false")).strip().lower() in {"1", "true", "yes", "on"}
+
+    if low_call_mode:
+        # DB-only fallback for dashboard/risk surfaces in low-call mode.
+        open_rows = get_open_paper_trades()
+        current_open_positions = len(open_rows)
+        current_open_exposure = 0.0
+        for row in open_rows:
+            position_cost = to_float_or_none(row.get("position_cost"))
+            if position_cost is not None:
+                current_open_exposure += abs(position_cost)
+                continue
+            qty = to_float_or_none(row.get("shares"))
+            entry = to_float_or_none(row.get("entry_price"))
+            if qty is not None and entry is not None:
+                current_open_exposure += abs(qty * entry)
+
+        try:
+            today_utc = datetime.now(timezone.utc).date().isoformat()
+            daily_realized_pnl = get_daily_realized_pnl(today_utc)
+        except Exception as exc:
+            log_exception("Failed to read daily realized PnL", exc, component="paper_trade_context", operation="get_risk_exposure_summary")
+            daily_realized_pnl = 0.0
+
+        limits = get_paper_trade_limits()
+        max_positions = int(limits["max_positions"])
+        max_capital_allocation_pct = float(limits["max_capital_allocation_pct"])
+        position_limit_enforced = bool(limits["position_limit_enforced"])
+        account_size = to_float_or_none(
+            os.getenv("SCHEDULED_PAPER_ACCOUNT_SIZE")
+            or os.getenv("IBKR_SHADOW_ACCOUNT_SIZE_FALLBACK")
+            or "1000000"
+        ) or 0.0
+
+        max_total_allocated_capital = account_size * max_capital_allocation_pct
+        allocation_used_pct = ((current_open_exposure / max_total_allocated_capital) * 100.0) if max_total_allocated_capital > 0 else 0.0
+
+        return {
+            "total_open_exposure": round(current_open_exposure, 2),
+            "open_position_count": int(current_open_positions),
+            "daily_realized_pnl": round(daily_realized_pnl, 2),
+            "daily_unrealized_pnl": 0.0,
+            "allocation_used_pct": round(allocation_used_pct, 2),
+            "max_positions": max_positions,
+            "position_limit_enforced": position_limit_enforced,
+            "max_total_allocated_capital": round(max_total_allocated_capital, 2),
+            "max_capital_allocation_pct": max_capital_allocation_pct,
+            "account_size": round(account_size, 2),
+        }
+
     current_open_positions, current_open_exposure = get_current_open_position_state()
 
     try:
