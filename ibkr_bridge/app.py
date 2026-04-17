@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from datetime import datetime, timezone
 from functools import wraps
 from typing import Any, Callable
 
@@ -11,6 +12,22 @@ from ibkr_bridge.connector import get_ibkr_client
 
 
 app = Flask(__name__)
+
+
+def _normalize_journalctl_timestamp(raw_value: str) -> str:
+    value = str(raw_value or "").strip()
+    if not value:
+        return value
+    candidate = value
+    if candidate.endswith("Z"):
+        candidate = candidate[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except Exception:
+        return value
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _truthy_env(name: str, default: bool = False) -> bool:
@@ -229,8 +246,8 @@ def get_open_orders():
 @require_auth
 def get_bridge_journal():
     def fetch_journal():
-        since = str(request.args.get("since", "")).strip()
-        until = str(request.args.get("until", "")).strip()
+        since = _normalize_journalctl_timestamp(str(request.args.get("since", "")).strip())
+        until = _normalize_journalctl_timestamp(str(request.args.get("until", "")).strip())
         unit = str(request.args.get("unit", "ibkr-bridge")).strip() or "ibkr-bridge"
         if not since or not until:
             raise RuntimeError("since and until are required")
