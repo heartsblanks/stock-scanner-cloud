@@ -31,7 +31,6 @@ function formatCurrency(value) {
   if (value === null || value === undefined || value === "") {
     return "-";
   }
-
   return `$${Number(value).toFixed(2)}`;
 }
 
@@ -73,7 +72,6 @@ class AnalyticsErrorBoundary extends Component {
     if (this.state.hasError) {
       return <div className="dashboard-error">Analytics is temporarily unavailable. Refresh and try again.</div>;
     }
-
     return this.props.children;
   }
 }
@@ -99,18 +97,6 @@ export default function DashboardPage() {
   const [isRunningIbkrRepair, setIsRunningIbkrRepair] = useState(false);
   const [isRunningIbkrDeepRepair, setIsRunningIbkrDeepRepair] = useState(false);
   const [ibkrRepairDate, setIbkrRepairDate] = useState(todayDateInputValue);
-  const [theme, setTheme] = useState(() => {
-    if (typeof window === "undefined") {
-      return "light";
-    }
-
-    const savedTheme = window.localStorage.getItem("dashboard-theme");
-    if (savedTheme === "light" || savedTheme === "dark") {
-      return savedTheme;
-    }
-
-    return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ? "dark" : "light";
-  });
 
   const {
     summary,
@@ -137,7 +123,6 @@ export default function DashboardPage() {
     symbolPerformance,
     modePerformance,
     hourlyPerformance,
-    hourlyOutcomeQuality,
     strategyHourlyOutcomeQuality,
     externalExitSummary,
     equityCurve,
@@ -178,9 +163,10 @@ export default function DashboardPage() {
       ? "dashboard-pill-ok"
       : mismatchLabel === "WARNING"
         ? "dashboard-pill-warn"
-      : mismatchLabel === "CRITICAL"
+        : mismatchLabel === "CRITICAL"
           ? "dashboard-pill-danger"
           : "dashboard-pill-info";
+
   const ibkrState = String(ibkrStatus?.state || "UNKNOWN").toUpperCase();
   const ibkrTone =
     ibkrState === "READY"
@@ -190,10 +176,17 @@ export default function DashboardPage() {
         : ibkrState === "DISABLED"
           ? "dashboard-pill-info"
           : "dashboard-pill-danger";
+
   const hasDrilldown = Boolean(drilldown.symbol || drilldown.mode || drilldown.hourUtc);
   const recentIbkrPlacedCount = ibkrRecentAttempts.filter(
     (row) => String(row?.decision_stage || "").toUpperCase() === "PLACED"
   ).length;
+  const totalTrades = Number(summary?.summary?.trade_count || 0);
+  const realizedPnl = formatCurrency(summary?.summary?.realized_pnl_total);
+  const winRate =
+    summary?.summary?.win_rate_percent !== null && summary?.summary?.win_rate_percent !== undefined
+      ? `${Number(summary.summary.win_rate_percent).toFixed(1)}%`
+      : "-";
 
   const filteredIbkrOpenTrades = ibkrOpenTrades.filter((row) => {
     const symbolMatch = !drilldown.symbol || String(row?.symbol || "").trim().toUpperCase() === drilldown.symbol;
@@ -287,11 +280,8 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    window.localStorage.setItem("dashboard-theme", theme);
-  }, [theme]);
-
-  const visibleViews = DASHBOARD_VIEWS;
+    document.documentElement.dataset.theme = "dark";
+  }, []);
 
   useEffect(() => {
     const viewLabel = DASHBOARD_VIEWS.find((view) => view.id === activeView)?.label || "Overview";
@@ -315,147 +305,150 @@ export default function DashboardPage() {
   return (
     <div className="dashboard-shell">
       <div className="dashboard-frame">
-        {showInitialLoading && (
-          <div className="dashboard-loading">Loading dashboard workspace...</div>
-        )}
-        {error && !showInitialLoading && (
-          <div className="dashboard-error">Error: {error}</div>
-        )}
-        <section className="dashboard-hero">
-          <div className="dashboard-hero-grid">
-            <div>
-              <div className="dashboard-kicker">
-                <span className="dashboard-kicker-dot" />
-                Trading Operations Console
-              </div>
-              <div className="dashboard-hero-status-row">
-                <span className="dashboard-hero-status-label">Health Snapshot</span>
-                <span className={`dashboard-pill dashboard-pill-status ${backendHealthStatus === "OK" ? "dashboard-pill-ok" : backendHealthStatus === "WARNING" ? "dashboard-pill-warn" : "dashboard-pill-danger"}`}>
-                  Backend {backendHealthStatus || "UNKNOWN"}
-                </span>
-                <span className={`dashboard-pill dashboard-pill-status ${mismatchTone}`}>
-                  Recon {reconciliationHealthStatus || "UNKNOWN"}
-                </span>
-                <span className={`dashboard-pill dashboard-pill-status ${ibkrTone}`}>
-                  IBKR {ibkrState}
-                </span>
-                {ibkrStatus?.enabled && (
-                  <span className="dashboard-pill">
-                    Login {ibkrStatus?.login_required ? "Needed" : "Not Needed"}
-                  </span>
-                )}
-              </div>
-              <div className="dashboard-hero-meta">
-                <div className="dashboard-hero-stat">
-                  <div className="dashboard-hero-stat-label">Realized P&amp;L</div>
-                  <div className="dashboard-hero-stat-value">
-                    {formatCurrency(summary?.summary?.realized_pnl_total)}
-                  </div>
-                </div>
-                <div className="dashboard-hero-stat">
-                  <div className="dashboard-hero-stat-label">Open IBKR Positions</div>
-                  <div className="dashboard-hero-stat-value">
-                    {ibkrOpenTrades.length}
-                  </div>
-                </div>
-                <div className="dashboard-hero-stat">
-                  <div className="dashboard-hero-stat-label">Reconciliation Drift</div>
-                  <div className="dashboard-hero-stat-value">
-                    {mismatch !== null ? `${mismatch} ${mismatchLabel ? `(${mismatchLabel})` : ""}` : "-"}
-                  </div>
-                </div>
-                <div className="dashboard-hero-stat">
-                  <div className="dashboard-hero-stat-label">Recent IBKR Placements</div>
-                  <div className="dashboard-hero-stat-value">
-                    {recentIbkrPlacedCount}
-                  </div>
-                </div>
+        {showInitialLoading && <div className="dashboard-loading">Loading dashboard workspace...</div>}
+        {error && !showInitialLoading && <div className="dashboard-error">Error: {error}</div>}
+
+        <section className="dashboard-command-header">
+          <div className="dashboard-command-main">
+            <div className="dashboard-command-kicker">IBKR Command Grid</div>
+            <h1 className="dashboard-command-title">Stock Scanner Operations</h1>
+            <div className="dashboard-command-meta">
+              <span
+                className={`dashboard-pill dashboard-pill-status ${
+                  backendHealthStatus === "OK"
+                    ? "dashboard-pill-ok"
+                    : backendHealthStatus === "WARNING"
+                      ? "dashboard-pill-warn"
+                      : "dashboard-pill-danger"
+                }`}
+              >
+                Backend {backendHealthStatus || "UNKNOWN"}
+              </span>
+              <span className={`dashboard-pill dashboard-pill-status ${mismatchTone}`}>
+                Recon {reconciliationHealthStatus || "UNKNOWN"}
+              </span>
+              <span className={`dashboard-pill dashboard-pill-status ${ibkrTone}`}>
+                IBKR {ibkrState}
+              </span>
+              {ibkrStatus?.enabled && (
+                <span className="dashboard-pill">Login {ibkrStatus?.login_required ? "Needed" : "Ready"}</span>
+              )}
+            </div>
+          </div>
+
+          <div className="dashboard-command-controls">
+            <div className="dashboard-command-row">
+              <DashboardFilters onApply={handleApplyFilters} />
+              <div className="dashboard-date-filter-inline">
+                <label htmlFor="ibkr-repair-date">Repair Date</label>
+                <input
+                  id="ibkr-repair-date"
+                  type="date"
+                  value={ibkrRepairDate}
+                  onChange={(event) => setIbkrRepairDate(event.target.value)}
+                  className="dashboard-input dashboard-input-inline-date"
+                />
               </div>
             </div>
-
-            <div className="dashboard-hero-side">
-              <div className="dashboard-callout">
-                <div className="dashboard-callout-label">Operational Pulse</div>
-                <div className="dashboard-callout-value">{backendHealthStatus || "UNKNOWN"}</div>
-                <div className="dashboard-callout-note">
-                  Last refresh: {lastUpdated ? new Date(lastUpdated).toLocaleString() : "Loading initial view..."}
-                </div>
-              </div>
-
-              <div className="dashboard-hero-controls">
-                <DashboardFilters onApply={handleApplyFilters} />
-                <div className="dashboard-date-filter-inline">
-                  <label htmlFor="ibkr-repair-date">IBKR Repair</label>
-                  <input
-                    id="ibkr-repair-date"
-                    type="date"
-                    value={ibkrRepairDate}
-                    onChange={(event) => setIbkrRepairDate(event.target.value)}
-                    className="dashboard-input dashboard-input-inline-date"
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={handleRunIbkrRepair}
-                  disabled={isRunningIbkrRepair || !ibkrRepairDate}
-                  className="dashboard-button dashboard-button-neutral dashboard-button-compact"
-                >
-                  {isRunningIbkrRepair ? "Repairing..." : "Repair IBKR"}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleRunIbkrDeepRepair}
-                  disabled={isRunningIbkrDeepRepair || !ibkrRepairDate}
-                  className="dashboard-button dashboard-button-secondary dashboard-button-compact"
-                >
-                  {isRunningIbkrDeepRepair ? "Deep Repair..." : "Deep Repair"}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleRefreshIbkrLiveStatus}
-                  disabled={isRefreshingIbkrStatus}
-                  className="dashboard-button dashboard-button-neutral dashboard-button-compact"
-                >
-                  {isRefreshingIbkrStatus ? "Checking IBKR..." : "Refresh IBKR Live"}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSendTestAlert}
-                  disabled={isSendingTestAlert}
-                  className="dashboard-button dashboard-button-secondary dashboard-button-compact"
-                >
-                  {isSendingTestAlert ? "Sending..." : "Test Alert"}
-                </button>
-                <button
-                  onClick={refreshData}
-                  disabled={isRefreshing}
-                  className="dashboard-button dashboard-button-primary dashboard-button-compact"
-                >
-                  {isRefreshing ? "Refreshing..." : "Refresh"}
-                </button>
-                <button
-                  onClick={() => setTheme((currentTheme) => (currentTheme === "dark" ? "light" : "dark"))}
-                  className="dashboard-button dashboard-button-theme dashboard-button-compact"
-                >
-                  {theme === "dark" ? "Switch to Light" : "Switch to Dark"}
-                </button>
-              </div>
+            <div className="dashboard-command-row">
+              <button
+                onClick={refreshData}
+                disabled={isRefreshing}
+                className="dashboard-button dashboard-button-primary dashboard-button-compact"
+              >
+                {isRefreshing ? "Refreshing..." : "Refresh"}
+              </button>
+              <button
+                type="button"
+                onClick={handleRefreshIbkrLiveStatus}
+                disabled={isRefreshingIbkrStatus}
+                className="dashboard-button dashboard-button-neutral dashboard-button-compact"
+              >
+                {isRefreshingIbkrStatus ? "Checking..." : "IBKR Live"}
+              </button>
+              <button
+                onClick={syncPaperTrades}
+                disabled={isRefreshing || isRunningSync}
+                className="dashboard-button dashboard-button-secondary dashboard-button-compact"
+              >
+                {isRunningSync ? "Syncing..." : "Sync Trades"}
+              </button>
+              <button
+                type="button"
+                onClick={handleRunIbkrRepair}
+                disabled={isRunningIbkrRepair || !ibkrRepairDate}
+                className="dashboard-button dashboard-button-neutral dashboard-button-compact"
+              >
+                {isRunningIbkrRepair ? "Repairing..." : "Repair"}
+              </button>
+              <button
+                type="button"
+                onClick={handleRunIbkrDeepRepair}
+                disabled={isRunningIbkrDeepRepair || !ibkrRepairDate}
+                className="dashboard-button dashboard-button-secondary dashboard-button-compact"
+              >
+                {isRunningIbkrDeepRepair ? "Deep..." : "Deep Repair"}
+              </button>
+              <button
+                type="button"
+                onClick={handleSendTestAlert}
+                disabled={isSendingTestAlert}
+                className="dashboard-button dashboard-button-neutral dashboard-button-compact"
+              >
+                {isSendingTestAlert ? "Sending..." : "Test Alert"}
+              </button>
+            </div>
+            <div className="dashboard-command-row dashboard-command-row-meta">
+              <span className="dashboard-pill">
+                Last: {lastUpdated ? new Date(lastUpdated).toLocaleString() : "Loading..."}
+              </span>
+              <span className="dashboard-pill">
+                Next: {nextRefreshAt ? new Date(nextRefreshAt).toLocaleTimeString() : "Paused"}
+              </span>
+              <span className="dashboard-pill">
+                {autoRefreshActive ? "Auto-refresh Active" : `Paused (${autoRefreshMarketTime})`}
+              </span>
             </div>
           </div>
         </section>
 
         {toast && (
           <div
-            className={`dashboard-toast ${toast.type === "success" ? "dashboard-toast-success" : "dashboard-toast-error"}`}
+            className={`dashboard-toast ${
+              toast.type === "success" ? "dashboard-toast-success" : "dashboard-toast-error"
+            }`}
           >
             {toast.message}
           </div>
         )}
 
+        <section className="dashboard-quick-grid">
+          <article className="dashboard-quick-card">
+            <span className="dashboard-quick-label">Realized P&amp;L</span>
+            <strong className="dashboard-quick-value">{realizedPnl}</strong>
+          </article>
+          <article className="dashboard-quick-card">
+            <span className="dashboard-quick-label">Trades</span>
+            <strong className="dashboard-quick-value">{totalTrades}</strong>
+          </article>
+          <article className="dashboard-quick-card">
+            <span className="dashboard-quick-label">Win Rate</span>
+            <strong className="dashboard-quick-value">{winRate}</strong>
+          </article>
+          <article className="dashboard-quick-card">
+            <span className="dashboard-quick-label">Open IBKR</span>
+            <strong className="dashboard-quick-value">{ibkrOpenTrades.length}</strong>
+          </article>
+          <article className="dashboard-quick-card">
+            <span className="dashboard-quick-label">Recent IBKR Placements</span>
+            <strong className="dashboard-quick-value">{recentIbkrPlacedCount}</strong>
+          </article>
+        </section>
+
         <div className="dashboard-grid">
           <section className="dashboard-view-nav-panel">
             <div className="dashboard-view-nav">
-              {visibleViews.map((view) => (
+              {DASHBOARD_VIEWS.map((view) => (
                 <button
                   key={view.id}
                   type="button"
@@ -470,18 +463,13 @@ export default function DashboardPage() {
 
           {hasDrilldown && (
             <section className="dashboard-drilldown-panel">
-              <div className="dashboard-view-nav-copy">
-                <div className="dashboard-banner-title">Active Drilldown</div>
-                <div className="dashboard-banner-copy">
-                  The trades view is narrowed by the selections you made from the overview cards or charts.
-                </div>
-              </div>
+              <div className="dashboard-banner-title">Active Drilldown</div>
               <div className="dashboard-inline-meta">
                 {drilldown.symbol && <span className="dashboard-pill">Symbol {drilldown.symbol}</span>}
                 {drilldown.mode && <span className="dashboard-pill">Mode {drilldown.mode}</span>}
                 {drilldown.hourUtc && <span className="dashboard-pill">Hour {drilldown.hourUtc}:00 UTC</span>}
                 <button type="button" className="dashboard-button dashboard-button-neutral" onClick={clearDrilldown}>
-                  Clear Drilldown
+                  Clear
                 </button>
               </div>
             </section>
@@ -494,55 +482,43 @@ export default function DashboardPage() {
               {sectionLoading.overview && <div className="dashboard-empty">Loading overview...</div>}
               {sectionErrors.overview && <div className="dashboard-error">{sectionErrors.overview}</div>}
 
-              <HealthOverviewSection
-                lastUpdated={lastUpdated}
-                sectionLoading={sectionLoading}
-                sectionErrors={sectionErrors}
-                ibkrOpenCount={ibkrOpenTrades.length}
-                mismatch={mismatch}
-                mismatchLabel={mismatchLabel}
-                backendHealthStatus={backendHealthStatus}
-                syncHealthStatus={syncHealthStatus}
-                reconciliationHealthStatus={reconciliationHealthStatus}
-                lastReconciliationAt={lastReconciliationAt}
-                isRunningSync={isRunningSync}
-                ibkrStatus={ibkrStatus}
-                riskExposureSummary={riskExposureSummary}
-                confidenceMultiplier={confidenceMultiplier}
-                lossMultiplier={lossMultiplier}
-                finalSizingMultiplier={finalSizingMultiplier}
-                multiplierStatus={multiplierStatus}
-                compact
-              />
-
-              <SchedulerHealthSection
-                opsSummary={opsSummary}
-                ibkrRecentAttempts={ibkrRecentAttempts}
-                ibkrStatus={ibkrStatus}
-              />
-
               <div className="dashboard-split">
-                <RefreshStatusPanel
-                  lastUpdated={lastUpdated}
-                  nextRefreshAt={nextRefreshAt}
-                  autoRefreshActive={autoRefreshActive}
-                  refreshWindowLabel={refreshWindowLabel}
-                  autoRefreshMarketTime={autoRefreshMarketTime}
-                />
-                <ExecutionInsightsSection
-                  sectionLoading={sectionLoading}
-                  sectionErrors={sectionErrors}
-                  paperTradePlacementRate={paperTradePlacementRate}
-                  stageCounts={stageCounts}
-                  topAttemptReasons={topAttemptReasons}
-                  paperTradeAttemptRejections={paperTradeAttemptRejections}
-                  paperTradeAttemptDailySummary={paperTradeAttemptDailySummary}
-                  paperTradeAttemptHourlySummary={paperTradeAttemptHourlySummary}
-                  ibkrRecentAttempts={ibkrRecentAttempts}
-                  ibkrStatus={ibkrStatus}
-                  hourlyOutcomeQuality={strategyHourlyOutcomeQuality}
-                  externalExitSummary={externalExitSummary}
-                />
+                <div className="dashboard-stack">
+                  <HealthOverviewSection
+                    lastUpdated={lastUpdated}
+                    sectionLoading={sectionLoading}
+                    sectionErrors={sectionErrors}
+                    ibkrOpenCount={ibkrOpenTrades.length}
+                    mismatch={mismatch}
+                    mismatchLabel={mismatchLabel}
+                    backendHealthStatus={backendHealthStatus}
+                    syncHealthStatus={syncHealthStatus}
+                    reconciliationHealthStatus={reconciliationHealthStatus}
+                    lastReconciliationAt={lastReconciliationAt}
+                    isRunningSync={isRunningSync}
+                    ibkrStatus={ibkrStatus}
+                    riskExposureSummary={riskExposureSummary}
+                    confidenceMultiplier={confidenceMultiplier}
+                    lossMultiplier={lossMultiplier}
+                    finalSizingMultiplier={finalSizingMultiplier}
+                    multiplierStatus={multiplierStatus}
+                    compact
+                  />
+                  <SchedulerHealthSection
+                    opsSummary={opsSummary}
+                    ibkrRecentAttempts={ibkrRecentAttempts}
+                    ibkrStatus={ibkrStatus}
+                  />
+                </div>
+                <div className="dashboard-stack">
+                  <RefreshStatusPanel
+                    lastUpdated={lastUpdated}
+                    nextRefreshAt={nextRefreshAt}
+                    autoRefreshActive={autoRefreshActive}
+                    refreshWindowLabel={refreshWindowLabel}
+                    autoRefreshMarketTime={autoRefreshMarketTime}
+                  />
+                </div>
               </div>
 
               <section className="dashboard-section">
@@ -551,9 +527,6 @@ export default function DashboardPage() {
                     <div className="dashboard-panel-heading">
                       <div>
                         <h2 className="dashboard-panel-title">Equity Curve</h2>
-                        <p className="dashboard-panel-subtitle">
-                          See the account arc over time instead of reading isolated trade outcomes.
-                        </p>
                       </div>
                     </div>
                     <LazySection>
@@ -569,13 +542,10 @@ export default function DashboardPage() {
             <>
               <section className="dashboard-section">
                 <div className="dashboard-panel dashboard-panel-strong">
-                  <div className="dashboard-panel-body dashboard-panel-body-tight">
+                  <div className="dashboard-panel-body dashboard-panel-body-tight dashboard-inline-actions">
                     <div className="dashboard-panel-heading">
                       <div>
                         <h2 className="dashboard-panel-title">Trade Actions</h2>
-                        <p className="dashboard-panel-subtitle">
-                          Sync refreshes local IBKR paper trade state when fills or exits look stale.
-                        </p>
                       </div>
                       <div className="dashboard-toolbar">
                         <button
@@ -597,9 +567,6 @@ export default function DashboardPage() {
                     <div className="dashboard-panel-heading">
                       <div>
                         <h2 className="dashboard-panel-title">IBKR Open Trades</h2>
-                        <p className="dashboard-panel-subtitle">
-                          Live IBKR paper positions currently tracked by the database and broker sync.
-                        </p>
                       </div>
                     </div>
                     <LazySection>
@@ -615,9 +582,6 @@ export default function DashboardPage() {
                     <div className="dashboard-panel-heading">
                       <div>
                         <h2 className="dashboard-panel-title">IBKR Lifecycle</h2>
-                        <p className="dashboard-panel-subtitle">
-                          Canonical IBKR trade history for entries, exits, and realized outcome.
-                        </p>
                       </div>
                     </div>
                     <LazySection>
@@ -633,13 +597,10 @@ export default function DashboardPage() {
             <>
               <section className="dashboard-section">
                 <div className="dashboard-panel dashboard-panel-strong">
-                  <div className="dashboard-panel-body dashboard-panel-body-tight">
+                  <div className="dashboard-panel-body dashboard-panel-body-tight dashboard-inline-actions">
                     <div className="dashboard-panel-heading">
                       <div>
                         <h2 className="dashboard-panel-title">Reconciliation Actions</h2>
-                        <p className="dashboard-panel-subtitle">
-                          Run reconciliation when you want a fresh mismatch audit against the stored trade ledger.
-                        </p>
                       </div>
                       <div className="dashboard-toolbar">
                         <button
@@ -675,15 +636,27 @@ export default function DashboardPage() {
 
           {activeView === "analytics" && (
             <AnalyticsErrorBoundary resetKey={`${activeView}-${lastUpdated || "none"}`}>
+              <ExecutionInsightsSection
+                sectionLoading={sectionLoading}
+                sectionErrors={sectionErrors}
+                paperTradePlacementRate={paperTradePlacementRate}
+                stageCounts={stageCounts}
+                topAttemptReasons={topAttemptReasons}
+                paperTradeAttemptRejections={paperTradeAttemptRejections}
+                paperTradeAttemptDailySummary={paperTradeAttemptDailySummary}
+                paperTradeAttemptHourlySummary={paperTradeAttemptHourlySummary}
+                ibkrRecentAttempts={ibkrRecentAttempts}
+                ibkrStatus={ibkrStatus}
+                hourlyOutcomeQuality={strategyHourlyOutcomeQuality}
+                externalExitSummary={externalExitSummary}
+              />
+
               <section className="dashboard-section">
                 <div className="dashboard-panel dashboard-panel-strong">
                   <div className="dashboard-panel-body">
                     <div className="dashboard-panel-heading">
                       <div>
                         <h2 className="dashboard-panel-title">Performance Readouts</h2>
-                        <p className="dashboard-panel-subtitle">
-                          Symbol, mode, exit pattern, and timing edges gathered in one analytical view.
-                        </p>
                       </div>
                     </div>
                     <div className="dashboard-metrics-grid">
@@ -717,7 +690,10 @@ export default function DashboardPage() {
                       <InsightCard
                         title="Best Hour (UTC)"
                         value={insights?.best_hour?.entry_hour_utc ?? "-"}
-                        interactive={insights?.best_hour?.entry_hour_utc !== undefined && insights?.best_hour?.entry_hour_utc !== null}
+                        interactive={
+                          insights?.best_hour?.entry_hour_utc !== undefined &&
+                          insights?.best_hour?.entry_hour_utc !== null
+                        }
                         onClick={() =>
                           insights?.best_hour?.entry_hour_utc !== undefined &&
                           insights?.best_hour?.entry_hour_utc !== null &&
@@ -736,7 +712,9 @@ export default function DashboardPage() {
                                 const row = [...paperTradeAttemptHourlySummary].sort(
                                   (left, right) => Number(right.total_attempts || 0) - Number(left.total_attempts || 0)
                                 )[0];
-                                if (!row) return "-";
+                                if (!row) {
+                                  return "-";
+                                }
                                 const hour = Number(row.hour_ny);
                                 const suffix = hour >= 12 ? "PM" : "AM";
                                 const normalizedHour = hour % 12 || 12;
@@ -756,9 +734,6 @@ export default function DashboardPage() {
                     <div className="dashboard-panel-heading">
                       <div>
                         <h2 className="dashboard-panel-title">Performance Charts</h2>
-                        <p className="dashboard-panel-subtitle">
-                          Compare symbol mix, mode behavior, and intraday timing without losing the bigger picture.
-                        </p>
                       </div>
                     </div>
                     <div className="dashboard-chart-grid">
@@ -793,7 +768,7 @@ export default function DashboardPage() {
                         </LazySection>
                       </div>
                     </div>
-                    <div style={{ marginTop: 20 }}>
+                    <div style={{ marginTop: 16 }}>
                       <LazySection>
                         <HourlyPerformanceChart
                           rows={hourlyPerformance}
@@ -809,17 +784,14 @@ export default function DashboardPage() {
                         />
                       </LazySection>
                     </div>
-                    <div style={{ marginTop: 20 }}>
+                    <div style={{ marginTop: 16 }}>
                       <LazySection>
                         <HourlyAttemptOutcomeChart rows={paperTradeAttemptHourlySummary} />
                       </LazySection>
                     </div>
-                    <div style={{ marginTop: 20 }}>
+                    <div style={{ marginTop: 16 }}>
                       <LazySection>
-                        <HourlyOutcomeQualityTable
-                          rows={strategyHourlyOutcomeQuality}
-                          strategyOnly
-                        />
+                        <HourlyOutcomeQualityTable rows={strategyHourlyOutcomeQuality} strategyOnly />
                       </LazySection>
                     </div>
                   </div>
@@ -832,9 +804,6 @@ export default function DashboardPage() {
                     <div className="dashboard-panel-heading">
                       <div>
                         <h2 className="dashboard-panel-title">Equity Curve</h2>
-                        <p className="dashboard-panel-subtitle">
-                          The bigger account arc, isolated from the heavier operational details.
-                        </p>
                       </div>
                     </div>
                     <LazySection>

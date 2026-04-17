@@ -165,10 +165,7 @@ export function useDashboardData(activeView = "overview") {
       const criticalFailures = [rejectionResult, dailyResult, hourlyResult, ibkrRecentResult]
         .filter((result) => result.status === "rejected")
         .length;
-
-      if (criticalFailures === 4) {
-        throw new Error("Failed to load execution attempt analytics");
-      }
+      const analyticsUnavailable = criticalFailures === 4;
 
       const opsRes = opsResult.status === "fulfilled" ? opsResult.value : null;
       const rejectionRes = rejectionResult.status === "fulfilled" ? rejectionResult.value : null;
@@ -190,23 +187,37 @@ export function useDashboardData(activeView = "overview") {
         setIbkrStatus(ibkrStatusResult.value || null);
         setSectionErrors((prev) => ({
           ...prev,
-          attempts: criticalFailures > 0 ? "Some execution analytics are temporarily unavailable." : null,
+          attempts:
+            analyticsUnavailable
+              ? "Execution analytics are temporarily unavailable."
+              : criticalFailures > 0
+                ? "Some execution analytics are temporarily unavailable."
+                : null,
           ibkr: null,
         }));
       } else {
         setIbkrStatus(null);
         setSectionErrors((prev) => ({
           ...prev,
-          attempts: criticalFailures > 0 ? "Some execution analytics are temporarily unavailable." : null,
+          attempts:
+            analyticsUnavailable
+              ? "Execution analytics are temporarily unavailable."
+              : criticalFailures > 0
+                ? "Some execution analytics are temporarily unavailable."
+                : null,
           ibkr: ibkrStatusResult.reason?.message || "Failed to load IBKR status",
         }));
       }
     } catch (sectionErr) {
+      setOpsSummary(null);
+      setPaperTradeAttemptRejections([]);
+      setPaperTradeAttemptDailySummary([]);
+      setPaperTradeAttemptHourlySummary([]);
+      setIbkrRecentAttempts([]);
       setSectionErrors((prev) => ({
         ...prev,
         attempts: sectionErr?.message || "Failed to load execution attempt analytics",
       }));
-      throw sectionErr;
     } finally {
       setSectionLoading((prev) => ({ ...prev, attempts: false, ibkr: false }));
     }
