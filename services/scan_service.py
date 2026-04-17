@@ -249,8 +249,8 @@ def _get_live_ibkr_account_equity(payload: dict[str, Any]) -> float:
 
 
 HIGH_QUALITY_LONG_SIGNAL_ALERT_MIN_CONFIDENCE = _to_int(
-    os.getenv("HIGH_QUALITY_LONG_SIGNAL_ALERT_MIN_CONFIDENCE", "92"),
-    92,
+    os.getenv("HIGH_QUALITY_LONG_SIGNAL_ALERT_MIN_CONFIDENCE", "98"),
+    98,
 )
 
 
@@ -289,10 +289,12 @@ def _maybe_send_high_quality_long_signal_alert(
     alert_result = send_telegram_alert(
         alert_key=f"high-quality-long:{scan_id}:{symbol}",
         message=(
-            f"High-quality long signal detected: {symbol}\n"
+            f"IBKR high-quality long: {symbol}\n"
             f"Confidence: {confidence:.0f}\n"
-            f"Entry: {best_metrics.get('entry', '')} | Stop: {best_metrics.get('stop', '')} | Target: {best_metrics.get('target', '')}\n"
-            f"Mode: {mode} | Source: {scan_source} | Broker: IBKR"
+            f"Entry: {best_metrics.get('entry', '')}\n"
+            f"Stop: {best_metrics.get('stop', '')}\n"
+            f"Target: {best_metrics.get('target', '')}\n"
+            f"Mode: {mode}"
         ),
         payload={
             "scan_id": scan_id,

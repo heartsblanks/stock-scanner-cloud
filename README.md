@@ -186,7 +186,7 @@ Recommended consolidated scheduler setup:
 - `market-ops`
   - `*/5 9-15 * * 1-5 (America/New_York)`
   - Calls `POST /scheduler/market-ops`
-  - Internally starts sync at `9:30`, starts scheduled scans at `9:45`, keeps scans on the 10-minute offset cadence through `15:45`, runs periodic IBKR health probes every `30` minutes, reserves `15:50` for pre-close sync plus readiness prep, and keeps `15:55` for end-of-day close only
+  - Internally starts sync at `9:30`, keeps sync on a low-call `30`-minute cadence (`:00/:30`), starts scheduled scans at `9:45`, keeps scans on the 10-minute offset cadence through `15:45`, disables periodic health probes during the day, reserves `15:50` for pre-close sync plus readiness prep, and keeps `15:55` for end-of-day close only
 - `daily-post-close`
   - `30 16 * * 1-5 (America/New_York)`
   - Calls `POST /scheduler/daily-post-close`
@@ -198,7 +198,7 @@ Recommended consolidated scheduler setup:
 - `ibkr-login-alert`
   - `*/10 9-16 * * 1-5 (America/New_York)`
   - Calls `POST /scheduler/ibkr-login-alert`
-  - Only sends an alert when the IBKR bridge reports `LOGIN_REQUIRED` and Telegram alert credentials are configured
+  - Applies a low-call check gate (default `30` minutes) and only sends an alert when the IBKR bridge reports `LOGIN_REQUIRED` and Telegram alert credentials are configured
 
 ---
 

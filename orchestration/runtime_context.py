@@ -40,6 +40,36 @@ _ibkr_open_state_cache: dict[str, Any] = {
     "timestamp": 0.0,
     "state": None,
 }
+_ibkr_equity_cache: dict[str, Any] = {
+    "timestamp": 0.0,
+    "equity": 0.0,
+}
+
+
+def _ibkr_equity_cache_ttl_seconds() -> float:
+    try:
+        return max(0.0, float(os.getenv("IBKR_ACCOUNT_EQUITY_CACHE_TTL_SECONDS", "1800")))
+    except Exception:
+        return 1800.0
+
+
+def _get_cached_ibkr_equity() -> float:
+    now = time.monotonic()
+    ttl = _ibkr_equity_cache_ttl_seconds()
+    cached_timestamp = float(_ibkr_equity_cache.get("timestamp") or 0.0)
+    cached_equity = _account_equity_from_broker_account({"equity": _ibkr_equity_cache.get("equity", 0.0)})
+    if ttl <= 0:
+        return 0.0
+    if cached_equity > 0 and (now - cached_timestamp) <= ttl:
+        return cached_equity
+    return 0.0
+
+
+def _set_cached_ibkr_equity(equity: float) -> None:
+    if equity <= 0:
+        return
+    _ibkr_equity_cache["timestamp"] = time.monotonic()
+    _ibkr_equity_cache["equity"] = float(equity)
 
 
 def _broker_instance_by_name(broker_name: str):
@@ -129,10 +159,14 @@ def resolve_ibkr_account_size(payload: dict[str, Any]) -> float:
         or os.getenv("IBKR_SHADOW_ACCOUNT_SIZE_FALLBACK")
         or "1000000"
     )
+    cached_equity = _get_cached_ibkr_equity()
+    if cached_equity > 0:
+        return cached_equity
     try:
         account = IBKR_PAPER_BROKER.get_account()
         equity = _account_equity_from_broker_account(account)
         if equity > 0:
+            _set_cached_ibkr_equity(equity)
             return equity
     except Exception as exc:
         log_exception(
@@ -218,15 +252,20 @@ def get_current_open_position_state_for_broker(broker) -> tuple[int, float]:
 
 def get_risk_exposure_summary_for_broker(broker) -> dict[str, Any]:
     account_size = 0.0
-    try:
-        account_size = _account_equity_from_broker_account(broker.get_account())
-    except Exception as exc:
-        log_exception(
-            "Failed to resolve broker account for risk summary",
-            exc,
-            component="runtime_context",
-            operation="get_risk_exposure_summary_for_broker",
-        )
+    cached_equity = _get_cached_ibkr_equity()
+    if cached_equity > 0:
+        account_size = cached_equity
+    else:
+        try:
+            account_size = _account_equity_from_broker_account(broker.get_account())
+            _set_cached_ibkr_equity(account_size)
+        except Exception as exc:
+            log_exception(
+                "Failed to resolve broker account for risk summary",
+                exc,
+                component="runtime_context",
+                operation="get_risk_exposure_summary_for_broker",
+            )
     open_count, open_exposure = get_current_open_position_state_for_broker(broker)
     return {
         "account_size": account_size,

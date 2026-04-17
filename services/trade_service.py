@@ -46,16 +46,16 @@ def _close_time_budget_seconds(*, broker_name: str) -> float | None:
 
 
 def _ibkr_eod_poll_config() -> tuple[int, float]:
-    attempts_raw = str(os.getenv("IBKR_EOD_CLOSE_POLL_ATTEMPTS", "5")).strip()
-    interval_raw = str(os.getenv("IBKR_EOD_CLOSE_POLL_INTERVAL_SECONDS", "3")).strip()
+    attempts_raw = str(os.getenv("IBKR_EOD_CLOSE_POLL_ATTEMPTS", "2")).strip()
+    interval_raw = str(os.getenv("IBKR_EOD_CLOSE_POLL_INTERVAL_SECONDS", "5")).strip()
     try:
         attempts = max(int(attempts_raw), 0)
     except Exception:
-        attempts = 5
+        attempts = 2
     try:
         interval = max(float(interval_raw), 0.0)
     except Exception:
-        interval = 3.0
+        interval = 5.0
     return attempts, interval
 
 

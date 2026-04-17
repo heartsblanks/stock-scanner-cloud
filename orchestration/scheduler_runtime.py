@@ -5,6 +5,11 @@ from typing import Any, Callable
 import requests
 
 
+def _truthy_env(name: str, default: bool = False) -> bool:
+    raw = str(os.getenv(name, str(default))).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def build_ibkr_operational_status(
     *,
     ibkr_bridge_enabled: Callable[[], bool],
@@ -38,6 +43,8 @@ def build_ibkr_operational_status(
     account_timeout = int(os.getenv("IBKR_BRIDGE_ACCOUNT_TIMEOUT_SECONDS", "5"))
     positions_timeout = int(os.getenv("IBKR_BRIDGE_POSITIONS_TIMEOUT_SECONDS", "8"))
     market_timeout = int(os.getenv("IBKR_BRIDGE_STATUS_MARKET_DATA_TIMEOUT_SECONDS", "8"))
+    include_account_probe = _truthy_env("IBKR_STATUS_INCLUDE_ACCOUNT_PROBE", False)
+    include_market_data_probe = _truthy_env("IBKR_STATUS_INCLUDE_MARKET_DATA_PROBE", False)
 
     try:
         bridge_payload = ibkr_bridge_get("/health", timeout=bridge_timeout) or {}
@@ -49,14 +56,17 @@ def build_ibkr_operational_status(
         status["message"] = "IBKR bridge is not reachable."
         return status
 
-    try:
-        account_payload = ibkr_bridge_get("/account", timeout=account_timeout) or {}
-        equity = account_equity_from_broker_account(account_payload)
-        status["account_ok"] = bool(account_payload.get("account_id"))
-        status["account_id"] = str(account_payload.get("account_id", "") or "")
-        status["equity"] = equity if equity > 0 else None
-    except Exception as exc:
-        status["errors"].append(f"account: {exc}")
+    if include_account_probe:
+        try:
+            account_payload = ibkr_bridge_get("/account", timeout=account_timeout) or {}
+            equity = account_equity_from_broker_account(account_payload)
+            status["account_ok"] = bool(account_payload.get("account_id"))
+            status["account_id"] = str(account_payload.get("account_id", "") or "")
+            status["equity"] = equity if equity > 0 else None
+        except Exception as exc:
+            status["errors"].append(f"account: {exc}")
+    else:
+        status["account_ok"] = False
 
     try:
         positions_payload = ibkr_bridge_get("/positions", timeout=positions_timeout) or []
@@ -65,16 +75,19 @@ def build_ibkr_operational_status(
     except Exception as exc:
         status["errors"].append(f"positions: {exc}")
 
-    try:
-        candles = ibkr_bridge_get(
-            "/market-data/intraday",
-            params={"symbol": status["market_data_symbol"], "interval": "1min", "outputsize": 5},
-            timeout=market_timeout,
-        ) or []
-        status["market_data_count"] = len(candles)
-        status["market_data_ok"] = len(candles) > 0
-    except Exception as exc:
-        status["errors"].append(f"market_data: {exc}")
+    if include_market_data_probe:
+        try:
+            candles = ibkr_bridge_get(
+                "/market-data/intraday",
+                params={"symbol": status["market_data_symbol"], "interval": "1min", "outputsize": 5},
+                timeout=market_timeout,
+            ) or []
+            status["market_data_count"] = len(candles)
+            status["market_data_ok"] = len(candles) > 0
+        except Exception as exc:
+            status["errors"].append(f"market_data: {exc}")
+    else:
+        status["market_data_ok"] = bool(status["session_probe_ok"])
 
     session_ready = status["account_ok"] or status["session_probe_ok"]
 

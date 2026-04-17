@@ -11,15 +11,12 @@ export default function RiskExposurePanel({
 }) {
   const dailyPnlPercent =
     riskExposureSummary && (riskExposureSummary.account_size ?? 0) > 0
-      ? (((riskExposureSummary.daily_realized_pnl ?? 0) + (riskExposureSummary.daily_unrealized_pnl ?? 0)) /
-          riskExposureSummary.account_size) *
-        100
+      ? ((riskExposureSummary.daily_realized_pnl ?? 0) / riskExposureSummary.account_size) * 100
       : null;
 
   const tradingBlocked =
     riskExposureSummary && (riskExposureSummary.account_size ?? 0) > 0
-      ? (((riskExposureSummary.daily_realized_pnl ?? 0) + (riskExposureSummary.daily_unrealized_pnl ?? 0)) /
-          riskExposureSummary.account_size) <= -0.02
+      ? ((riskExposureSummary.daily_realized_pnl ?? 0) / riskExposureSummary.account_size) <= -0.02
       : null;
 
   return (
@@ -65,17 +62,7 @@ export default function RiskExposurePanel({
                   : "-"
               }
             />
-            <InsightCard
-              title="Unrealized PnL"
-              value={riskExposureSummary?.daily_unrealized_pnl ?? "-"}
-              valueColor={
-                (riskExposureSummary?.daily_unrealized_pnl ?? 0) > 0
-                  ? "#16a34a"
-                  : (riskExposureSummary?.daily_unrealized_pnl ?? 0) < 0
-                    ? "#dc2626"
-                    : undefined
-              }
-            />
+            <InsightCard title="Realized PnL" value={riskExposureSummary?.daily_realized_pnl ?? "-"} />
             <InsightCard
               title="Daily PnL %"
               value={dailyPnlPercent !== null ? dailyPnlPercent.toFixed(2) : "-"}
