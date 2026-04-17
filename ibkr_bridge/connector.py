@@ -501,14 +501,22 @@ class IbkrGatewayClient:
             return ""
         return str(execution_time)
 
+    def _unknown_sync_payload(self, order_id: str, message: str) -> dict[str, Any]:
+        return {
+            "id": str(order_id).strip(),
+            "status": "unknown",
+            "message": message,
+        }
+
     def _sync_order_from_fills(self, ib, order_id: str) -> dict[str, Any]:
-        fills = self._fetch_recent_fills(ib)
+        return self._sync_order_from_fills_snapshot(
+            fills=self._fetch_recent_fills(ib),
+            order_id=order_id,
+        )
+
+    def _sync_order_from_fills_snapshot(self, *, fills: list[Any], order_id: str) -> dict[str, Any]:
         if not fills:
-            return {
-                "id": str(order_id).strip(),
-                "status": "unknown",
-                "message": "Order was not found in current IBKR fills.",
-            }
+            return self._unknown_sync_payload(order_id, "Order was not found in current IBKR fills.")
 
         order_id_text = str(order_id).strip()
         entry_fills = [
@@ -517,11 +525,7 @@ class IbkrGatewayClient:
             if str(getattr(getattr(fill, "execution", None), "orderId", "")).strip() == order_id_text
         ]
         if not entry_fills:
-            return {
-                "id": order_id_text,
-                "status": "unknown",
-                "message": "Order was not found in current IBKR fills.",
-            }
+            return self._unknown_sync_payload(order_id_text, "Order was not found in current IBKR fills.")
 
         entry_fill = entry_fills[-1]
         entry_execution = getattr(entry_fill, "execution", None)
@@ -591,13 +595,14 @@ class IbkrGatewayClient:
         }
 
     def _sync_order_from_completed_trades(self, ib, order_id: str) -> dict[str, Any]:
-        trades = self._fetch_completed_trades(ib)
+        return self._sync_order_from_completed_trades_snapshot(
+            trades=self._fetch_completed_trades(ib),
+            order_id=order_id,
+        )
+
+    def _sync_order_from_completed_trades_snapshot(self, *, trades: list[Any], order_id: str) -> dict[str, Any]:
         if not trades:
-            return {
-                "id": str(order_id).strip(),
-                "status": "unknown",
-                "message": "Order was not found in completed IBKR trades.",
-            }
+            return self._unknown_sync_payload(order_id, "Order was not found in completed IBKR trades.")
 
         order_id_text = str(order_id).strip()
         entry_trades = [
@@ -606,11 +611,7 @@ class IbkrGatewayClient:
             if str(getattr(getattr(trade, "order", None), "orderId", "")).strip() == order_id_text
         ]
         if not entry_trades:
-            return {
-                "id": order_id_text,
-                "status": "unknown",
-                "message": "Order was not found in completed IBKR trades.",
-            }
+            return self._unknown_sync_payload(order_id_text, "Order was not found in completed IBKR trades.")
 
         entry_trade = entry_trades[-1]
         entry_order = getattr(entry_trade, "order", None)
@@ -671,6 +672,163 @@ class IbkrGatewayClient:
             )
 
         return result
+
+    def _sync_order_from_open_trades_snapshot(self, *, open_trades: list[Any], order_id: str) -> dict[str, Any]:
+        normalized_order_id = str(order_id).strip()
+        for trade in open_trades:
+            trade_order_id = str(getattr(getattr(trade, "order", None), "orderId", "")).strip()
+            if trade_order_id != normalized_order_id:
+                continue
+
+            normalized_trade = self._normalize_trade(trade)
+            return {
+                "id": normalized_order_id,
+                "status": str(normalized_trade.get("status", "") or "open"),
+                "parent_order_id": normalized_order_id,
+                "parent_status": str(normalized_trade.get("status", "") or ""),
+                "symbol": normalized_trade.get("symbol", ""),
+                "client_order_id": normalized_trade.get("client_order_id", ""),
+            }
+
+        return self._unknown_sync_payload(normalized_order_id, "Order was not found in current open IBKR trades.")
+
+    def _log_sync_batch_stage(
+        self,
+        *,
+        stage: str,
+        duration_ms: int,
+        order_count: int,
+        fills_count: int = 0,
+        completed_count: int = 0,
+        open_trade_count: int = 0,
+    ) -> None:
+        log_info(
+            "IBKR bridge sync batch stage completed",
+            component="ibkr_bridge",
+            operation="sync_orders_batch",
+            stage=stage,
+            duration_ms=duration_ms,
+            order_count=order_count,
+            fills_count=fills_count,
+            completed_count=completed_count,
+            open_trade_count=open_trade_count,
+        )
+
+    def sync_orders(self, order_ids: list[str]) -> dict[str, Any]:
+        normalized_order_ids: list[str] = []
+        seen: set[str] = set()
+        for raw_order_id in order_ids or []:
+            order_id = str(raw_order_id).strip()
+            if not order_id or order_id in seen:
+                continue
+            seen.add(order_id)
+            normalized_order_ids.append(order_id)
+
+        if not normalized_order_ids:
+            return {
+                "requested_count": 0,
+                "synced_count": 0,
+                "unknown_count": 0,
+                "results": [],
+                "durations_ms": {
+                    "fills": 0,
+                    "completed": 0,
+                    "open_trades": 0,
+                    "total": 0,
+                },
+            }
+
+        ib = self._connect()
+        total_started_at = time.monotonic()
+
+        fills_started_at = time.monotonic()
+        fills = self._fetch_recent_fills(ib)
+        fills_duration_ms = int((time.monotonic() - fills_started_at) * 1000)
+        self._log_sync_batch_stage(
+            stage="fills",
+            duration_ms=fills_duration_ms,
+            order_count=len(normalized_order_ids),
+            fills_count=len(fills),
+        )
+
+        completed_started_at = time.monotonic()
+        completed_trades = self._fetch_completed_trades(ib)
+        completed_duration_ms = int((time.monotonic() - completed_started_at) * 1000)
+        self._log_sync_batch_stage(
+            stage="completed",
+            duration_ms=completed_duration_ms,
+            order_count=len(normalized_order_ids),
+            completed_count=len(completed_trades),
+        )
+
+        open_started_at = time.monotonic()
+        open_trades = self._fetch_open_trades(ib)
+        open_duration_ms = int((time.monotonic() - open_started_at) * 1000)
+        self._log_sync_batch_stage(
+            stage="open_trades",
+            duration_ms=open_duration_ms,
+            order_count=len(normalized_order_ids),
+            open_trade_count=len(open_trades),
+        )
+
+        results: list[dict[str, Any]] = []
+        synced_count = 0
+        for order_id in normalized_order_ids:
+            fills_result = self._sync_order_from_fills_snapshot(
+                fills=fills,
+                order_id=order_id,
+            )
+            if str(fills_result.get("status", "")).strip().lower() != "unknown":
+                synced_count += 1
+                results.append(fills_result)
+                continue
+
+            completed_result = self._sync_order_from_completed_trades_snapshot(
+                trades=completed_trades,
+                order_id=order_id,
+            )
+            if str(completed_result.get("status", "")).strip().lower() != "unknown":
+                synced_count += 1
+                results.append(completed_result)
+                continue
+
+            open_result = self._sync_order_from_open_trades_snapshot(
+                open_trades=open_trades,
+                order_id=order_id,
+            )
+            if str(open_result.get("status", "")).strip().lower() != "unknown":
+                synced_count += 1
+                results.append(open_result)
+                continue
+
+            results.append(completed_result)
+
+        total_duration_ms = int((time.monotonic() - total_started_at) * 1000)
+        unknown_count = max(len(normalized_order_ids) - synced_count, 0)
+        log_info(
+            "IBKR bridge sync batch completed",
+            component="ibkr_bridge",
+            operation="sync_orders_batch",
+            order_count=len(normalized_order_ids),
+            synced_count=synced_count,
+            unknown_count=unknown_count,
+            duration_ms=total_duration_ms,
+            fills_duration_ms=fills_duration_ms,
+            completed_duration_ms=completed_duration_ms,
+            open_trades_duration_ms=open_duration_ms,
+        )
+        return {
+            "requested_count": len(normalized_order_ids),
+            "synced_count": synced_count,
+            "unknown_count": unknown_count,
+            "results": results,
+            "durations_ms": {
+                "fills": fills_duration_ms,
+                "completed": completed_duration_ms,
+                "open_trades": open_duration_ms,
+                "total": total_duration_ms,
+            },
+        }
 
     def _fetch_open_trades(self, ib) -> list[Any]:
         trades = list(ib.openTrades() or [])
@@ -759,29 +917,11 @@ class IbkrGatewayClient:
         if not normalized_order_id:
             return {"id": "", "status": "unknown", "message": "order_id is required"}
 
-        ib = self._connect()
-        fills_result = self._sync_order_from_fills(ib, normalized_order_id)
-        if str(fills_result.get("status", "")).strip().lower() != "unknown":
-            return fills_result
-
-        completed_result = self._sync_order_from_completed_trades(ib, normalized_order_id)
-        if str(completed_result.get("status", "")).strip().lower() != "unknown":
-            return completed_result
-
-        for trade in self._fetch_open_trades(ib):
-            trade_order_id = str(getattr(getattr(trade, "order", None), "orderId", "")).strip()
-            if trade_order_id == normalized_order_id:
-                normalized_trade = self._normalize_trade(trade)
-                return {
-                    "id": normalized_order_id,
-                    "status": str(normalized_trade.get("status", "") or "open"),
-                    "parent_order_id": normalized_order_id,
-                    "parent_status": str(normalized_trade.get("status", "") or ""),
-                    "symbol": normalized_trade.get("symbol", ""),
-                    "client_order_id": normalized_trade.get("client_order_id", ""),
-                }
-
-        return completed_result
+        batch_result = self.sync_orders([normalized_order_id])
+        rows = list(batch_result.get("results") or [])
+        if rows:
+            return rows[0]
+        return self._unknown_sync_payload(normalized_order_id, "Order was not found in IBKR sync batch response.")
 
     def _open_orders_for_symbol(self, ib, symbol: str) -> list[Any]:
         normalized_symbol = str(symbol or "").strip().upper()

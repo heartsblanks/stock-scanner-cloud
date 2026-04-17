@@ -43,6 +43,18 @@ class FakeIbkrClient:
             }
         return {"id": str(order_id), "status": "unknown", "message": "missing"}
 
+    def sync_orders(self, order_ids):
+        order_id_list = [str(order_id).strip() for order_id in (order_ids or []) if str(order_id).strip()]
+        rows = [self.sync_order(order_id) for order_id in order_id_list]
+        synced_count = sum(1 for row in rows if str(row.get("status", "")).strip().lower() != "unknown")
+        return {
+            "requested_count": len(order_id_list),
+            "synced_count": synced_count,
+            "unknown_count": max(len(order_id_list) - synced_count, 0),
+            "results": rows,
+            "durations_ms": {"fills": 1, "completed": 1, "open_trades": 1, "total": 3},
+        }
+
     def cancel_orders_by_symbol(self, symbol):
         return ["1001"] if str(symbol).upper() == "AAPL" else []
 
@@ -116,6 +128,18 @@ class IbkrBridgeApiTests(unittest.TestCase):
         self.assertEqual(payload["id"], "1001")
         self.assertEqual(payload["exit_order_id"], "1002")
         self.assertEqual(payload["exit_reason"], "BROKER_FILLED_EXIT")
+
+    def test_sync_orders_batch_route_returns_rows(self):
+        with patch("ibkr_bridge.app.get_ibkr_client", return_value=FakeIbkrClient()):
+            response = self.client.post("/orders/sync-batch", json={"order_ids": ["1001", "9999"]})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["requested_count"], 2)
+        self.assertEqual(payload["synced_count"], 1)
+        self.assertEqual(payload["unknown_count"], 1)
+        self.assertEqual(payload["results"][0]["id"], "1001")
+        self.assertEqual(payload["results"][1]["status"], "unknown")
 
     def test_cancel_orders_by_symbol_route_returns_canceled_ids(self):
         with patch("ibkr_bridge.app.get_ibkr_client", return_value=FakeIbkrClient()):

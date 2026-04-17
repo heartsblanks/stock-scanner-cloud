@@ -556,6 +556,140 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(result["results"][1]["reason"], "bridge_timeout")
         self.assertEqual(result["results"][2]["reason"], "bridge_cooldown_active")
 
+    def test_ibkr_sync_dedupes_duplicate_parent_order_rows_before_sync(self):
+        synced_parent_ids = []
+        result = execute_sync_paper_trades(
+            get_open_paper_trades=lambda: [
+                {
+                    "id": "11",
+                    "timestamp_utc": "2026-04-16T14:20:10+00:00",
+                    "symbol": "PLTR",
+                    "broker_parent_order_id": "136",
+                    "broker": "IBKR",
+                },
+                {
+                    "id": "12",
+                    "timestamp_utc": "2026-04-16T14:21:10+00:00",
+                    "symbol": "PLTR",
+                    "broker_parent_order_id": "136",
+                    "broker": "IBKR",
+                },
+            ],
+            sync_order_by_id_for_broker=lambda broker, parent_id: synced_parent_ids.append(parent_id) or {
+                "parent_status": "submitted",
+            },
+            paper_trade_exit_already_logged=lambda parent_order_id, exit_event: False,
+            append_trade_log=lambda row: None,
+            safe_insert_trade_event=lambda **kwargs: None,
+            safe_insert_broker_order=lambda **kwargs: None,
+            upsert_trade_lifecycle=lambda **kwargs: None,
+            parse_iso_utc=parse_iso_utc,
+            to_float_or_none=to_float_or_none,
+            get_open_positions_for_broker=lambda broker: [],
+            close_position_for_broker=lambda broker, symbol: {"ok": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["raw_open_paper_trade_count"], 2)
+        self.assertEqual(result["open_paper_trade_count"], 1)
+        self.assertEqual(result["deduped_duplicate_open_rows"], 1)
+        self.assertEqual(result["ibkr_sync_attempted"], 1)
+        self.assertEqual(synced_parent_ids, ["136"])
+        self.assertEqual(result["results"][0]["reason"], "duplicate_parent_order_deduped")
+        self.assertEqual(result["results"][1]["reason"], "still_open")
+
+    def test_ibkr_sync_uses_batch_prefetch_when_available(self):
+        batch_calls = []
+        captured_lifecycles = []
+
+        def upsert_trade_lifecycle(**kwargs):
+            captured_lifecycles.append(kwargs)
+
+        result = execute_sync_paper_trades(
+            get_open_paper_trades=lambda: [
+                {
+                    "timestamp_utc": "2026-04-16T14:20:10+00:00",
+                    "symbol": "PLTR",
+                    "name": "Palantir",
+                    "mode": "core_one",
+                    "side": "BUY",
+                    "shares": "10",
+                    "entry_price": "20.00",
+                    "stop_price": "19.00",
+                    "target_price": "22.00",
+                    "broker_parent_order_id": "136",
+                    "broker_order_id": "136",
+                    "broker": "IBKR",
+                },
+                {
+                    "timestamp_utc": "2026-04-16T14:25:10+00:00",
+                    "symbol": "SMCI",
+                    "name": "SMCI",
+                    "mode": "core_two",
+                    "side": "BUY",
+                    "shares": "8",
+                    "entry_price": "100.00",
+                    "stop_price": "95.00",
+                    "target_price": "110.00",
+                    "broker_parent_order_id": "112",
+                    "broker_order_id": "112",
+                    "broker": "IBKR",
+                },
+            ],
+            sync_order_by_id_for_broker=lambda broker, parent_id: (_ for _ in ()).throw(
+                AssertionError("single-order sync should not run when batch prefetch is enabled")
+            ),
+            sync_orders_by_ids_for_broker=lambda broker, order_ids: (
+                batch_calls.append((broker, list(order_ids)))
+                or {
+                    "136": {
+                        "id": "136",
+                        "status": "closed",
+                        "parent_status": "Filled",
+                        "symbol": "PLTR",
+                        "exit_event": "TARGET_HIT",
+                        "exit_order_id": "236",
+                        "exit_status": "Filled",
+                        "exit_price": "21.0",
+                        "exit_filled_qty": "10",
+                        "exit_filled_avg_price": "21.0",
+                        "exit_reason": "TARGET_HIT",
+                        "exit_filled_at": "2026-04-16T14:40:00+00:00",
+                    },
+                    "112": {
+                        "id": "112",
+                        "status": "closed",
+                        "parent_status": "Filled",
+                        "symbol": "SMCI",
+                        "exit_event": "TARGET_HIT",
+                        "exit_order_id": "212",
+                        "exit_status": "Filled",
+                        "exit_price": "108.0",
+                        "exit_filled_qty": "8",
+                        "exit_filled_avg_price": "108.0",
+                        "exit_reason": "TARGET_HIT",
+                        "exit_filled_at": "2026-04-16T14:45:00+00:00",
+                    },
+                }
+            ),
+            paper_trade_exit_already_logged=lambda parent_order_id, exit_event: False,
+            append_trade_log=lambda row: None,
+            safe_insert_trade_event=lambda **kwargs: None,
+            safe_insert_broker_order=lambda **kwargs: None,
+            upsert_trade_lifecycle=upsert_trade_lifecycle,
+            parse_iso_utc=parse_iso_utc,
+            to_float_or_none=to_float_or_none,
+            get_open_positions_for_broker=lambda broker: [],
+            close_position_for_broker=lambda broker, symbol: {"ok": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(batch_calls, [("IBKR", ["136", "112"])])
+        self.assertEqual(result["ibkr_batch_sync_prefetched"], 2)
+        self.assertEqual(result["ibkr_sync_attempted"], 2)
+        self.assertEqual(result["synced_count"], 2)
+        self.assertEqual(len(captured_lifecycles), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

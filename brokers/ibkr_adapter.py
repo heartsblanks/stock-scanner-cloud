@@ -111,6 +111,37 @@ class IbkrPaperBroker:
             timeout=_bridge_timeout("IBKR_BRIDGE_ORDER_SYNC_TIMEOUT_SECONDS", 8),
         )
 
+    def sync_orders_by_ids(self, order_ids: list[str]) -> dict[str, dict[str, Any]]:
+        self._ensure_bridge_enabled()
+        normalized_order_ids = [str(order_id).strip() for order_id in (order_ids or []) if str(order_id).strip()]
+        if not normalized_order_ids:
+            return {}
+
+        payload = ibkr_bridge_post(
+            "/orders/sync-batch",
+            json_body={"order_ids": normalized_order_ids},
+            timeout=_bridge_timeout("IBKR_BRIDGE_ORDER_SYNC_BATCH_TIMEOUT_SECONDS", 20),
+        ) or {}
+        rows = list(payload.get("results") or [])
+
+        by_order_id: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            order_id = str(row.get("id", "")).strip()
+            if not order_id:
+                continue
+            by_order_id[order_id] = row
+
+        for order_id in normalized_order_ids:
+            if order_id not in by_order_id:
+                by_order_id[order_id] = {
+                    "id": order_id,
+                    "status": "unknown",
+                    "message": "Order was not returned by IBKR batch sync response.",
+                }
+        return by_order_id
+
     def get_order_by_id(self, order_id: str, nested: bool = False) -> dict[str, Any]:
         self._ensure_bridge_enabled()
         return ibkr_bridge_get(

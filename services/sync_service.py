@@ -230,6 +230,75 @@ def _sort_open_rows_for_sync(open_rows: list[dict[str, Any]]) -> list[dict[str, 
     return non_ibkr_rows + sorted(ibkr_rows, key=ibkr_sort_key)
 
 
+def _open_row_recency_rank(row: dict[str, Any]) -> tuple[float, int, str]:
+    parsed_timestamp = _first_sync_timestamp(
+        row,
+        ("updated_at", "entry_time", "timestamp_utc", "created_at"),
+    )
+    timestamp_score = parsed_timestamp.timestamp() if parsed_timestamp is not None else float("-inf")
+
+    row_id_raw = str(row.get("id", "")).strip()
+    try:
+        row_id_score = int(row_id_raw)
+    except Exception:
+        row_id_score = -1
+
+    fallback_timestamp = str(
+        row.get("updated_at")
+        or row.get("entry_time")
+        or row.get("timestamp_utc")
+        or row.get("created_at")
+        or ""
+    ).strip()
+    return (timestamp_score, row_id_score, fallback_timestamp)
+
+
+def _dedupe_open_rows_by_parent_order(
+    open_rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    deduped_rows: list[dict[str, Any]] = []
+    duplicates: list[dict[str, Any]] = []
+    index_by_parent_key: dict[tuple[str, str], int] = {}
+
+    for row in open_rows or []:
+        broker_name = str(row.get("broker", "") or "IBKR").strip().upper() or "IBKR"
+        parent_order_id = str(
+            row.get("broker_parent_order_id")
+            or row.get("parent_order_id")
+            or row.get("broker_order_id")
+            or ""
+        ).strip()
+        if not parent_order_id:
+            deduped_rows.append(row)
+            continue
+
+        dedupe_key = (broker_name, parent_order_id)
+        existing_index = index_by_parent_key.get(dedupe_key)
+        if existing_index is None:
+            index_by_parent_key[dedupe_key] = len(deduped_rows)
+            deduped_rows.append(row)
+            continue
+
+        existing_row = deduped_rows[existing_index]
+        existing_rank = _open_row_recency_rank(existing_row)
+        current_rank = _open_row_recency_rank(row)
+        keep_current = current_rank >= existing_rank
+        dropped_row = existing_row if keep_current else row
+        if keep_current:
+            deduped_rows[existing_index] = row
+
+        duplicates.append({
+            "broker": broker_name,
+            "parent_order_id": parent_order_id,
+            "symbol": str(dropped_row.get("symbol", "")).strip().upper(),
+            "trade_key": str(dropped_row.get("trade_key", "")).strip(),
+            "dropped_trade_id": str(dropped_row.get("id", "")).strip(),
+            "reason": "duplicate_parent_order_id",
+        })
+
+    return deduped_rows, duplicates
+
+
 def _sort_open_rows_for_sync_with_broker_state(
     *,
     open_rows: list[dict[str, Any]],
@@ -466,6 +535,7 @@ def execute_sync_paper_trades(
     get_open_paper_trades: Callable[[], list[dict[str, Any]]],
     sync_order_by_id: Callable[[str], dict[str, Any]] | None = None,
     sync_order_by_id_for_broker: Callable[[str, str], dict[str, Any]] | None = None,
+    sync_orders_by_ids_for_broker: Callable[[str, list[str]], dict[str, dict[str, Any]]] | None = None,
     paper_trade_exit_already_logged: Callable[[str, str], bool],
     append_trade_log: Callable[[dict[str, Any]], None],
     safe_insert_trade_event: Callable[..., None],
@@ -480,7 +550,7 @@ def execute_sync_paper_trades(
     close_position_for_broker: Callable[[str, str], Any] | None = None,
 ) -> dict[str, Any] | tuple[dict[str, Any], int]:
     try:
-        open_rows = _sort_open_rows_for_sync_with_broker_state(
+        sorted_open_rows = _sort_open_rows_for_sync_with_broker_state(
             open_rows=get_open_paper_trades(),
             get_open_positions=get_open_positions,
             get_open_positions_for_broker=get_open_positions_for_broker,
@@ -490,9 +560,37 @@ def execute_sync_paper_trades(
         log_exception("Open paper trade read failed", e, component="sync_service", operation="execute_sync_paper_trades")
         return {"ok": False, "error": f"open paper trade read failed: {e}"}, 500
 
+    open_rows, deduped_duplicates = _dedupe_open_rows_by_parent_order(sorted_open_rows)
+    if deduped_duplicates:
+        log_info(
+            "Deduped duplicate OPEN paper-trade rows by broker parent order id before sync",
+            component="sync_service",
+            operation="execute_sync_paper_trades",
+            duplicate_count=len(deduped_duplicates),
+            kept_count=len(open_rows),
+            raw_count=len(sorted_open_rows),
+            sample_parent_order_ids=",".join(
+                [
+                    str(item.get("parent_order_id", "")).strip()
+                    for item in deduped_duplicates[:10]
+                    if str(item.get("parent_order_id", "")).strip()
+                ]
+            ),
+        )
+
     results: list[dict[str, Any]] = []
     synced_count = 0
-    skipped_count = 0
+    skipped_count = len(deduped_duplicates)
+    for duplicate in deduped_duplicates:
+        results.append({
+            "symbol": duplicate.get("symbol", ""),
+            "broker": duplicate.get("broker", "IBKR"),
+            "parent_order_id": duplicate.get("parent_order_id", ""),
+            "synced": False,
+            "reason": "duplicate_parent_order_deduped",
+            "dropped_trade_id": duplicate.get("dropped_trade_id", ""),
+        })
+
     cached_open_state_by_broker: dict[str, dict[str, Any]] = {}
     batch_started_at = time.monotonic()
     partial = False
@@ -503,12 +601,64 @@ def execute_sync_paper_trades(
     ibkr_timeout_streak = 0
     ibkr_cooldown_until_monotonic: float | None = None
     ibkr_sync_attempted = 0
+    ibkr_batch_sync_parent_ids: set[str] = set()
+    ibkr_batch_sync_results: dict[str, dict[str, Any]] = {}
+
+    if sync_orders_by_ids_for_broker is not None:
+        ibkr_batch_candidate_parent_ids: list[str] = []
+        seen_parent_ids: set[str] = set()
+        for row in open_rows:
+            broker_name = str(row.get("broker", "") or "IBKR").strip().upper() or "IBKR"
+            if broker_name != "IBKR":
+                continue
+            parent_order_id = str(row.get("broker_parent_order_id", "")).strip()
+            if not parent_order_id or parent_order_id in seen_parent_ids:
+                continue
+            seen_parent_ids.add(parent_order_id)
+            if ibkr_sync_max_per_run > 0 and len(ibkr_batch_candidate_parent_ids) >= ibkr_sync_max_per_run:
+                break
+            ibkr_batch_candidate_parent_ids.append(parent_order_id)
+
+        if ibkr_batch_candidate_parent_ids:
+            try:
+                batch_fetch_started_at = time.monotonic()
+                fetched_batch_results = sync_orders_by_ids_for_broker("IBKR", ibkr_batch_candidate_parent_ids) or {}
+                if not isinstance(fetched_batch_results, dict):
+                    raise RuntimeError("IBKR batch sync returned non-dict payload")
+                ibkr_batch_sync_parent_ids = set(ibkr_batch_candidate_parent_ids)
+                ibkr_sync_attempted = len(ibkr_batch_sync_parent_ids)
+                for parent_order_id, sync_row in fetched_batch_results.items():
+                    normalized_parent_order_id = str(parent_order_id).strip()
+                    if not normalized_parent_order_id:
+                        continue
+                    if isinstance(sync_row, dict):
+                        ibkr_batch_sync_results[normalized_parent_order_id] = sync_row
+                log_info(
+                    "IBKR batch sync prefetch completed",
+                    component="sync_service",
+                    operation="execute_sync_paper_trades",
+                    requested_count=len(ibkr_batch_candidate_parent_ids),
+                    received_count=len(ibkr_batch_sync_results),
+                    duration_ms=int((time.monotonic() - batch_fetch_started_at) * 1000),
+                )
+            except Exception as batch_error:
+                log_exception(
+                    "IBKR batch sync prefetch failed; falling back to per-order sync",
+                    batch_error,
+                    component="sync_service",
+                    operation="execute_sync_paper_trades",
+                    requested_count=len(ibkr_batch_candidate_parent_ids),
+                )
+                ibkr_batch_sync_parent_ids = set()
+                ibkr_batch_sync_results = {}
+                ibkr_sync_attempted = 0
 
     for open_row in open_rows:
         parent_order_id = str(open_row.get("broker_parent_order_id", "")).strip()
         symbol = str(open_row.get("symbol", "")).strip().upper()
         broker_name = str(open_row.get("broker", "") or "IBKR").strip().upper() or "IBKR"
         time_budget_seconds = _sync_time_budget_seconds(broker_name=broker_name)
+        use_ibkr_batch_sync_result = broker_name == "IBKR" and parent_order_id in ibkr_batch_sync_parent_ids
 
         if time_budget_seconds is not None and (time.monotonic() - batch_started_at) >= time_budget_seconds:
             partial = True
@@ -544,7 +694,7 @@ def execute_sync_paper_trades(
             skipped_count += 1
             continue
 
-        if broker_name == "IBKR":
+        if broker_name == "IBKR" and not use_ibkr_batch_sync_result:
             now_monotonic = time.monotonic()
             if (
                 ibkr_cooldown_until_monotonic is not None
@@ -596,14 +746,21 @@ def execute_sync_paper_trades(
                 continue
 
         try:
-            if broker_name == "IBKR":
-                ibkr_sync_attempted += 1
-            if sync_order_by_id_for_broker is not None:
-                sync_result = sync_order_by_id_for_broker(broker_name, parent_order_id)
-            elif sync_order_by_id is not None:
-                sync_result = sync_order_by_id(parent_order_id)
+            if use_ibkr_batch_sync_result:
+                sync_result = dict(ibkr_batch_sync_results.get(parent_order_id) or {
+                    "id": parent_order_id,
+                    "status": "unknown",
+                    "message": "Order was not returned by IBKR batch sync prefetch.",
+                })
             else:
-                raise RuntimeError("sync_order_by_id is not configured")
+                if broker_name == "IBKR":
+                    ibkr_sync_attempted += 1
+                if sync_order_by_id_for_broker is not None:
+                    sync_result = sync_order_by_id_for_broker(broker_name, parent_order_id)
+                elif sync_order_by_id is not None:
+                    sync_result = sync_order_by_id(parent_order_id)
+                else:
+                    raise RuntimeError("sync_order_by_id is not configured")
             stale_reconciled = False
             if broker_name == "IBKR":
                 ibkr_timeout_streak = 0
@@ -1063,7 +1220,9 @@ def execute_sync_paper_trades(
 
     return {
         "ok": True,
+        "raw_open_paper_trade_count": len(sorted_open_rows),
         "open_paper_trade_count": len(open_rows),
+        "deduped_duplicate_open_rows": len(deduped_duplicates),
         "synced_count": synced_count,
         "skipped_count": skipped_count,
         "results": results,
@@ -1079,4 +1238,5 @@ def execute_sync_paper_trades(
         "ibkr_cooldown_active": bool(
             ibkr_cooldown_until_monotonic is not None and time.monotonic() < ibkr_cooldown_until_monotonic
         ),
+        "ibkr_batch_sync_prefetched": len(ibkr_batch_sync_parent_ids),
     }

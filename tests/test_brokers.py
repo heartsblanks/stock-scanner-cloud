@@ -65,6 +65,7 @@ class BrokerRegistryTests(unittest.TestCase):
                 "IBKR_BRIDGE_BASE_URL": "https://ibkr-bridge.example.com",
                 "IBKR_BRIDGE_CLOSE_TIMEOUT_SECONDS": "21",
                 "IBKR_BRIDGE_ORDER_SYNC_TIMEOUT_SECONDS": "9",
+                "IBKR_BRIDGE_ORDER_SYNC_BATCH_TIMEOUT_SECONDS": "19",
                 "IBKR_BRIDGE_ORDER_STATUS_TIMEOUT_SECONDS": "7",
                 "IBKR_BRIDGE_CANCEL_TIMEOUT_SECONDS": "6",
             },
@@ -93,6 +94,16 @@ class BrokerRegistryTests(unittest.TestCase):
                 mock_get.return_value = {"status": "filled"}
                 broker.sync_order_by_id("123")
                 mock_get.assert_called_once_with("/orders/123/sync", timeout=9)
+
+            with patch("brokers.ibkr_adapter.ibkr_bridge_post") as mock_post:
+                mock_post.return_value = {"results": [{"id": "123", "status": "filled"}]}
+                rows = broker.sync_orders_by_ids(["123"])
+                self.assertEqual(rows["123"]["status"], "filled")
+                mock_post.assert_called_once_with(
+                    "/orders/sync-batch",
+                    json_body={"order_ids": ["123"]},
+                    timeout=19,
+                )
 
             with patch("brokers.ibkr_adapter.ibkr_bridge_get") as mock_get:
                 mock_get.return_value = {"id": "123"}

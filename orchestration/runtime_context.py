@@ -31,6 +31,7 @@ get_open_positions = PAPER_BROKER.get_open_positions
 close_position = PAPER_BROKER.close_position
 cancel_open_orders_for_symbol = PAPER_BROKER.cancel_open_orders_for_symbol
 sync_order_by_id = PAPER_BROKER.sync_order_by_id
+sync_orders_by_ids = getattr(PAPER_BROKER, "sync_orders_by_ids", None)
 get_order_by_id = PAPER_BROKER.get_order_by_id
 
 
@@ -44,6 +45,18 @@ def _broker_instance_by_name(broker_name: str):
 def sync_order_by_id_for_broker(broker_name: str, order_id: str) -> dict[str, Any]:
     broker = _broker_instance_by_name(broker_name)
     return broker.sync_order_by_id(order_id)
+
+
+def sync_orders_by_ids_for_broker(broker_name: str, order_ids: list[str]) -> dict[str, dict[str, Any]]:
+    broker = _broker_instance_by_name(broker_name)
+    batch_sync = getattr(broker, "sync_orders_by_ids", None)
+    if callable(batch_sync):
+        return batch_sync(order_ids)
+    return {
+        str(order_id).strip(): broker.sync_order_by_id(str(order_id).strip())
+        for order_id in (order_ids or [])
+        if str(order_id).strip()
+    }
 
 
 def get_open_positions_for_broker_name(broker_name: str) -> list[dict[str, Any]]:

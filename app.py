@@ -132,6 +132,7 @@ from orchestration.runtime_context import (
     resolve_ibkr_shadow_account_size,
     sync_order_by_id,
     sync_order_by_id_for_broker,
+    sync_orders_by_ids_for_broker,
 )
 
 from routes.sync import register_sync_routes
@@ -261,6 +262,7 @@ def handle_sync_paper_trades():
         get_open_paper_trades=get_open_paper_trades,
         sync_order_by_id=sync_order_by_id,
         sync_order_by_id_for_broker=sync_order_by_id_for_broker,
+        sync_orders_by_ids_for_broker=sync_orders_by_ids_for_broker,
         paper_trade_exit_already_logged=paper_trade_exit_already_logged,
         append_trade_log=append_trade_log,
         safe_insert_trade_event=safe_insert_trade_event,

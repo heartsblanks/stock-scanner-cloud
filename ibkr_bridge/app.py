@@ -345,6 +345,32 @@ def sync_order(order_id: str):
     return _run_bridge_operation(f"sync_order:{order_id}", sync_open_order)
 
 
+@app.post("/orders/sync-batch")
+@require_auth
+def sync_orders_batch():
+    def sync_open_orders_batch():
+        payload = request.get_json(silent=True) or {}
+        raw_order_ids = payload.get("order_ids")
+        if not isinstance(raw_order_ids, list):
+            raise RuntimeError("order_ids must be provided as a list")
+
+        sync_payload = get_ibkr_client().sync_orders(raw_order_ids)
+        _audit_success(
+            "IBKR bridge orders synced in batch",
+            operation="sync_orders_batch",
+            payload=sync_payload,
+            summary={
+                "requested_count": sync_payload.get("requested_count", 0),
+                "synced_count": sync_payload.get("synced_count", 0),
+                "unknown_count": sync_payload.get("unknown_count", 0),
+                "duration_ms": ((sync_payload.get("durations_ms") or {}).get("total", 0)),
+            },
+        )
+        return sync_payload
+
+    return _run_bridge_operation("sync_orders_batch", sync_open_orders_batch)
+
+
 @app.post("/orders/paper-bracket")
 @require_auth
 def place_paper_bracket():
