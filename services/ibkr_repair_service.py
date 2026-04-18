@@ -100,12 +100,17 @@ def _repair_payload_from_trade_event(
         exit_time = parse_iso_utc(exit_time_raw)
 
     event_type = str(event.get("event_type", "") or "").strip().upper()
+    entry_price = to_float_or_none(row.get("entry_price"))
+    resolved_exit_reason = event_type or "BROKER_EXIT_EVENT_REPAIRED"
+    if resolved_exit_reason == "MANUAL_CLOSE" and entry_price is not None and exit_price == entry_price:
+        resolved_exit_reason = _TERMINAL_UNVERIFIED_EXIT_REASON
+
     return _build_lifecycle_repair_payload(
         row=row,
         exit_order_id=str(event.get("order_id", "") or row.get("exit_order_id", "") or parent_order_id),
         exit_price=exit_price,
         exit_time=exit_time,
-        exit_reason=event_type or "BROKER_EXIT_EVENT_REPAIRED",
+        exit_reason=resolved_exit_reason,
         exit_status=str(event.get("status", "") or "Filled"),
         to_float_or_none=to_float_or_none,
     )
