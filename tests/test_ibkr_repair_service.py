@@ -114,7 +114,7 @@ class IbkrRepairServiceTests(unittest.TestCase):
         self.assertEqual(result["repaired_count"], 1)
         self.assertEqual(captured_lifecycle["exit_order_id"], "36")
         self.assertEqual(captured_lifecycle["exit_price"], 15.47)
-        self.assertEqual(captured_lifecycle["exit_reason"], "BROKER_FILLED_EXIT")
+        self.assertEqual(captured_lifecycle["exit_reason"], "BROKER_FILLED_EXIT_REPAIRED")
         self.assertAlmostEqual(captured_lifecycle["realized_pnl"], -76.08, places=2)
         self.assertEqual(captured_broker_orders[0]["order_id"], "36")
 
@@ -287,6 +287,57 @@ class IbkrRepairServiceTests(unittest.TestCase):
         self.assertEqual(captured_lifecycle["exit_reason"], "BROKER_FILLED_EXIT_REPAIRED")
         self.assertAlmostEqual(captured_lifecycle["exit_price"], 66.9, places=2)
         self.assertLess(captured_lifecycle["realized_pnl"], 0)
+
+    def test_marks_manual_close_without_fill_as_terminal_unverified(self):
+        captured_lifecycle: dict = {}
+        captured_broker_orders: list[dict] = []
+
+        result = repair_ibkr_stale_closes(
+            target_date="2026-04-17",
+            get_stale_ibkr_closed_trade_lifecycles=lambda **kwargs: [
+                {
+                    "trade_key": "IBKR:AFRM:1033",
+                    "symbol": "AFRM",
+                    "mode": "core_two",
+                    "side": "BUY",
+                    "direction": "LONG",
+                    "status": "CLOSED",
+                    "entry_time": datetime(2026, 4, 17, 18, 30, 0, tzinfo=UTC),
+                    "entry_price": "64.53",
+                    "exit_time": datetime(2026, 4, 17, 18, 40, 28, tzinfo=UTC),
+                    "exit_price": "64.53",
+                    "stop_price": "63.88",
+                    "target_price": "65.82",
+                    "exit_reason": "MANUAL_CLOSE",
+                    "shares": "150",
+                    "signal_timestamp": None,
+                    "signal_entry": None,
+                    "signal_stop": None,
+                    "signal_target": None,
+                    "signal_confidence": None,
+                    "order_id": "1033",
+                    "parent_order_id": "1033",
+                    "exit_order_id": "1033",
+                }
+            ],
+            sync_order_by_id_for_broker=lambda broker, parent_order_id: {
+                "exit_order_id": "1033",
+                "exit_price": 64.53,
+                "exit_time": "2026-04-17T18:40:28+00:00",
+                "exit_reason": "MANUAL_CLOSE",
+                "exit_status": "Filled",
+            },
+            get_latest_exit_trade_event_for_parent_order_id=lambda parent_order_id, broker=None: None,
+            upsert_trade_lifecycle=lambda **kwargs: captured_lifecycle.update(kwargs),
+            safe_insert_broker_order=lambda **kwargs: captured_broker_orders.append(kwargs),
+            parse_iso_utc=parse_iso_utc,
+            to_float_or_none=to_float_or_none,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["repaired_count"], 1)
+        self.assertEqual(captured_lifecycle["exit_reason"], "BROKER_CLOSE_UNVERIFIED_NO_FILL_DATA")
+        self.assertEqual(len(captured_broker_orders), 0)
 
 
 if __name__ == "__main__":

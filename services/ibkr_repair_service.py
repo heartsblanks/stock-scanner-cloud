@@ -6,6 +6,14 @@ from typing import Any, Callable
 
 from core.trade_math import compute_duration_minutes, compute_realized_pnl, compute_realized_pnl_percent
 
+_TERMINAL_UNVERIFIED_EXIT_REASON = "BROKER_CLOSE_UNVERIFIED_NO_FILL_DATA"
+_UNVERIFIED_SOURCE_REASONS = {
+    "",
+    "MANUAL_CLOSE",
+    "STALE_OPEN_RECONCILED",
+    "BROKER_POSITION_FLAT_PENDING_FILL_SYNC",
+}
+
 
 def _build_lifecycle_repair_payload(
     *,
@@ -145,6 +153,45 @@ def _repair_payload_from_existing_lifecycle(
     )
 
 
+def _terminal_unverified_payload_from_existing_lifecycle(
+    *,
+    row: dict[str, Any],
+    parse_iso_utc: Callable[[str], Any],
+    to_float_or_none: Callable[[Any], float | None],
+) -> dict[str, Any] | None:
+    exit_time = row.get("exit_time")
+    exit_price = to_float_or_none(row.get("exit_price"))
+    entry_price = to_float_or_none(row.get("entry_price"))
+
+    if exit_price is None or exit_time in (None, ""):
+        return None
+    if entry_price is None:
+        return None
+    if exit_price != entry_price:
+        return None
+
+    existing_exit_reason = str(row.get("exit_reason", "") or "").strip().upper()
+    if existing_exit_reason not in _UNVERIFIED_SOURCE_REASONS:
+        return None
+
+    parsed_exit_time = exit_time
+    if not isinstance(parsed_exit_time, datetime):
+        parsed_exit_time_raw = str(exit_time or "").strip()
+        if not parsed_exit_time_raw:
+            return None
+        parsed_exit_time = parse_iso_utc(parsed_exit_time_raw)
+
+    return _build_lifecycle_repair_payload(
+        row=row,
+        exit_order_id=str(row.get("exit_order_id", "") or row.get("parent_order_id", "") or row.get("order_id", "")),
+        exit_price=exit_price,
+        exit_time=parsed_exit_time,
+        exit_reason=_TERMINAL_UNVERIFIED_EXIT_REASON,
+        exit_status="unverified_closed",
+        to_float_or_none=to_float_or_none,
+    )
+
+
 def repair_ibkr_stale_closes(
     *,
     target_date: str,
@@ -220,14 +267,27 @@ def repair_ibkr_stale_closes(
             exit_order_id = str(sync_result.get("exit_order_id", "") or "").strip()
             exit_price = to_float_or_none(sync_result.get("exit_price"))
             exit_time_raw = str(sync_result.get("exit_filled_at", "") or sync_result.get("exit_time", "") or "").strip()
+            has_fill_evidence = (
+                (to_float_or_none(sync_result.get("exit_filled_qty")) or 0) > 0
+                or to_float_or_none(sync_result.get("exit_filled_avg_price")) is not None
+                or bool(str(sync_result.get("exit_filled_at", "") or "").strip())
+            )
             if exit_order_id and exit_price is not None and exit_time_raw:
                 try:
+                    raw_exit_reason = str(sync_result.get("exit_reason", "") or "").strip()
+                    normalized_exit_reason = raw_exit_reason.upper()
+                    if has_fill_evidence:
+                        resolved_exit_reason = "BROKER_FILLED_EXIT_REPAIRED"
+                    elif normalized_exit_reason in _UNVERIFIED_SOURCE_REASONS:
+                        resolved_exit_reason = _TERMINAL_UNVERIFIED_EXIT_REASON
+                    else:
+                        resolved_exit_reason = raw_exit_reason or _TERMINAL_UNVERIFIED_EXIT_REASON
                     repair_payload = _build_lifecycle_repair_payload(
                         row=row,
                         exit_order_id=exit_order_id,
                         exit_price=exit_price,
                         exit_time=parse_iso_utc(exit_time_raw),
-                        exit_reason=str(sync_result.get("exit_reason", "") or "BROKER_FILLED_EXIT_REPAIRED").strip() or "BROKER_FILLED_EXIT_REPAIRED",
+                        exit_reason=resolved_exit_reason,
                         exit_status=str(sync_result.get("exit_status", "Filled") or "Filled"),
                         to_float_or_none=to_float_or_none,
                     )
@@ -242,6 +302,13 @@ def repair_ibkr_stale_closes(
                         "exit_time": exit_time_raw,
                     })
                     continue
+
+        if repair_payload is None:
+            repair_payload = _terminal_unverified_payload_from_existing_lifecycle(
+                row=row,
+                parse_iso_utc=parse_iso_utc,
+                to_float_or_none=to_float_or_none,
+            )
 
         if repair_payload is None:
             skipped_count += 1
@@ -283,19 +350,20 @@ def repair_ibkr_stale_closes(
             parent_order_id=repair_payload["parent_order_id"],
             exit_order_id=repair_payload["exit_order_id"],
         )
-        safe_insert_broker_order(
-            order_id=repair_payload["exit_order_id"],
-            broker="IBKR",
-            symbol=repair_payload["symbol"],
-            side="SELL" if repair_payload["side"] == "BUY" else "BUY",
-            order_type="exit",
-            status=repair_payload["broker_order_status"],
-            qty=repair_payload["shares"],
-            filled_qty=to_float_or_none(sync_result.get("exit_filled_qty")) or repair_payload["shares"],
-            avg_fill_price=to_float_or_none(sync_result.get("exit_filled_avg_price")) or repair_payload["exit_price"],
-            submitted_at=repair_payload["exit_time"],
-            filled_at=repair_payload["exit_time"],
-        )
+        if repair_payload["exit_reason"] != _TERMINAL_UNVERIFIED_EXIT_REASON:
+            safe_insert_broker_order(
+                order_id=repair_payload["exit_order_id"],
+                broker="IBKR",
+                symbol=repair_payload["symbol"],
+                side="SELL" if repair_payload["side"] == "BUY" else "BUY",
+                order_type="exit",
+                status=repair_payload["broker_order_status"],
+                qty=repair_payload["shares"],
+                filled_qty=to_float_or_none(sync_result.get("exit_filled_qty")) or repair_payload["shares"],
+                avg_fill_price=to_float_or_none(sync_result.get("exit_filled_avg_price")) or repair_payload["exit_price"],
+                submitted_at=repair_payload["exit_time"],
+                filled_at=repair_payload["exit_time"],
+            )
 
         repaired_count += 1
         results.append({
