@@ -5,6 +5,7 @@ from unittest.mock import patch
 try:
     from repositories.trades_repo import (
         get_dashboard_summary,
+        get_stale_ibkr_closed_trade_lifecycles,
         get_latest_mode_ranking_order,
         refresh_mode_rankings,
         upsert_trade_lifecycle,
@@ -214,6 +215,22 @@ class ModeRankingTests(unittest.TestCase):
         )
 
         self.assertEqual(ordered_modes, ["core_two", "core_one", "core_three"])
+
+
+class StaleLifecycleSelectionTests(unittest.TestCase):
+    @patch("repositories.trades_repo.fetch_all")
+    def test_stale_selector_includes_guarded_manual_close_rows(self, mock_fetch_all):
+        mock_fetch_all.return_value = []
+
+        get_stale_ibkr_closed_trade_lifecycles(target_date="2026-04-17", limit=25)
+
+        query = mock_fetch_all.call_args.args[0]
+        params = mock_fetch_all.call_args.args[1]
+        self.assertIn("UPPER(COALESCE(exit_reason, '')) = 'MANUAL_CLOSE'", query)
+        self.assertIn("COALESCE(exit_price, 0) = COALESCE(entry_price, 0)", query)
+        self.assertIn("COALESCE(exit_order_id, '') = COALESCE(parent_order_id, '')", query)
+        self.assertEqual(params["target_date"], "2026-04-17")
+        self.assertEqual(params["limit"], 25)
 
 
 if __name__ == "__main__":
