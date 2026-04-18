@@ -236,6 +236,58 @@ class IbkrRepairServiceTests(unittest.TestCase):
         self.assertEqual(result["skipped_count"], 1)
         self.assertEqual(result["results"][0]["reason"], "repair_time_budget_exceeded")
 
+    def test_remaps_pending_fill_sync_reason_when_repairing_from_existing_lifecycle(self):
+        captured_lifecycle: dict = {}
+        sync_called = False
+
+        def should_not_sync(_broker, _parent_order_id):
+            nonlocal sync_called
+            sync_called = True
+            raise AssertionError("live sync should not run when existing lifecycle has sufficient exit data")
+
+        result = repair_ibkr_stale_closes(
+            target_date="2026-04-17",
+            get_stale_ibkr_closed_trade_lifecycles=lambda **kwargs: [
+                {
+                    "trade_key": "202",
+                    "symbol": "INTC",
+                    "mode": "core_three",
+                    "side": "BUY",
+                    "direction": "LONG",
+                    "status": "CLOSED",
+                    "entry_time": datetime(2026, 4, 16, 16, 17, 32, tzinfo=UTC),
+                    "entry_price": "67.76",
+                    "exit_time": datetime(2026, 4, 17, 19, 40, 0, tzinfo=UTC),
+                    "exit_price": "66.90",
+                    "stop_price": "66.34",
+                    "target_price": "70.60",
+                    "exit_reason": "BROKER_POSITION_FLAT_PENDING_FILL_SYNC",
+                    "shares": "146",
+                    "signal_timestamp": None,
+                    "signal_entry": None,
+                    "signal_stop": None,
+                    "signal_target": None,
+                    "signal_confidence": None,
+                    "order_id": "202",
+                    "parent_order_id": "202",
+                    "exit_order_id": "",
+                }
+            ],
+            sync_order_by_id_for_broker=should_not_sync,
+            get_latest_exit_trade_event_for_parent_order_id=lambda parent_order_id, broker=None: None,
+            upsert_trade_lifecycle=lambda **kwargs: captured_lifecycle.update(kwargs),
+            safe_insert_broker_order=lambda **kwargs: None,
+            parse_iso_utc=parse_iso_utc,
+            to_float_or_none=to_float_or_none,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["repaired_count"], 1)
+        self.assertFalse(sync_called)
+        self.assertEqual(captured_lifecycle["exit_reason"], "BROKER_FILLED_EXIT_REPAIRED")
+        self.assertAlmostEqual(captured_lifecycle["exit_price"], 66.9, places=2)
+        self.assertLess(captured_lifecycle["realized_pnl"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

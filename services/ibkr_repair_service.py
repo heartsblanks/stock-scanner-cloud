@@ -128,7 +128,10 @@ def _repair_payload_from_existing_lifecycle(
         parsed_exit_time = parse_iso_utc(parsed_exit_time_raw)
 
     existing_exit_reason = str(row.get("exit_reason", "") or "").strip()
-    if existing_exit_reason.upper() == "STALE_OPEN_RECONCILED":
+    if existing_exit_reason.upper() in {
+        "STALE_OPEN_RECONCILED",
+        "BROKER_POSITION_FLAT_PENDING_FILL_SYNC",
+    }:
         existing_exit_reason = "BROKER_FILLED_EXIT_REPAIRED"
 
     return _build_lifecycle_repair_payload(

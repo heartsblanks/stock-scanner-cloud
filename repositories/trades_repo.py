@@ -532,6 +532,10 @@ def get_stale_ibkr_closed_trade_lifecycles(*, target_date: Optional[str] = None,
           AND UPPER(COALESCE(status, '')) = 'CLOSED'
           AND (
             UPPER(COALESCE(exit_reason, '')) = 'STALE_OPEN_RECONCILED'
+            OR (
+              UPPER(COALESCE(exit_reason, '')) = 'BROKER_POSITION_FLAT_PENDING_FILL_SYNC'
+              AND COALESCE(realized_pnl, 0) = 0
+            )
             OR exit_time IS NULL
             OR exit_price IS NULL
             OR realized_pnl IS NULL
