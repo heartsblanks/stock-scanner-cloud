@@ -165,6 +165,25 @@ class IbkrGatewayClient:
             interval_seconds = 1.0
         return attempts, interval_seconds
 
+    def _entry_poll_config(self) -> tuple[int, float]:
+        try:
+            attempts = max(1, int(os.getenv("IBKR_ENTRY_POLL_ATTEMPTS", "4")))
+        except Exception:
+            attempts = 4
+        try:
+            interval_seconds = max(0.1, float(os.getenv("IBKR_ENTRY_POLL_INTERVAL_SECONDS", "0.5")))
+        except Exception:
+            interval_seconds = 0.5
+        return attempts, interval_seconds
+
+    def _is_rejected_entry_status(self, status: str) -> bool:
+        normalized = str(status or "").strip().lower()
+        return normalized in {"cancelled", "apicancelled", "inactive", "rejected"}
+
+    def _is_confirmed_entry_status(self, status: str) -> bool:
+        normalized = str(status or "").strip().lower()
+        return normalized in {"pendingsubmit", "presubmitted", "submitted", "filled", "pendingcancel"}
+
     def _order_status_snapshot(self, trade: Any) -> dict[str, Any]:
         order = getattr(trade, "order", None)
         order_status = getattr(trade, "orderStatus", None)
@@ -1216,9 +1235,58 @@ class IbkrGatewayClient:
             }
 
         estimated_notional = round(final_shares * entry, 2)
-        parent_status = str(getattr(getattr(parent_trade, "orderStatus", None), "status", "")).strip()
+        parent_snapshots: list[dict[str, Any]] = []
+        poll_attempts, poll_interval_seconds = self._entry_poll_config()
+        parent_snapshot = self._order_status_snapshot(parent_trade)
+        parent_snapshots.append({
+            "attempt": 0,
+            **parent_snapshot,
+        })
+        for attempt in range(1, poll_attempts + 1):
+            status_now = str(parent_snapshot.get("status", "")).strip()
+            if self._is_rejected_entry_status(status_now) or self._is_confirmed_entry_status(status_now):
+                break
+            try:
+                ib.sleep(poll_interval_seconds)
+            except Exception:
+                time.sleep(poll_interval_seconds)
+            parent_snapshot = self._order_status_snapshot(parent_trade)
+            parent_snapshots.append({
+                "attempt": attempt,
+                **parent_snapshot,
+            })
+
+        parent_status = str(parent_snapshot.get("status", "")).strip()
         take_profit_status = str(getattr(getattr(take_profit_trade, "orderStatus", None), "status", "")).strip()
         trailing_stop_status = str(getattr(getattr(trailing_stop_trade, "orderStatus", None), "status", "")).strip()
+
+        if self._is_rejected_entry_status(parent_status):
+            return {
+                "attempted": True,
+                "placed": False,
+                "broker": "IBKR",
+                "symbol": symbol,
+                "reason": "ibkr_order_rejected_status",
+                "details": f"Parent order status is terminal reject state: {parent_status or 'UNKNOWN'}",
+                "broker_order_id": str(base_order_id),
+                "broker_parent_order_id": str(base_order_id),
+                "broker_order_status": parent_status,
+                "order_status_transitions": parent_snapshots,
+            }
+
+        if not self._is_confirmed_entry_status(parent_status):
+            return {
+                "attempted": True,
+                "placed": False,
+                "broker": "IBKR",
+                "symbol": symbol,
+                "reason": "ibkr_order_unconfirmed_status",
+                "details": f"Parent order status was not confirmed after placement polling: {parent_status or 'UNKNOWN'}",
+                "broker_order_id": str(base_order_id),
+                "broker_parent_order_id": str(base_order_id),
+                "broker_order_status": parent_status,
+                "order_status_transitions": parent_snapshots,
+            }
 
         log_info(
             "IBKR bridge paper bracket placement completed",
@@ -1231,6 +1299,7 @@ class IbkrGatewayClient:
             take_profit_status=take_profit_status,
             trailing_stop_status=trailing_stop_status,
             estimated_notional=estimated_notional,
+            parent_status_transitions=parent_snapshots,
         )
         return {
             "attempted": True,
@@ -1251,6 +1320,7 @@ class IbkrGatewayClient:
             "order_id": str(base_order_id),
             "parent_order_id": str(base_order_id),
             "order_status": parent_status,
+            "order_status_transitions": parent_snapshots,
         }
 
     def cancel_orders_by_symbol(self, symbol: str) -> list[str]:

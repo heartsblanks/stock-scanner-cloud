@@ -149,6 +149,94 @@ class _FakeIbForCloseFlow:
         return [contract]
 
 
+class _FakeReqClient:
+    def __init__(self, start=700):
+        self._next = start
+
+    def getReqId(self):
+        value = self._next
+        self._next += 10
+        return value
+
+
+class _FakeMarketOrderForBracket:
+    def __init__(self, action, qty, transmit=False):
+        self.action = action
+        self.totalQuantity = qty
+        self.transmit = transmit
+        self.orderId = 0
+        self.parentId = 0
+        self.orderRef = ""
+        self.tif = ""
+        self.orderType = "MKT"
+
+
+class _FakeLimitOrderForBracket:
+    def __init__(self, action, qty, limit_price, transmit=False):
+        self.action = action
+        self.totalQuantity = qty
+        self.lmtPrice = limit_price
+        self.transmit = transmit
+        self.orderId = 0
+        self.parentId = 0
+        self.orderRef = ""
+        self.tif = ""
+        self.orderType = "LMT"
+
+
+class _FakeGenericOrderForBracket:
+    def __init__(self):
+        self.action = ""
+        self.totalQuantity = 0
+        self.transmit = False
+        self.orderId = 0
+        self.parentId = 0
+        self.orderRef = ""
+        self.tif = ""
+        self.orderType = ""
+
+
+class _FakeStockForBracket(_FakeContract):
+    def __init__(self, symbol, exchange, currency):
+        super().__init__(symbol, con_id=1)
+        self.exchange = exchange
+        self.currency = currency
+        self.primaryExchange = exchange
+
+
+class _FakeIbForBracketFlow:
+    def __init__(self, *, symbol, parent_status, status_after_sleep=None):
+        self.symbol = symbol
+        self.parent_status = parent_status
+        self.status_after_sleep = status_after_sleep
+        self.client = _FakeReqClient()
+        self._parent_trade = None
+
+    def qualifyContracts(self, contract):
+        return [contract]
+
+    def placeOrder(self, contract, order):
+        status = self.parent_status if int(getattr(order, "orderId", 0)) % 10 == 0 else "PreSubmitted"
+        trade = _FakeTrade(
+            symbol=getattr(contract, "symbol", self.symbol),
+            order_id=int(getattr(order, "orderId", 0)),
+            status=status,
+            remaining=0.0 if str(status).strip().lower() == "filled" else 1.0,
+            action=str(getattr(order, "action", "BUY")),
+            order_type=str(getattr(order, "orderType", "MKT")),
+            order_ref=str(getattr(order, "orderRef", "ref")),
+        )
+        if int(getattr(order, "orderId", 0)) % 10 == 0:
+            self._parent_trade = trade
+        return trade
+
+    def sleep(self, _seconds):
+        if self._parent_trade is not None and self.status_after_sleep:
+            self._parent_trade.orderStatus.status = self.status_after_sleep
+            self.status_after_sleep = None
+        return None
+
+
 class IbkrConnectorTests(unittest.TestCase):
     def test_get_open_orders_filters_cancelled_rows(self):
         client = IbkrGatewayClient.__new__(IbkrGatewayClient)
@@ -426,6 +514,67 @@ class IbkrConnectorTests(unittest.TestCase):
         self.assertEqual(fake_ib.placed_orders[0]["symbol"], "NVDA")
         self.assertEqual(result["cancel_settle_transitions"][0]["open_order_count"], 1)
         self.assertEqual(result["cancel_settle_transitions"][-1]["open_order_count"], 0)
+
+    def test_place_paper_bracket_order_marks_rejected_terminal_parent_status(self):
+        client = IbkrGatewayClient.__new__(IbkrGatewayClient)
+        fake_ib = _FakeIbForBracketFlow(symbol="TSLA", parent_status="Inactive")
+        client._connect = lambda: fake_ib
+        client._load_order_classes = lambda: (
+            _FakeLimitOrderForBracket,
+            _FakeMarketOrderForBracket,
+            _FakeGenericOrderForBracket,
+            _FakeGenericOrderForBracket,
+            _FakeStockForBracket,
+        )
+        client._entry_poll_config = lambda: (1, 0.0)
+
+        result = client.place_paper_bracket_order(
+            {
+                "metrics": {
+                    "symbol": "TSLA",
+                    "direction": "BUY",
+                    "entry": 401.0,
+                    "stop": 399.0,
+                    "target": 405.0,
+                    "shares": 10,
+                }
+            }
+        )
+
+        self.assertTrue(result["attempted"])
+        self.assertFalse(result["placed"])
+        self.assertEqual(result["reason"], "ibkr_order_rejected_status")
+        self.assertEqual(result["broker_order_status"], "Inactive")
+
+    def test_place_paper_bracket_order_confirms_after_polling(self):
+        client = IbkrGatewayClient.__new__(IbkrGatewayClient)
+        fake_ib = _FakeIbForBracketFlow(symbol="TSLA", parent_status="", status_after_sleep="Submitted")
+        client._connect = lambda: fake_ib
+        client._load_order_classes = lambda: (
+            _FakeLimitOrderForBracket,
+            _FakeMarketOrderForBracket,
+            _FakeGenericOrderForBracket,
+            _FakeGenericOrderForBracket,
+            _FakeStockForBracket,
+        )
+        client._entry_poll_config = lambda: (2, 0.0)
+
+        result = client.place_paper_bracket_order(
+            {
+                "metrics": {
+                    "symbol": "TSLA",
+                    "direction": "BUY",
+                    "entry": 401.0,
+                    "stop": 399.0,
+                    "target": 405.0,
+                    "shares": 10,
+                }
+            }
+        )
+
+        self.assertTrue(result["placed"])
+        self.assertEqual(result["broker_order_status"], "Submitted")
+        self.assertGreaterEqual(len(result.get("order_status_transitions", [])), 2)
 
 
 if __name__ == "__main__":
