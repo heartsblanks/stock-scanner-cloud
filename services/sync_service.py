@@ -83,6 +83,89 @@ def _bool_env(name: str, default: bool) -> bool:
     return raw_value in {"1", "true", "yes", "on"}
 
 
+def _refresh_open_lifecycle_from_sync_snapshot(
+    *,
+    open_row: dict[str, Any],
+    sync_result: dict[str, Any],
+    broker_name: str,
+    parse_iso_utc: Callable[[str], Any],
+    to_float_or_none: Callable[[Any], float | None],
+    upsert_trade_lifecycle: Callable[..., None],
+) -> None:
+    symbol = str(open_row.get("symbol", "") or "").strip().upper()
+    if not symbol:
+        return
+
+    entry_timestamp_raw = str(
+        open_row.get("timestamp_utc")
+        or open_row.get("entry_time")
+        or ""
+    ).strip()
+    entry_timestamp = parse_iso_utc(entry_timestamp_raw) if entry_timestamp_raw else None
+
+    linked_signal_timestamp_utc = str(open_row.get("linked_signal_timestamp_utc", "")).strip()
+    parent_order_id = str(open_row.get("broker_parent_order_id", "") or open_row.get("parent_order_id", "") or "").strip()
+    order_id = str(open_row.get("broker_order_id", "") or open_row.get("order_id", "") or parent_order_id).strip()
+    broker_order_id = order_id or parent_order_id
+    broker_parent_order_id = parent_order_id or order_id
+
+    entry_price = (
+        to_float_or_none(sync_result.get("entry_filled_avg_price", "") or sync_result.get("entry_price", ""))
+        or to_float_or_none(open_row.get("entry_price", ""))
+    )
+    shares = (
+        to_float_or_none(sync_result.get("entry_filled_qty", "") or sync_result.get("shares", ""))
+        or to_float_or_none(open_row.get("shares", ""))
+    )
+    stop_price = (
+        to_float_or_none(sync_result.get("live_stop_price", "") or sync_result.get("stop_price", ""))
+        or to_float_or_none(open_row.get("stop_price", ""))
+    )
+    target_price = (
+        to_float_or_none(sync_result.get("live_target_price", "") or sync_result.get("target_price", ""))
+        or to_float_or_none(open_row.get("target_price", ""))
+    )
+
+    direction = infer_direction(
+        entry_price,
+        "",
+        stop_price,
+        target_price,
+        open_row.get("side", ""),
+    )
+    lifecycle_side = resolve_lifecycle_side(open_row, direction)
+    trade_key = normalize_trade_key(symbol, broker_parent_order_id, broker_order_id, broker_name)
+
+    upsert_trade_lifecycle(
+        trade_key=trade_key,
+        symbol=symbol,
+        mode=str(open_row.get("mode", "") or ""),
+        side=lifecycle_side,
+        direction=direction,
+        status="OPEN",
+        entry_time=entry_timestamp,
+        entry_price=entry_price,
+        exit_time=None,
+        exit_price=None,
+        stop_price=stop_price,
+        target_price=target_price,
+        exit_reason="",
+        shares=shares,
+        realized_pnl=None,
+        realized_pnl_percent=None,
+        duration_minutes=None,
+        signal_timestamp=parse_iso_utc(linked_signal_timestamp_utc) if linked_signal_timestamp_utc else None,
+        signal_entry=to_float_or_none(open_row.get("linked_signal_entry", "")),
+        signal_stop=to_float_or_none(open_row.get("linked_signal_stop", "")),
+        signal_target=to_float_or_none(open_row.get("linked_signal_target", "")),
+        signal_confidence=to_float_or_none(open_row.get("linked_signal_confidence", "")),
+        broker=broker_name,
+        order_id=broker_order_id,
+        parent_order_id=broker_parent_order_id,
+        exit_order_id="",
+    )
+
+
 def _normalize_ibkr_client_order_id(value: Any) -> str:
     return str(value or "").strip()
 
@@ -955,6 +1038,30 @@ def execute_sync_paper_trades(
                     )
 
         if not exit_event:
+            open_lifecycle_refresh_enabled = _bool_env("SYNC_REFRESH_OPEN_LIFECYCLE_ON_STILL_OPEN", True)
+            lifecycle_refreshed = False
+            if open_lifecycle_refresh_enabled and not bool(sync_result.get("identity_conflict")):
+                try:
+                    _refresh_open_lifecycle_from_sync_snapshot(
+                        open_row=open_row,
+                        sync_result=sync_result,
+                        broker_name=broker_name,
+                        parse_iso_utc=parse_iso_utc,
+                        to_float_or_none=to_float_or_none,
+                        upsert_trade_lifecycle=upsert_trade_lifecycle,
+                    )
+                    lifecycle_refreshed = True
+                except Exception as refresh_error:
+                    log_exception(
+                        "Open lifecycle refresh during sync failed",
+                        refresh_error,
+                        component="sync_service",
+                        operation="execute_sync_paper_trades",
+                        symbol=symbol,
+                        parent_order_id=parent_order_id,
+                        broker=broker_name,
+                    )
+
             if broker_name == "IBKR":
                 log_warning(
                     "IBKR trade remains open on broker after sync",
@@ -976,6 +1083,7 @@ def execute_sync_paper_trades(
                 "take_profit_status": sync_result.get("take_profit_status", ""),
                 "stop_loss_status": sync_result.get("stop_loss_status", ""),
                 "identity_conflict_reason": sync_result.get("identity_conflict_reason", ""),
+                "lifecycle_refreshed": lifecycle_refreshed,
             })
             skipped_count += 1
             continue

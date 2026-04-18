@@ -734,6 +734,56 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(result["results"][0]["reason"], "still_open")
         self.assertEqual(result["results"][1]["reason"], "still_open")
 
+    def test_still_open_sync_refreshes_open_lifecycle_row(self):
+        captured_lifecycles = []
+
+        def upsert_trade_lifecycle(**kwargs):
+            captured_lifecycles.append(kwargs)
+
+        result = execute_sync_paper_trades(
+            get_open_paper_trades=lambda: [
+                {
+                    "timestamp_utc": "2026-04-18T13:20:10+00:00",
+                    "symbol": "PLTR",
+                    "name": "Palantir",
+                    "mode": "core_one",
+                    "side": "BUY",
+                    "shares": "10",
+                    "entry_price": "20.00",
+                    "stop_price": "19.50",
+                    "target_price": "22.00",
+                    "broker_parent_order_id": "136",
+                    "broker_order_id": "136",
+                    "broker": "IBKR",
+                },
+            ],
+            sync_order_by_id_for_broker=lambda broker, parent_id: {
+                "id": parent_id,
+                "status": "submitted",
+                "parent_status": "Submitted",
+                "symbol": "PLTR",
+            },
+            paper_trade_exit_already_logged=lambda parent_order_id, exit_event: False,
+            append_trade_log=lambda row: None,
+            safe_insert_trade_event=lambda **kwargs: None,
+            safe_insert_broker_order=lambda **kwargs: None,
+            upsert_trade_lifecycle=upsert_trade_lifecycle,
+            parse_iso_utc=parse_iso_utc,
+            to_float_or_none=to_float_or_none,
+            get_open_positions_for_broker=lambda broker: [{"symbol": "PLTR"}],
+            close_position_for_broker=lambda broker, symbol: {"ok": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["synced_count"], 0)
+        self.assertEqual(result["results"][0]["reason"], "still_open")
+        self.assertTrue(result["results"][0]["lifecycle_refreshed"])
+        self.assertEqual(len(captured_lifecycles), 1)
+        self.assertEqual(captured_lifecycles[0]["status"], "OPEN")
+        self.assertEqual(captured_lifecycles[0]["symbol"], "PLTR")
+        self.assertEqual(captured_lifecycles[0]["parent_order_id"], "136")
+        self.assertEqual(captured_lifecycles[0]["exit_reason"], "")
+
 
 if __name__ == "__main__":
     unittest.main()
