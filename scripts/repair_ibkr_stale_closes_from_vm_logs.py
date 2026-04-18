@@ -414,12 +414,23 @@ def _portfolio_snapshot_candidate(row: LifecycleRow, portfolios: list[PortfolioS
 
 def build_repair_candidates(rows: list[LifecycleRow], executions: list[ExecutionRecord], portfolios: list[PortfolioSnapshot]) -> list[RepairCandidate]:
     candidates: list[RepairCandidate] = []
+    unresolved_by_symbol: dict[str, list[LifecycleRow]] = {}
+
     for row in rows:
         candidate = _execution_pair_candidate(row, executions)
-        if candidate is None:
-            candidate = _portfolio_snapshot_candidate(row, portfolios)
         if candidate is not None:
             candidates.append(candidate)
+            continue
+        unresolved_by_symbol.setdefault(row.symbol, []).append(row)
+
+    for symbol_rows in unresolved_by_symbol.values():
+        # A portfolio snapshot is symbol-level aggregate P/L, not per-order fill data.
+        # Only use it when there is exactly one unresolved stale row for that symbol.
+        if len(symbol_rows) != 1:
+            continue
+        fallback_candidate = _portfolio_snapshot_candidate(symbol_rows[0], portfolios)
+        if fallback_candidate is not None:
+            candidates.append(fallback_candidate)
     return candidates
 
 

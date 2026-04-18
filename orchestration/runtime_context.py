@@ -329,16 +329,28 @@ def get_latest_open_paper_trade_for_symbol_for_broker(symbol: str, broker_name: 
             or (parent_order_id and str(order.get("id", "")).strip() == parent_order_id)
         ]
 
+        allow_stale_open_guard_bypass = str(
+            os.getenv("IBKR_ALLOW_STALE_OPEN_GUARD_BYPASS", "false")
+        ).strip().lower() in {"1", "true", "yes", "on"}
         if normalized_symbol not in open_symbols and not related_orders:
+            if allow_stale_open_guard_bypass:
+                log_warning(
+                    "Ignoring stale DB OPEN row during symbol_already_open guard because broker is flat for symbol",
+                    component="runtime_context",
+                    operation="get_latest_open_paper_trade_for_symbol_for_broker",
+                    broker=normalized_broker,
+                    symbol=normalized_symbol,
+                    parent_order_id=parent_order_id,
+                )
+                return None
             log_warning(
-                "Ignoring stale DB OPEN row during symbol_already_open guard because broker is flat for symbol",
+                "Keeping DB OPEN guard despite broker-flat snapshot because stale-open bypass is disabled",
                 component="runtime_context",
                 operation="get_latest_open_paper_trade_for_symbol_for_broker",
                 broker=normalized_broker,
                 symbol=normalized_symbol,
                 parent_order_id=parent_order_id,
             )
-            return None
     except Exception as exc:
         # Conservative fallback: keep DB guard if broker snapshot check is unavailable.
         log_exception(
