@@ -1525,19 +1525,31 @@ class IbkrGatewayClient:
             except Exception:
                 pass
         source_primary_exchange = str(getattr(source_contract, "primaryExchange", "")).strip().upper()
-        source_exchange = str(getattr(source_contract, "exchange", "")).strip().upper()
+        # Keep SMART routing explicit for close orders. Only copy a listing venue
+        # into `primaryExchange` when IB already reports one (never from `exchange`).
         preferred_primary_exchange = source_primary_exchange if source_primary_exchange not in {"", "SMART"} else ""
-        if not preferred_primary_exchange and source_exchange not in {"", "SMART"}:
-            preferred_primary_exchange = source_exchange
         if preferred_primary_exchange:
             contract.primaryExchange = preferred_primary_exchange
         try:
-            ib.qualifyContracts(contract)
+            contract.exchange = "SMART"
         except Exception:
-            if source_contract is not None:
-                contract = source_contract
-            else:
-                raise
+            pass
+        try:
+            ib.qualifyContracts(contract)
+        except Exception as exc:
+            # Do not fall back to source position contract (often direct-routed listing venue).
+            # Keep SMART contract and continue; this preserves route intent.
+            log_warning(
+                "IBKR bridge close-position contract qualification failed; continuing with SMART contract",
+                component="ibkr_bridge",
+                operation="close_position",
+                symbol=normalized_symbol,
+                error=str(exc),
+            )
+        try:
+            contract.exchange = "SMART"
+        except Exception:
+            pass
 
         action = "SELL" if qty > 0 else "BUY"
         canceled_order_ids: list[str] = []
