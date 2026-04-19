@@ -643,6 +643,43 @@ class IbkrConnectorTests(unittest.TestCase):
         self.assertEqual(result["reason"], "ibkr_order_not_acknowledged")
         self.assertEqual(result["broker_perm_id"], 0)
 
+    def test_place_paper_bracket_order_waits_for_pending_submit_perm_id_ack(self):
+        client = IbkrGatewayClient.__new__(IbkrGatewayClient)
+        fake_ib = _FakeIbForBracketFlow(
+            symbol="TSLA",
+            parent_status="PendingSubmit",
+            status_after_sleep="PendingSubmit",
+            parent_perm_id_after_sleep=128777,
+        )
+        client._reset_connection = lambda: fake_ib
+        client._load_order_classes = lambda: (
+            _FakeLimitOrderForBracket,
+            _FakeMarketOrderForBracket,
+            _FakeGenericOrderForBracket,
+            _FakeGenericOrderForBracket,
+            _FakeStockForBracket,
+        )
+        client._entry_poll_config = lambda: (2, 0.0)
+
+        result = client.place_paper_bracket_order(
+            {
+                "metrics": {
+                    "symbol": "TSLA",
+                    "direction": "BUY",
+                    "entry": 401.0,
+                    "stop": 399.0,
+                    "target": 405.0,
+                    "shares": 10,
+                }
+            }
+        )
+
+        self.assertTrue(result["attempted"])
+        self.assertTrue(result["placed"])
+        self.assertEqual(result["broker_order_status"], "PendingSubmit")
+        self.assertEqual(result["broker_perm_id"], 128777)
+        self.assertGreaterEqual(len(result.get("order_status_transitions", [])), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

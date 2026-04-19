@@ -1309,7 +1309,10 @@ class IbkrGatewayClient:
             )
             for attempt in range(1, poll_attempts + 1):
                 status_now = str(parent_snapshot.get("status", "")).strip()
-                if self._is_rejected_entry_status(status_now) or self._is_confirmed_entry_status(status_now):
+                perm_id_now = int(_to_float(parent_snapshot.get("perm_id"), 0))
+                if self._is_rejected_entry_status(status_now):
+                    break
+                if self._is_confirmed_entry_status(status_now) and perm_id_now > 0:
                     break
                 try:
                     ib.sleep(poll_interval_seconds)
