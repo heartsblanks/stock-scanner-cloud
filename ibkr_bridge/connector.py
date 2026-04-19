@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import math
 import os
 import time
@@ -1545,45 +1546,89 @@ class IbkrGatewayClient:
 
         _LimitOrder, MarketOrder, _StopOrder, _Order, Stock = self._load_order_classes()
         source_contract = getattr(target_position, "contract", None)
-        try:
-            contract = Stock(normalized_symbol, "SMART", "USD")
-        except TypeError:
-            # Test doubles may only accept `symbol`; set route fields afterward.
-            contract = Stock(normalized_symbol)
-            try:
-                contract.exchange = "SMART"
-            except Exception:
-                pass
-            try:
-                contract.currency = "USD"
-            except Exception:
-                pass
+        source_contract_con_id = int(_to_float(getattr(source_contract, "conId", 0.0), 0))
         source_primary_exchange = str(getattr(source_contract, "primaryExchange", "")).strip().upper()
-        # Keep SMART routing explicit for close orders. Only copy a listing venue
-        # into `primaryExchange` when IB already reports one (never from `exchange`).
-        preferred_primary_exchange = source_primary_exchange if source_primary_exchange not in {"", "SMART"} else ""
-        if preferred_primary_exchange:
-            contract.primaryExchange = preferred_primary_exchange
+        source_exchange = str(getattr(source_contract, "exchange", "")).strip().upper()
+        should_qualify_contract = source_contract_con_id <= 0
+
+        if source_contract is not None and source_contract_con_id > 0:
+            # Use the position contract identity (conId) and force SMART route.
+            # This avoids close-order qualification drifting back to listing exchange.
+            try:
+                contract = copy.copy(source_contract)
+            except Exception:
+                contract = source_contract
+            try:
+                contract.symbol = normalized_symbol
+            except Exception:
+                pass
+            try:
+                contract.currency = str(getattr(contract, "currency", "")).strip() or "USD"
+            except Exception:
+                pass
+        else:
+            try:
+                contract = Stock(normalized_symbol, "SMART", "USD")
+            except TypeError:
+                # Test doubles may only accept `symbol`; set route fields afterward.
+                contract = Stock(normalized_symbol)
+                try:
+                    contract.exchange = "SMART"
+                except Exception:
+                    pass
+                try:
+                    contract.currency = "USD"
+                except Exception:
+                    pass
+            # Keep SMART routing explicit for close orders. Only copy a listing venue
+            # into `primaryExchange` when IB already reports one (never from `exchange`).
+            preferred_primary_exchange = source_primary_exchange if source_primary_exchange not in {"", "SMART"} else ""
+            if preferred_primary_exchange:
+                contract.primaryExchange = preferred_primary_exchange
         try:
             contract.exchange = "SMART"
         except Exception:
             pass
-        try:
-            ib.qualifyContracts(contract)
-        except Exception as exc:
-            # Do not fall back to source position contract (often direct-routed listing venue).
-            # Keep SMART contract and continue; this preserves route intent.
-            log_warning(
-                "IBKR bridge close-position contract qualification failed; continuing with SMART contract",
-                component="ibkr_bridge",
-                operation="close_position",
-                symbol=normalized_symbol,
-                error=str(exc),
-            )
+        if should_qualify_contract:
+            try:
+                ib.qualifyContracts(contract)
+            except Exception as exc:
+                # Do not fall back to source position contract (often direct-routed listing venue).
+                # Keep SMART contract and continue; this preserves route intent.
+                log_warning(
+                    "IBKR bridge close-position contract qualification failed; continuing with SMART contract",
+                    component="ibkr_bridge",
+                    operation="close_position",
+                    symbol=normalized_symbol,
+                    error=str(exc),
+                )
         try:
             contract.exchange = "SMART"
         except Exception:
             pass
+        # Defensively clear `primaryExchange` when it equals the routing exchange.
+        # Some IB payload paths treat that as a direct-route hint.
+        try:
+            current_primary_exchange = str(getattr(contract, "primaryExchange", "")).strip().upper()
+            current_exchange = str(getattr(contract, "exchange", "")).strip().upper()
+            if current_primary_exchange and current_primary_exchange == current_exchange:
+                contract.primaryExchange = ""
+        except Exception:
+            pass
+        log_info(
+            "IBKR bridge close-position contract prepared",
+            component="ibkr_bridge",
+            operation="close_position",
+            symbol=normalized_symbol,
+            con_id=int(_to_float(getattr(contract, "conId", 0.0), 0)),
+            exchange=str(getattr(contract, "exchange", "")).strip(),
+            primary_exchange=str(getattr(contract, "primaryExchange", "")).strip(),
+            local_symbol=str(getattr(contract, "localSymbol", "")).strip(),
+            trading_class=str(getattr(contract, "tradingClass", "")).strip(),
+            source_exchange=source_exchange,
+            source_primary_exchange=source_primary_exchange,
+            qualification_skipped=not should_qualify_contract,
+        )
 
         action = "SELL" if qty > 0 else "BUY"
         canceled_order_ids: list[str] = []
@@ -1612,6 +1657,10 @@ class IbkrGatewayClient:
         cancel_settle_transitions = self._wait_for_symbol_open_orders_to_clear(ib, normalized_symbol)
         order = MarketOrder(action, abs(qty))
         order.orderRef = f"scanner-close-{normalized_symbol}"
+        try:
+            order.overridePercentageConstraints = True
+        except Exception:
+            pass
         trade = ib.placeOrder(contract, order)
 
         normalized_trade = self._normalize_trade(trade)
