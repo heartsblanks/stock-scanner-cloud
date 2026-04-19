@@ -90,7 +90,7 @@ class IbkrPaperBroker:
         return ibkr_bridge_post(
             "/positions/close",
             json_body={"symbol": symbol, "cancel_orders": bool(cancel_orders)},
-            timeout=_bridge_timeout("IBKR_BRIDGE_CLOSE_TIMEOUT_SECONDS", 20),
+            timeout=_bridge_timeout("IBKR_BRIDGE_CLOSE_TIMEOUT_SECONDS", 35),
         )
 
     def place_paper_bracket_order_from_trade(

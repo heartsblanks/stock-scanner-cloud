@@ -1113,6 +1113,31 @@ class IbkrGatewayClient:
 
         return snapshots
 
+    def _global_cancel_on_unresolved_order_id_enabled(self) -> bool:
+        return _truthy_env("IBKR_GLOBAL_CANCEL_ON_UNRESOLVED_ORDER_ID", True)
+
+    def _attempt_global_cancel(self, ib, *, symbol: str, operation: str) -> bool:
+        if not self._global_cancel_on_unresolved_order_id_enabled():
+            return False
+        try:
+            ib.reqGlobalCancel()
+            log_warning(
+                "IBKR bridge requested global cancel after unresolved open order ids",
+                component="ibkr_bridge",
+                operation=operation,
+                symbol=symbol,
+            )
+            return True
+        except Exception as exc:
+            log_exception(
+                "IBKR bridge global cancel fallback failed",
+                exc,
+                component="ibkr_bridge",
+                operation=operation,
+                symbol=symbol,
+            )
+            return False
+
     def place_paper_bracket_order(self, trade: dict[str, Any], max_notional: float | None = None) -> dict[str, Any]:
         metrics = trade.get("metrics", {}) if isinstance(trade, dict) else {}
         symbol = str(metrics.get("symbol", "")).strip().upper()
@@ -1467,10 +1492,12 @@ class IbkrGatewayClient:
 
         ib = self._connect()
         canceled_order_ids: list[str] = []
+        unresolved_order_id_detected = False
         for trade in self._open_orders_for_symbol(ib, normalized_symbol):
             order = getattr(trade, "order", None)
             order_id = int(_to_float(getattr(order, "orderId", 0.0), 0))
             if order_id <= 0:
+                unresolved_order_id_detected = True
                 log_warning(
                     "IBKR bridge skipping cancel for unresolved open order id",
                     component="ibkr_bridge",
@@ -1481,6 +1508,13 @@ class IbkrGatewayClient:
                 continue
             ib.cancelOrder(order)
             canceled_order_ids.append(str(order_id))
+
+        if unresolved_order_id_detected:
+            self._attempt_global_cancel(
+                ib,
+                symbol=normalized_symbol,
+                operation="cancel_orders_by_symbol",
+            )
 
         return canceled_order_ids
 
@@ -1553,10 +1587,12 @@ class IbkrGatewayClient:
 
         action = "SELL" if qty > 0 else "BUY"
         canceled_order_ids: list[str] = []
+        unresolved_order_id_detected = False
         for trade in self._open_orders_for_symbol(ib, normalized_symbol):
             order = getattr(trade, "order", None)
             order_id = int(_to_float(getattr(order, "orderId", 0.0), 0))
             if order_id <= 0:
+                unresolved_order_id_detected = True
                 log_warning(
                     "IBKR bridge skipping cancel for unresolved open order id",
                     component="ibkr_bridge",
@@ -1567,6 +1603,12 @@ class IbkrGatewayClient:
                 continue
             ib.cancelOrder(order)
             canceled_order_ids.append(str(order_id))
+        if unresolved_order_id_detected:
+            self._attempt_global_cancel(
+                ib,
+                symbol=normalized_symbol,
+                operation="close_position",
+            )
         cancel_settle_transitions = self._wait_for_symbol_open_orders_to_clear(ib, normalized_symbol)
         order = MarketOrder(action, abs(qty))
         order.orderRef = f"scanner-close-{normalized_symbol}"
