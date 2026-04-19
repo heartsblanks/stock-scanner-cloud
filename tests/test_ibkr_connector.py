@@ -233,11 +233,13 @@ class _FakeIbForBracketFlow:
         self.parent_perm_id_after_sleep = parent_perm_id_after_sleep
         self.client = _FakeReqClient()
         self._parent_trade = None
+        self.placed_orders = []
 
     def qualifyContracts(self, contract):
         return [contract]
 
     def placeOrder(self, contract, order):
+        self.placed_orders.append(order)
         is_parent = int(getattr(order, "orderId", 0)) % 10 == 0
         status = self.parent_status if is_parent else "PreSubmitted"
         trade = _FakeTrade(
@@ -679,6 +681,9 @@ class IbkrConnectorTests(unittest.TestCase):
         self.assertEqual(result["broker_order_status"], "PendingSubmit")
         self.assertEqual(result["broker_perm_id"], 128777)
         self.assertGreaterEqual(len(result.get("order_status_transitions", [])), 2)
+        trailing_order = next((order for order in fake_ib.placed_orders if getattr(order, "orderType", "") == "TRAIL"), None)
+        self.assertIsNotNone(trailing_order)
+        self.assertFalse(hasattr(trailing_order, "trailingPercent"))
 
 
 if __name__ == "__main__":

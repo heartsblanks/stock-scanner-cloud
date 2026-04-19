@@ -1208,8 +1208,6 @@ class IbkrGatewayClient:
         trailing_stop.tif = "GTC"
         trailing_stop.auxPrice = trail_amount
         trailing_stop.trailStopPrice = round(stop, 2)
-        if trail_percent is not None:
-            trailing_stop.trailingPercent = trail_percent
 
         log_info(
             "IBKR bridge paper bracket orders prepared",
