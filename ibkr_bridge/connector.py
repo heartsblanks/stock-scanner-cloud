@@ -200,6 +200,7 @@ class IbkrGatewayClient:
         return {
             "order_id": str(getattr(order, "orderId", "")).strip(),
             "status": str(getattr(order_status, "status", "")).strip(),
+            "perm_id": _to_float(getattr(order_status, "permId", 0.0)),
             "filled_qty": _to_float(getattr(order_status, "filled", 0.0)),
             "remaining_qty": _to_float(getattr(order_status, "remaining", 0.0)),
             "avg_fill_price": _to_float(getattr(order_status, "avgFillPrice", 0.0)),
@@ -207,6 +208,32 @@ class IbkrGatewayClient:
             "why_held": str(getattr(order_status, "whyHeld", "")).strip(),
             "filled_at": filled_at,
         }
+
+    def _collect_trade_errors(self, trade: Any) -> list[dict[str, Any]]:
+        logs = list(getattr(trade, "log", []) or [])
+        errors: list[dict[str, Any]] = []
+        for entry in logs:
+            error_code = int(_to_float(getattr(entry, "errorCode", 0), 0))
+            message = str(getattr(entry, "message", "")).strip()
+            status = str(getattr(entry, "status", "")).strip()
+            if error_code <= 0 and not message:
+                continue
+            event_time = getattr(entry, "time", None)
+            if hasattr(event_time, "isoformat"):
+                timestamp = event_time.isoformat()
+            elif event_time is not None:
+                timestamp = str(event_time)
+            else:
+                timestamp = ""
+            errors.append(
+                {
+                    "timestamp": timestamp,
+                    "error_code": error_code,
+                    "message": message,
+                    "status": status,
+                }
+            )
+        return errors
 
     def _resolve_account_id(self, ib) -> str:
         if self.config.account_id:
@@ -1190,138 +1217,208 @@ class IbkrGatewayClient:
             trail_percent=trail_percent,
         )
 
+        ib_api_errors: list[dict[str, Any]] = []
+        parent_trade = None
+        take_profit_trade = None
+        trailing_stop_trade = None
+
+        def _ib_error_callback(req_id, error_code, error_string, contract_obj):
+            error_text = str(error_string or "").strip()
+            if not error_text and int(_to_float(error_code, 0)) <= 0:
+                return
+            ib_api_errors.append(
+                {
+                    "req_id": int(_to_float(req_id, 0)),
+                    "error_code": int(_to_float(error_code, 0)),
+                    "error": error_text,
+                    "symbol": str(getattr(contract_obj, "symbol", "")).strip(),
+                }
+            )
+
+        error_event = getattr(ib, "errorEvent", None)
+        callback_registered = False
+        if error_event is not None:
+            try:
+                error_event += _ib_error_callback
+                callback_registered = True
+            except Exception:
+                callback_registered = False
+
         try:
-            parent_trade = ib.placeOrder(contract, parent)
-            log_info(
-                "IBKR bridge parent order submitted",
-                component="ibkr_bridge",
-                operation="place_paper_bracket_order",
-                symbol=symbol,
-                order_id=base_order_id,
+            try:
+                parent_trade = ib.placeOrder(contract, parent)
+                log_info(
+                    "IBKR bridge parent order submitted",
+                    component="ibkr_bridge",
+                    operation="place_paper_bracket_order",
+                    symbol=symbol,
+                    order_id=base_order_id,
+                )
+                take_profit_trade = ib.placeOrder(contract, take_profit)
+                log_info(
+                    "IBKR bridge take profit order submitted",
+                    component="ibkr_bridge",
+                    operation="place_paper_bracket_order",
+                    symbol=symbol,
+                    order_id=base_order_id + 1,
+                )
+                trailing_stop_trade = ib.placeOrder(contract, trailing_stop)
+                log_info(
+                    "IBKR bridge trailing stop order submitted",
+                    component="ibkr_bridge",
+                    operation="place_paper_bracket_order",
+                    symbol=symbol,
+                    order_id=base_order_id + 2,
+                )
+            except Exception as exc:
+                log_exception(
+                    "IBKR bridge paper bracket placement failed",
+                    exc,
+                    component="ibkr_bridge",
+                    operation="place_paper_bracket_order",
+                    symbol=symbol,
+                    client_order_id=client_order_id,
+                )
+                self._disconnect()
+                return {
+                    "attempted": True,
+                    "placed": False,
+                    "broker": "IBKR",
+                    "symbol": symbol,
+                    "reason": "ibkr_order_rejected",
+                    "details": str(exc),
+                    "ib_api_errors": ib_api_errors,
+                }
+
+            estimated_notional = round(final_shares * entry, 2)
+            parent_snapshots: list[dict[str, Any]] = []
+            poll_attempts, poll_interval_seconds = self._entry_poll_config()
+            parent_snapshot = self._order_status_snapshot(parent_trade)
+            parent_snapshots.append(
+                {
+                    "attempt": 0,
+                    **parent_snapshot,
+                }
             )
-            take_profit_trade = ib.placeOrder(contract, take_profit)
+            for attempt in range(1, poll_attempts + 1):
+                status_now = str(parent_snapshot.get("status", "")).strip()
+                if self._is_rejected_entry_status(status_now) or self._is_confirmed_entry_status(status_now):
+                    break
+                try:
+                    ib.sleep(poll_interval_seconds)
+                except Exception:
+                    time.sleep(poll_interval_seconds)
+                parent_snapshot = self._order_status_snapshot(parent_trade)
+                parent_snapshots.append(
+                    {
+                        "attempt": attempt,
+                        **parent_snapshot,
+                    }
+                )
+
+            parent_status = str(parent_snapshot.get("status", "")).strip()
+            parent_perm_id = int(_to_float(parent_snapshot.get("perm_id"), 0))
+            take_profit_status = str(getattr(getattr(take_profit_trade, "orderStatus", None), "status", "")).strip()
+            trailing_stop_status = str(getattr(getattr(trailing_stop_trade, "orderStatus", None), "status", "")).strip()
+            trade_errors = self._collect_trade_errors(parent_trade) + self._collect_trade_errors(take_profit_trade) + self._collect_trade_errors(trailing_stop_trade)
+
+            if self._is_rejected_entry_status(parent_status):
+                return {
+                    "attempted": True,
+                    "placed": False,
+                    "broker": "IBKR",
+                    "symbol": symbol,
+                    "reason": "ibkr_order_rejected_status",
+                    "details": f"Parent order status is terminal reject state: {parent_status or 'UNKNOWN'}",
+                    "broker_order_id": str(base_order_id),
+                    "broker_parent_order_id": str(base_order_id),
+                    "broker_order_status": parent_status,
+                    "broker_perm_id": parent_perm_id,
+                    "order_status_transitions": parent_snapshots,
+                    "ib_api_errors": ib_api_errors,
+                    "trade_errors": trade_errors,
+                }
+
+            if not self._is_confirmed_entry_status(parent_status):
+                return {
+                    "attempted": True,
+                    "placed": False,
+                    "broker": "IBKR",
+                    "symbol": symbol,
+                    "reason": "ibkr_order_unconfirmed_status",
+                    "details": f"Parent order status was not confirmed after placement polling: {parent_status or 'UNKNOWN'}",
+                    "broker_order_id": str(base_order_id),
+                    "broker_parent_order_id": str(base_order_id),
+                    "broker_order_status": parent_status,
+                    "broker_perm_id": parent_perm_id,
+                    "order_status_transitions": parent_snapshots,
+                    "ib_api_errors": ib_api_errors,
+                    "trade_errors": trade_errors,
+                }
+
+            if parent_perm_id <= 0:
+                return {
+                    "attempted": True,
+                    "placed": False,
+                    "broker": "IBKR",
+                    "symbol": symbol,
+                    "reason": "ibkr_order_not_acknowledged",
+                    "details": "Parent order did not receive broker acknowledgment (permId is missing).",
+                    "broker_order_id": str(base_order_id),
+                    "broker_parent_order_id": str(base_order_id),
+                    "broker_order_status": parent_status,
+                    "broker_perm_id": parent_perm_id,
+                    "order_status_transitions": parent_snapshots,
+                    "ib_api_errors": ib_api_errors,
+                    "trade_errors": trade_errors,
+                }
+
             log_info(
-                "IBKR bridge take profit order submitted",
-                component="ibkr_bridge",
-                operation="place_paper_bracket_order",
-                symbol=symbol,
-                order_id=base_order_id + 1,
-            )
-            trailing_stop_trade = ib.placeOrder(contract, trailing_stop)
-            log_info(
-                "IBKR bridge trailing stop order submitted",
-                component="ibkr_bridge",
-                operation="place_paper_bracket_order",
-                symbol=symbol,
-                order_id=base_order_id + 2,
-            )
-        except Exception as exc:
-            log_exception(
-                "IBKR bridge paper bracket placement failed",
-                exc,
+                "IBKR bridge paper bracket placement completed",
                 component="ibkr_bridge",
                 operation="place_paper_bracket_order",
                 symbol=symbol,
                 client_order_id=client_order_id,
+                parent_order_id=base_order_id,
+                parent_status=parent_status,
+                parent_perm_id=parent_perm_id,
+                take_profit_status=take_profit_status,
+                trailing_stop_status=trailing_stop_status,
+                estimated_notional=estimated_notional,
+                parent_status_transitions=parent_snapshots,
+                ib_api_errors=ib_api_errors,
+                trade_errors=trade_errors,
             )
-            self._disconnect()
             return {
                 "attempted": True,
-                "placed": False,
+                "placed": True,
                 "broker": "IBKR",
                 "symbol": symbol,
-                "reason": "ibkr_order_rejected",
-                "details": str(exc),
-            }
-
-        estimated_notional = round(final_shares * entry, 2)
-        parent_snapshots: list[dict[str, Any]] = []
-        poll_attempts, poll_interval_seconds = self._entry_poll_config()
-        parent_snapshot = self._order_status_snapshot(parent_trade)
-        parent_snapshots.append({
-            "attempt": 0,
-            **parent_snapshot,
-        })
-        for attempt in range(1, poll_attempts + 1):
-            status_now = str(parent_snapshot.get("status", "")).strip()
-            if self._is_rejected_entry_status(status_now) or self._is_confirmed_entry_status(status_now):
-                break
-            try:
-                ib.sleep(poll_interval_seconds)
-            except Exception:
-                time.sleep(poll_interval_seconds)
-            parent_snapshot = self._order_status_snapshot(parent_trade)
-            parent_snapshots.append({
-                "attempt": attempt,
-                **parent_snapshot,
-            })
-
-        parent_status = str(parent_snapshot.get("status", "")).strip()
-        take_profit_status = str(getattr(getattr(take_profit_trade, "orderStatus", None), "status", "")).strip()
-        trailing_stop_status = str(getattr(getattr(trailing_stop_trade, "orderStatus", None), "status", "")).strip()
-
-        if self._is_rejected_entry_status(parent_status):
-            return {
-                "attempted": True,
-                "placed": False,
-                "broker": "IBKR",
-                "symbol": symbol,
-                "reason": "ibkr_order_rejected_status",
-                "details": f"Parent order status is terminal reject state: {parent_status or 'UNKNOWN'}",
+                "shares": final_shares,
+                "estimated_notional": estimated_notional,
+                "client_order_id": client_order_id,
                 "broker_order_id": str(base_order_id),
                 "broker_parent_order_id": str(base_order_id),
                 "broker_order_status": parent_status,
+                "broker_perm_id": parent_perm_id,
+                "take_profit_order_id": str(base_order_id + 1),
+                "trailing_stop_order_id": str(base_order_id + 2),
+                "stop_loss_order_id": str(base_order_id + 2),
+                "trail_amount": trail_amount,
+                "trail_percent": trail_percent,
+                "order_id": str(base_order_id),
+                "parent_order_id": str(base_order_id),
+                "order_status": parent_status,
                 "order_status_transitions": parent_snapshots,
+                "ib_api_errors": ib_api_errors,
+                "trade_errors": trade_errors,
             }
-
-        if not self._is_confirmed_entry_status(parent_status):
-            return {
-                "attempted": True,
-                "placed": False,
-                "broker": "IBKR",
-                "symbol": symbol,
-                "reason": "ibkr_order_unconfirmed_status",
-                "details": f"Parent order status was not confirmed after placement polling: {parent_status or 'UNKNOWN'}",
-                "broker_order_id": str(base_order_id),
-                "broker_parent_order_id": str(base_order_id),
-                "broker_order_status": parent_status,
-                "order_status_transitions": parent_snapshots,
-            }
-
-        log_info(
-            "IBKR bridge paper bracket placement completed",
-            component="ibkr_bridge",
-            operation="place_paper_bracket_order",
-            symbol=symbol,
-            client_order_id=client_order_id,
-            parent_order_id=base_order_id,
-            parent_status=parent_status,
-            take_profit_status=take_profit_status,
-            trailing_stop_status=trailing_stop_status,
-            estimated_notional=estimated_notional,
-            parent_status_transitions=parent_snapshots,
-        )
-        return {
-            "attempted": True,
-            "placed": True,
-            "broker": "IBKR",
-            "symbol": symbol,
-            "shares": final_shares,
-            "estimated_notional": estimated_notional,
-            "client_order_id": client_order_id,
-            "broker_order_id": str(base_order_id),
-            "broker_parent_order_id": str(base_order_id),
-            "broker_order_status": parent_status,
-            "take_profit_order_id": str(base_order_id + 1),
-            "trailing_stop_order_id": str(base_order_id + 2),
-            "stop_loss_order_id": str(base_order_id + 2),
-            "trail_amount": trail_amount,
-            "trail_percent": trail_percent,
-            "order_id": str(base_order_id),
-            "parent_order_id": str(base_order_id),
-            "order_status": parent_status,
-            "order_status_transitions": parent_snapshots,
-        }
+        finally:
+            if callback_registered and error_event is not None:
+                try:
+                    error_event -= _ib_error_callback
+                except Exception:
+                    pass
 
     def cancel_orders_by_symbol(self, symbol: str) -> list[str]:
         normalized_symbol = str(symbol).strip().upper()
