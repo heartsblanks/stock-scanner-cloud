@@ -239,8 +239,9 @@ class IbkrGatewayClient:
         return errors
 
     def _resolve_account_id(self, ib) -> str:
-        if self.config.account_id:
-            return self.config.account_id
+        configured_account_id = str(getattr(getattr(self, "config", None), "account_id", "")).strip()
+        if configured_account_id:
+            return configured_account_id
 
         managed_accounts = list(ib.managedAccounts() or [])
         if managed_accounts:
@@ -1148,6 +1149,25 @@ class IbkrGatewayClient:
         ib = self._reset_connection()
         LimitOrder, MarketOrder, StopOrder, Order, Stock = self._load_order_classes()
         contract = Stock(symbol, "SMART", "USD")
+        existing_position_row = self._find_position_row(ib, symbol)
+        existing_position_qty = _to_float(getattr(existing_position_row, "position", 0.0)) if existing_position_row is not None else 0.0
+        existing_open_trades = self._open_orders_for_symbol(ib, symbol)
+        if existing_position_qty != 0.0 or existing_open_trades:
+            open_order_ids = [
+                str(getattr(getattr(open_trade, "order", None), "orderId", "")).strip()
+                for open_trade in existing_open_trades
+            ]
+            return {
+                "attempted": True,
+                "placed": False,
+                "broker": "IBKR",
+                "symbol": symbol,
+                "reason": "ibkr_symbol_already_open",
+                "details": "Symbol already has open broker exposure (position and/or open orders).",
+                "existing_position_qty": existing_position_qty,
+                "existing_open_order_count": len(existing_open_trades),
+                "existing_open_order_ids": open_order_ids,
+            }
         try:
             ib.qualifyContracts(contract)
             log_info(

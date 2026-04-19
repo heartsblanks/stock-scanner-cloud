@@ -225,6 +225,8 @@ class _FakeIbForBracketFlow:
         status_after_sleep=None,
         parent_perm_id=0,
         parent_perm_id_after_sleep=0,
+        existing_position_qty=0.0,
+        existing_open_order_count=0,
     ):
         self.symbol = symbol
         self.parent_status = parent_status
@@ -234,6 +236,8 @@ class _FakeIbForBracketFlow:
         self.client = _FakeReqClient()
         self._parent_trade = None
         self.placed_orders = []
+        self._existing_position_qty = existing_position_qty
+        self._existing_open_order_count = existing_open_order_count
 
     def qualifyContracts(self, contract):
         return [contract]
@@ -263,6 +267,34 @@ class _FakeIbForBracketFlow:
                 self._parent_trade.orderStatus.permId = self.parent_perm_id_after_sleep
             self.status_after_sleep = None
         return None
+
+    def managedAccounts(self):
+        return ["DU123"]
+
+    def accountSummary(self):
+        return []
+
+    def positions(self):
+        if self._existing_position_qty == 0:
+            return []
+        return [_FakePositionRow(symbol=self.symbol, qty=self._existing_position_qty, avg_cost=10.0, account="DU123")]
+
+    def openTrades(self):
+        if self._existing_open_order_count <= 0:
+            return []
+        return [
+            _FakeTrade(
+                symbol=self.symbol,
+                order_id=900 + idx,
+                status="Submitted",
+                remaining=1.0,
+                action="BUY",
+                order_type="LMT",
+                order_ref=f"existing-{idx}",
+                perm_id=123000 + idx,
+            )
+            for idx in range(1, self._existing_open_order_count + 1)
+        ]
 
 
 class IbkrConnectorTests(unittest.TestCase):
@@ -684,6 +716,42 @@ class IbkrConnectorTests(unittest.TestCase):
         trailing_order = next((order for order in fake_ib.placed_orders if getattr(order, "orderType", "") == "TRAIL"), None)
         self.assertIsNotNone(trailing_order)
         self.assertFalse(hasattr(trailing_order, "trailingPercent"))
+
+    def test_place_paper_bracket_order_rejects_when_symbol_already_has_position(self):
+        client = IbkrGatewayClient.__new__(IbkrGatewayClient)
+        fake_ib = _FakeIbForBracketFlow(
+            symbol="INTC",
+            parent_status="PendingSubmit",
+            existing_position_qty=146.0,
+        )
+        client._reset_connection = lambda: fake_ib
+        client._load_order_classes = lambda: (
+            _FakeLimitOrderForBracket,
+            _FakeMarketOrderForBracket,
+            _FakeGenericOrderForBracket,
+            _FakeGenericOrderForBracket,
+            _FakeStockForBracket,
+        )
+        client._entry_poll_config = lambda: (2, 0.0)
+
+        result = client.place_paper_bracket_order(
+            {
+                "metrics": {
+                    "symbol": "INTC",
+                    "direction": "BUY",
+                    "entry": 68.5,
+                    "stop": 67.5,
+                    "target": 70.0,
+                    "shares": 1,
+                }
+            }
+        )
+
+        self.assertTrue(result["attempted"])
+        self.assertFalse(result["placed"])
+        self.assertEqual(result["reason"], "ibkr_symbol_already_open")
+        self.assertEqual(result["existing_position_qty"], 146.0)
+        self.assertEqual(result["existing_open_order_count"], 0)
 
 
 if __name__ == "__main__":
