@@ -121,6 +121,9 @@ Then edit `/etc/ibkr-bridge.env` and set:
   - `IBKR_HOST`
   - `IBKR_PORT`
   - `IBKR_CLIENT_ID`
+- optional for fractional sizing parity with Cloud Run:
+  - `ENABLE_FRACTIONAL_SHARES`
+  - `FRACTIONAL_SHARE_DECIMALS`
 
 ### 7. Install the systemd unit
 ```bash

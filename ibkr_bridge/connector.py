@@ -33,6 +33,71 @@ def _truthy_env(name: str, default: bool = False) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _fractional_shares_enabled() -> bool:
+    return _truthy_env("ENABLE_FRACTIONAL_SHARES", False)
+
+
+def _fractional_share_decimals() -> int:
+    try:
+        return max(0, min(6, int(os.getenv("FRACTIONAL_SHARE_DECIMALS", "4"))))
+    except Exception:
+        return 4
+
+
+def _normalize_order_quantity(quantity: float, *, allow_fractional: bool | None = None) -> float:
+    if quantity <= 0:
+        return 0.0
+
+    fractional_allowed = _fractional_shares_enabled() if allow_fractional is None else bool(allow_fractional)
+    if fractional_allowed:
+        factor = 10 ** _fractional_share_decimals()
+        return math.floor(quantity * factor) / factor
+
+    return float(int(quantity))
+
+
+def _is_effectively_whole_quantity(quantity: float) -> bool:
+    return abs(quantity - round(quantity)) < 1e-9
+
+
+def _order_quantity_token(quantity: float) -> str:
+    if _is_effectively_whole_quantity(quantity):
+        return str(int(round(quantity)))
+    return str(quantity).replace(".", "p")
+
+
+def _fractional_rejection_hint(*error_sets: list[dict[str, Any]], detail: str | None = None) -> bool:
+    search_space: list[str] = []
+    if detail:
+        search_space.append(str(detail))
+
+    for error_set in error_sets:
+        for entry in error_set or []:
+            if not isinstance(entry, dict):
+                continue
+            search_space.append(str(entry.get("error", "")))
+            search_space.append(str(entry.get("message", "")))
+            search_space.append(str(entry.get("status", "")))
+
+    combined = " ".join(search_space).lower()
+    if not combined:
+        return False
+
+    return any(
+        token in combined
+        for token in (
+            "fraction",
+            "fractional",
+            "minimum increment",
+            "size increment",
+            "invalid size",
+            "invalid quantity",
+            "quantity does not conform",
+            "outside regular",
+        )
+    )
+
+
 @dataclass(frozen=True)
 class IbkrConnectionConfig:
     host: str
@@ -1170,14 +1235,21 @@ class IbkrGatewayClient:
             )
             return False
 
-    def place_paper_bracket_order(self, trade: dict[str, Any], max_notional: float | None = None) -> dict[str, Any]:
+    def place_paper_bracket_order(
+        self,
+        trade: dict[str, Any],
+        max_notional: float | None = None,
+        *,
+        _fractional_retry_attempted: bool = False,
+    ) -> dict[str, Any]:
         metrics = trade.get("metrics", {}) if isinstance(trade, dict) else {}
         symbol = str(metrics.get("symbol", "")).strip().upper()
         direction = str(metrics.get("direction", "BUY")).strip().upper() or "BUY"
         entry = _to_float(metrics.get("entry"))
         stop = _to_float(metrics.get("stop"))
         target = _to_float(metrics.get("target"))
-        scanner_shares = int(_to_float(metrics.get("shares"), 0))
+        allow_fractional = _fractional_shares_enabled() and not _fractional_retry_attempted
+        scanner_shares = _normalize_order_quantity(_to_float(metrics.get("shares"), 0), allow_fractional=allow_fractional)
         per_trade_notional = _to_float(metrics.get("per_trade_notional"), 0.0)
         remaining_allocatable_capital = _to_float(metrics.get("remaining_allocatable_capital"), 0.0)
 
@@ -1194,10 +1266,56 @@ class IbkrGatewayClient:
 
         notional_cap_candidates = [value for value in (max_notional, per_trade_notional, remaining_allocatable_capital) if _to_float(value) > 0]
         notional_cap = min(notional_cap_candidates) if notional_cap_candidates else 0.0
-        capped_shares = int(math.floor(notional_cap / entry)) if notional_cap > 0 else 0
+        capped_shares = _normalize_order_quantity((notional_cap / entry), allow_fractional=allow_fractional) if notional_cap > 0 else 0.0
         final_shares = min(scanner_shares, capped_shares) if scanner_shares > 0 and capped_shares > 0 else max(scanner_shares, capped_shares)
         if final_shares <= 0:
             return {"attempted": False, "placed": False, "broker": "IBKR", "symbol": symbol, "reason": "position_size_too_small"}
+
+        has_fractional_qty = allow_fractional and not _is_effectively_whole_quantity(final_shares)
+        whole_share_fallback_qty = _normalize_order_quantity(final_shares, allow_fractional=False)
+
+        def _retry_with_whole_shares_if_supported(
+            *,
+            trigger_reason: str,
+            details: str = "",
+            ib_errors: list[dict[str, Any]] | None = None,
+            trade_errs: list[dict[str, Any]] | None = None,
+        ) -> dict[str, Any] | None:
+            if _fractional_retry_attempted:
+                return None
+            if not has_fractional_qty:
+                return None
+            if whole_share_fallback_qty <= 0:
+                return None
+            if not _fractional_rejection_hint(ib_errors or [], trade_errs or [], detail=details):
+                return None
+
+            fallback_trade = copy.deepcopy(trade) if isinstance(trade, dict) else {}
+            fallback_metrics = fallback_trade.setdefault("metrics", {})
+            if isinstance(fallback_metrics, dict):
+                fallback_metrics["shares"] = whole_share_fallback_qty
+
+            log_warning(
+                "IBKR bridge retrying bracket with whole-share fallback after fractional rejection",
+                component="ibkr_bridge",
+                operation="place_paper_bracket_order",
+                symbol=symbol,
+                trigger_reason=trigger_reason,
+                original_shares=final_shares,
+                fallback_shares=whole_share_fallback_qty,
+            )
+
+            fallback_result = self.place_paper_bracket_order(
+                fallback_trade,
+                max_notional=max_notional,
+                _fractional_retry_attempted=True,
+            )
+            if isinstance(fallback_result, dict):
+                fallback_result["fractional_fallback_used"] = True
+                fallback_result["fractional_original_qty"] = final_shares
+                fallback_result["fractional_fallback_qty"] = whole_share_fallback_qty
+                fallback_result["fractional_fallback_trigger"] = trigger_reason
+            return fallback_result
 
         log_info(
             "IBKR bridge paper bracket placement started",
@@ -1211,6 +1329,8 @@ class IbkrGatewayClient:
             scanner_shares=scanner_shares,
             final_shares=final_shares,
             notional_cap=round(notional_cap, 2),
+            allow_fractional=allow_fractional,
+            fractional_retry_attempted=_fractional_retry_attempted,
         )
 
         # Use a fresh broker session for placement flow so stale sockets
@@ -1267,7 +1387,7 @@ class IbkrGatewayClient:
 
         action = "BUY" if direction == "BUY" else "SELL"
         exit_action = "SELL" if action == "BUY" else "BUY"
-        client_order_id = f"scanner-{symbol}-{direction}-{int(round(entry * 10000))}-{final_shares}"
+        client_order_id = f"scanner-{symbol}-{direction}-{int(round(entry * 10000))}-{_order_quantity_token(final_shares)}"
 
         base_order_id = ib.client.getReqId()
         parent = LimitOrder(action, final_shares, round(entry, 2), transmit=False)
@@ -1374,6 +1494,14 @@ class IbkrGatewayClient:
                     client_order_id=client_order_id,
                 )
                 self._disconnect()
+                fallback_result = _retry_with_whole_shares_if_supported(
+                    trigger_reason="ibkr_order_rejected_exception",
+                    details=str(exc),
+                    ib_errors=ib_api_errors,
+                    trade_errs=[],
+                )
+                if fallback_result is not None:
+                    return fallback_result
                 return {
                     "attempted": True,
                     "placed": False,
@@ -1420,13 +1548,22 @@ class IbkrGatewayClient:
             trade_errors = self._collect_trade_errors(parent_trade) + self._collect_trade_errors(take_profit_trade) + self._collect_trade_errors(trailing_stop_trade)
 
             if self._is_rejected_entry_status(parent_status):
+                rejection_details = f"Parent order status is terminal reject state: {parent_status or 'UNKNOWN'}"
+                fallback_result = _retry_with_whole_shares_if_supported(
+                    trigger_reason="ibkr_order_rejected_status",
+                    details=rejection_details,
+                    ib_errors=ib_api_errors,
+                    trade_errs=trade_errors,
+                )
+                if fallback_result is not None:
+                    return fallback_result
                 return {
                     "attempted": True,
                     "placed": False,
                     "broker": "IBKR",
                     "symbol": symbol,
                     "reason": "ibkr_order_rejected_status",
-                    "details": f"Parent order status is terminal reject state: {parent_status or 'UNKNOWN'}",
+                    "details": rejection_details,
                     "broker_order_id": str(base_order_id),
                     "broker_parent_order_id": str(base_order_id),
                     "broker_order_status": parent_status,
@@ -1437,13 +1574,22 @@ class IbkrGatewayClient:
                 }
 
             if not self._is_confirmed_entry_status(parent_status):
+                unconfirmed_details = f"Parent order status was not confirmed after placement polling: {parent_status or 'UNKNOWN'}"
+                fallback_result = _retry_with_whole_shares_if_supported(
+                    trigger_reason="ibkr_order_unconfirmed_status",
+                    details=unconfirmed_details,
+                    ib_errors=ib_api_errors,
+                    trade_errs=trade_errors,
+                )
+                if fallback_result is not None:
+                    return fallback_result
                 return {
                     "attempted": True,
                     "placed": False,
                     "broker": "IBKR",
                     "symbol": symbol,
                     "reason": "ibkr_order_unconfirmed_status",
-                    "details": f"Parent order status was not confirmed after placement polling: {parent_status or 'UNKNOWN'}",
+                    "details": unconfirmed_details,
                     "broker_order_id": str(base_order_id),
                     "broker_parent_order_id": str(base_order_id),
                     "broker_order_status": parent_status,
@@ -1454,13 +1600,22 @@ class IbkrGatewayClient:
                 }
 
             if parent_perm_id <= 0:
+                missing_perm_details = "Parent order did not receive broker acknowledgment (permId is missing)."
+                fallback_result = _retry_with_whole_shares_if_supported(
+                    trigger_reason="ibkr_order_not_acknowledged",
+                    details=missing_perm_details,
+                    ib_errors=ib_api_errors,
+                    trade_errs=trade_errors,
+                )
+                if fallback_result is not None:
+                    return fallback_result
                 return {
                     "attempted": True,
                     "placed": False,
                     "broker": "IBKR",
                     "symbol": symbol,
                     "reason": "ibkr_order_not_acknowledged",
-                    "details": "Parent order did not receive broker acknowledgment (permId is missing).",
+                    "details": missing_perm_details,
                     "broker_order_id": str(base_order_id),
                     "broker_parent_order_id": str(base_order_id),
                     "broker_order_status": parent_status,

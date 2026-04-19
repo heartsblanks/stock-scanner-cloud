@@ -102,6 +102,31 @@ class ScanServiceSizingTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["adjusted_per_trade_notional"], 9977.4, places=4)
         self.assertAlmostEqual(metrics["actual_position_cost"], 9977.4, places=4)
 
+    def test_hard_notional_cap_supports_fractional_shares_when_enabled(self):
+        metrics = {
+            "entry": 600.0,
+            "risk_per_share": 10.0,
+            "per_trade_notional": 1000.0,
+            "adjusted_per_trade_notional": 1000.0,
+            "remaining_allocatable_capital": 1000.0,
+        }
+
+        with patch.dict(
+            "os.environ",
+            {
+                "ENABLE_FRACTIONAL_SHARES": "true",
+                "FRACTIONAL_SHARE_DECIMALS": "4",
+                "PAPER_MAX_NOTIONAL": "250",
+            },
+            clear=False,
+        ):
+            _apply_hard_notional_cap(metrics)
+
+        self.assertAlmostEqual(metrics["hard_max_notional"], 250.0, places=4)
+        self.assertGreater(metrics["shares"], 0)
+        self.assertLess(metrics["shares"], 1)
+        self.assertAlmostEqual(metrics["per_trade_notional"], 249.96, places=2)
+
     def test_low_price_notional_cap_tightens_exposure_for_cheap_symbols(self):
         metrics = {
             "entry": 9.75,

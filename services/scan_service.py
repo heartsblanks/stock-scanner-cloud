@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Callable
 import os
+import math
 from core.logging_utils import log_exception, log_info, log_warning
 from services.alert_service import send_telegram_alert, telegram_alerts_enabled
 
@@ -79,6 +80,29 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except Exception:
         return default
+
+
+def _fractional_shares_enabled() -> bool:
+    value = str(os.getenv("ENABLE_FRACTIONAL_SHARES", "false")).strip().lower()
+    return value in {"1", "true", "yes", "y", "on"}
+
+
+def _fractional_share_decimals() -> int:
+    try:
+        return max(0, min(6, int(os.getenv("FRACTIONAL_SHARE_DECIMALS", "4"))))
+    except Exception:
+        return 4
+
+
+def _normalize_share_quantity(quantity: float) -> float:
+    if quantity <= 0:
+        return 0.0
+
+    if _fractional_shares_enabled():
+        factor = 10 ** _fractional_share_decimals()
+        return math.floor(quantity * factor) / factor
+
+    return float(int(quantity))
 
 
 PAPER_CONSECUTIVE_LOSS_COOLDOWN_THRESHOLD = _to_int(os.getenv("PAPER_CONSECUTIVE_LOSS_COOLDOWN_THRESHOLD", 2), 2)
@@ -337,10 +361,14 @@ def _apply_minimum_viable_position_sizing(metrics: dict[str, Any]) -> None:
     - compress the effective slot count based on what can actually buy at least 1 share
     - recompute per-trade notional and shares from that compressed slot count
     """
+    if _fractional_shares_enabled():
+        # Fractional mode already permits sub-1 sizing; skip whole-share fallback.
+        return
+
     entry_price = _to_float(metrics.get("entry"), 0.0)
     remaining_allocatable_capital = _to_float(metrics.get("remaining_allocatable_capital"), 0.0)
     remaining_slots = _to_int(metrics.get("remaining_slots"), 0)
-    current_shares = _to_int(metrics.get("shares"), 0)
+    current_shares = _to_float(metrics.get("shares"), 0.0)
 
     if entry_price <= 0 or remaining_allocatable_capital <= 0 or remaining_slots <= 0:
         return
@@ -358,10 +386,10 @@ def _apply_minimum_viable_position_sizing(metrics: dict[str, Any]) -> None:
     effective_slots = max(1, min(remaining_slots, affordable_single_share_slots))
 
     adjusted_notional = remaining_allocatable_capital / effective_slots
-    adjusted_shares = int(adjusted_notional / entry_price)
+    adjusted_shares = _normalize_share_quantity(adjusted_notional / entry_price)
 
     if adjusted_shares <= 0:
-        adjusted_shares = 1
+        adjusted_shares = 1.0
         adjusted_notional = entry_price
 
     actual_position_cost = adjusted_shares * entry_price
@@ -372,7 +400,7 @@ def _apply_minimum_viable_position_sizing(metrics: dict[str, Any]) -> None:
     metrics["per_trade_notional"] = round(adjusted_notional, 4)
     metrics["shares"] = adjusted_shares
     metrics["notional_capped_shares"] = adjusted_shares
-    metrics["cash_affordable_shares"] = max(_to_int(metrics.get("cash_affordable_shares"), 0), adjusted_shares)
+    metrics["cash_affordable_shares"] = max(_to_float(metrics.get("cash_affordable_shares"), 0.0), adjusted_shares)
     metrics["actual_position_cost"] = round(actual_position_cost, 4)
     metrics["actual_risk"] = round(adjusted_shares * _to_float(metrics.get("risk_per_share"), 0.0), 4)
 
@@ -402,7 +430,7 @@ def _apply_confidence_loss_sizing(
     if entry_price <= 0 or adjusted_notional <= 0:
         return
 
-    adjusted_shares = int(adjusted_notional / entry_price)
+    adjusted_shares = _normalize_share_quantity(adjusted_notional / entry_price)
     metrics["shares"] = adjusted_shares
     metrics["per_trade_notional"] = round(adjusted_notional, 4)
     metrics["actual_position_cost"] = round(adjusted_shares * entry_price, 4)
@@ -427,12 +455,12 @@ def _apply_hard_notional_cap(metrics: dict[str, Any]) -> None:
         return
 
     capped_notional = min(current_notional, max_allowed_notional)
-    capped_shares = int(capped_notional / entry_price)
+    capped_shares = _normalize_share_quantity(capped_notional / entry_price)
 
     metrics["hard_max_notional"] = round(max_allowed_notional, 4)
 
     if capped_shares <= 0:
-        metrics["shares"] = 0
+        metrics["shares"] = 0.0
         metrics["per_trade_notional"] = round(capped_notional, 4)
         metrics["adjusted_per_trade_notional"] = round(capped_notional, 4)
         metrics["actual_position_cost"] = 0.0
@@ -464,13 +492,13 @@ def _apply_low_price_notional_cap(metrics: dict[str, Any]) -> None:
         return
 
     capped_notional = min(current_notional, LOW_PRICE_MAX_NOTIONAL)
-    capped_shares = int(capped_notional / entry_price)
+    capped_shares = _normalize_share_quantity(capped_notional / entry_price)
 
     metrics["low_price_threshold"] = round(LOW_PRICE_THRESHOLD, 4)
     metrics["low_price_max_notional"] = round(LOW_PRICE_MAX_NOTIONAL, 4)
 
     if capped_shares <= 0:
-        metrics["shares"] = 0
+        metrics["shares"] = 0.0
         metrics["per_trade_notional"] = 0.0
         metrics["adjusted_per_trade_notional"] = 0.0
         metrics["actual_position_cost"] = 0.0
@@ -991,7 +1019,7 @@ def execute_full_scan(
                     _apply_low_price_notional_cap(paper_metrics)
                     _apply_minimum_viable_position_sizing(paper_metrics)
 
-                if _to_int(paper_metrics.get("shares"), 0) <= 0:
+                if _to_float(paper_metrics.get("shares"), 0.0) <= 0:
                     log_warning(
                         "Paper trade candidate rejected after sizing",
                         component="scan_service",

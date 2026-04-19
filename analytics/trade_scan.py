@@ -36,6 +36,29 @@ API_KEY = os.getenv("TWELVEDATA_API_KEY")
 BASE_URL = "https://api.twelvedata.com/time_series"
 
 
+def _fractional_shares_enabled() -> bool:
+    value = str(os.getenv("ENABLE_FRACTIONAL_SHARES", "false")).strip().lower()
+    return value in {"1", "true", "yes", "y", "on"}
+
+
+def _fractional_share_decimals() -> int:
+    try:
+        return max(0, min(6, int(os.getenv("FRACTIONAL_SHARE_DECIMALS", "4"))))
+    except Exception:
+        return 4
+
+
+def _normalize_share_quantity(quantity: float) -> float:
+    if quantity <= 0:
+        return 0.0
+
+    if _fractional_shares_enabled():
+        factor = 10 ** _fractional_share_decimals()
+        return math.floor(quantity * factor) / factor
+
+    return float(int(quantity))
+
+
 def late_session_hard_block_enabled() -> bool:
     value = str(os.getenv("ENABLE_LATE_SESSION_HARD_BLOCK", "false")).strip().lower()
     return value in {"1", "true", "yes", "y", "on"}
@@ -338,9 +361,11 @@ def calculate_position_sizing(account_size: float, entry: float, stop: float, cu
 
     per_trade_notional = remaining_allocatable_capital / remaining_slots if remaining_slots > 0 else 0.0
     risk_per_share = abs(entry - stop)
-    cash_affordable_shares = int(account_size / entry) if entry > 0 else 0
-    notional_capped_shares = int(per_trade_notional / entry) if entry > 0 else 0
-    shares = min(cash_affordable_shares, notional_capped_shares)
+    cash_affordable_shares_raw = (account_size / entry) if entry > 0 else 0.0
+    notional_capped_shares_raw = (per_trade_notional / entry) if entry > 0 else 0.0
+    cash_affordable_shares = _normalize_share_quantity(cash_affordable_shares_raw)
+    notional_capped_shares = _normalize_share_quantity(notional_capped_shares_raw)
+    shares = _normalize_share_quantity(min(cash_affordable_shares, notional_capped_shares))
     actual_position_cost = shares * entry
     actual_risk = shares * risk_per_share
 
@@ -361,7 +386,7 @@ def calculate_position_sizing(account_size: float, entry: float, stop: float, cu
     }
 
 
-def calculate_take_profit_dollars(entry: float, target: float, shares: int) -> float:
+def calculate_take_profit_dollars(entry: float, target: float, shares: float) -> float:
     return abs(target - entry) * shares
 
 
@@ -672,7 +697,10 @@ def evaluate_symbol(
             "metrics": metrics,
         }
 
-    checks["cash_affordability"] = sizing["cash_affordable_shares"] >= 1
+    if _fractional_shares_enabled():
+        checks["cash_affordability"] = sizing["cash_affordable_shares"] > 0
+    else:
+        checks["cash_affordability"] = sizing["cash_affordable_shares"] >= 1
     if not checks["cash_affordability"]:
         return {
             "name": name,
@@ -682,8 +710,12 @@ def evaluate_symbol(
             "metrics": metrics,
         }
 
-    checks["notional_cap_affordability"] = sizing["notional_capped_shares"] >= 1
-    checks["position_size_valid"] = shares >= 1
+    if _fractional_shares_enabled():
+        checks["notional_cap_affordability"] = sizing["notional_capped_shares"] > 0
+        checks["position_size_valid"] = shares > 0
+    else:
+        checks["notional_cap_affordability"] = sizing["notional_capped_shares"] >= 1
+        checks["position_size_valid"] = shares >= 1
     if not checks["position_size_valid"]:
         return {
             "name": name,

@@ -155,6 +155,29 @@ class TradeScanSizingConfigTests(unittest.TestCase):
         self.assertAlmostEqual(sizing["remaining_allocatable_capital"], 75000.0, places=2)
         self.assertEqual(sizing["shares"], 300)
 
+    def test_position_sizing_allows_fractional_shares_when_enabled(self):
+        with patch.dict(
+            os.environ,
+            {
+                "ENABLE_FRACTIONAL_SHARES": "true",
+                "FRACTIONAL_SHARE_DECIMALS": "4",
+                "PAPER_TRADE_MAX_CAPITAL_ALLOCATION_PCT": "1.0",
+                "PAPER_TRADE_ENFORCE_MAX_POSITIONS": "false",
+                "PAPER_TRADE_MAX_POSITIONS": "10",
+            },
+            clear=False,
+        ):
+            sizing = calculate_position_sizing(
+                account_size=500.0,
+                entry=600.0,
+                stop=590.0,
+                current_open_positions=0,
+                current_open_exposure=0.0,
+            )
+
+        self.assertGreater(sizing["shares"], 0.0)
+        self.assertLess(sizing["shares"], 1.0)
+
 
 class TradeScanTimePenaltyTests(unittest.TestCase):
     def test_valid_breakout_passes_atr_noise_filter(self):

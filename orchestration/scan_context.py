@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+import math
+import os
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -65,6 +67,27 @@ def to_float_or_none(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _fractional_shares_enabled() -> bool:
+    value = str(os.getenv("ENABLE_FRACTIONAL_SHARES", "false")).strip().lower()
+    return value in {"1", "true", "yes", "y", "on"}
+
+
+def _fractional_share_decimals() -> int:
+    try:
+        return max(0, min(6, int(os.getenv("FRACTIONAL_SHARE_DECIMALS", "4"))))
+    except Exception:
+        return 4
+
+
+def _normalize_share_quantity(quantity: float) -> float:
+    if quantity <= 0:
+        return 0.0
+    if _fractional_shares_enabled():
+        factor = 10 ** _fractional_share_decimals()
+        return math.floor(quantity * factor) / factor
+    return float(int(quantity))
 
 
 def build_scan_id(timestamp_utc: str, mode: str) -> str:
@@ -214,13 +237,20 @@ def paper_candidate_from_evaluation(eval_result: dict[str, Any], paper_trade_min
     if risk_amount is None:
         risk_amount = actual_risk
 
+    share_value = to_float_or_none(shares)
+    normalized_shares: float | str
+    if share_value is None:
+        normalized_shares = ""
+    else:
+        normalized_shares = _normalize_share_quantity(share_value)
+
     normalized_metrics = {
         **metrics,
         "entry": entry_value,
         "price": price if price is not None else entry_value,
         "stop": stop,
         "target": target,
-        "shares": int(float(shares)) if shares not in (None, "") else "",
+        "shares": normalized_shares,
         "actual_position_cost": actual_position_cost,
         "risk_per_share": risk_per_share,
         "actual_risk": actual_risk,
