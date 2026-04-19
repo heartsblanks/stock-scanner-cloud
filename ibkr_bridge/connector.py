@@ -388,7 +388,19 @@ class IbkrGatewayClient:
 
         ib = self._reset_connection()
         _LimitOrder, _MarketOrder, _StopOrder, _Order, Stock = self._load_order_classes()
-        contract = Stock(normalized_symbol, "SMART", "USD")
+        try:
+            contract = Stock(normalized_symbol, "SMART", "USD")
+        except TypeError:
+            # Test doubles may only accept `symbol`; set route fields afterward.
+            contract = Stock(normalized_symbol)
+            try:
+                contract.exchange = "SMART"
+            except Exception:
+                pass
+            try:
+                contract.currency = "USD"
+            except Exception:
+                pass
         log_info(
             "IBKR bridge intraday request started",
             component="ibkr_bridge",
@@ -1457,10 +1469,18 @@ class IbkrGatewayClient:
         canceled_order_ids: list[str] = []
         for trade in self._open_orders_for_symbol(ib, normalized_symbol):
             order = getattr(trade, "order", None)
-            order_id = str(getattr(order, "orderId", "")).strip()
+            order_id = int(_to_float(getattr(order, "orderId", 0.0), 0))
+            if order_id <= 0:
+                log_warning(
+                    "IBKR bridge skipping cancel for unresolved open order id",
+                    component="ibkr_bridge",
+                    operation="cancel_orders_by_symbol",
+                    symbol=normalized_symbol,
+                    order_id=order_id,
+                )
+                continue
             ib.cancelOrder(order)
-            if order_id:
-                canceled_order_ids.append(order_id)
+            canceled_order_ids.append(str(order_id))
 
         return canceled_order_ids
 
@@ -1490,19 +1510,51 @@ class IbkrGatewayClient:
             }
 
         _LimitOrder, MarketOrder, _StopOrder, _Order, Stock = self._load_order_classes()
-        contract = getattr(target_position, "contract", None)
-        if contract is None:
+        source_contract = getattr(target_position, "contract", None)
+        try:
             contract = Stock(normalized_symbol, "SMART", "USD")
+        except TypeError:
+            # Test doubles may only accept `symbol`; set route fields afterward.
+            contract = Stock(normalized_symbol)
+            try:
+                contract.exchange = "SMART"
+            except Exception:
+                pass
+            try:
+                contract.currency = "USD"
+            except Exception:
+                pass
+        source_primary_exchange = str(getattr(source_contract, "primaryExchange", "")).strip().upper()
+        source_exchange = str(getattr(source_contract, "exchange", "")).strip().upper()
+        preferred_primary_exchange = source_primary_exchange if source_primary_exchange not in {"", "SMART"} else ""
+        if not preferred_primary_exchange and source_exchange not in {"", "SMART"}:
+            preferred_primary_exchange = source_exchange
+        if preferred_primary_exchange:
+            contract.primaryExchange = preferred_primary_exchange
+        try:
             ib.qualifyContracts(contract)
+        except Exception:
+            if source_contract is not None:
+                contract = source_contract
+            else:
+                raise
 
         action = "SELL" if qty > 0 else "BUY"
         canceled_order_ids: list[str] = []
         for trade in self._open_orders_for_symbol(ib, normalized_symbol):
             order = getattr(trade, "order", None)
-            order_id = str(getattr(order, "orderId", "")).strip()
+            order_id = int(_to_float(getattr(order, "orderId", 0.0), 0))
+            if order_id <= 0:
+                log_warning(
+                    "IBKR bridge skipping cancel for unresolved open order id",
+                    component="ibkr_bridge",
+                    operation="close_position",
+                    symbol=normalized_symbol,
+                    order_id=order_id,
+                )
+                continue
             ib.cancelOrder(order)
-            if order_id:
-                canceled_order_ids.append(order_id)
+            canceled_order_ids.append(str(order_id))
         cancel_settle_transitions = self._wait_for_symbol_open_orders_to_clear(ib, normalized_symbol)
         order = MarketOrder(action, abs(qty))
         order.orderRef = f"scanner-close-{normalized_symbol}"
