@@ -182,7 +182,7 @@ def execute_close_all_paper_positions(
             })
             continue
 
-        close_order_id = str(close_response.get("id", "")).strip()
+        close_order_id = str(close_response.get("order_id", "") or close_response.get("id", "")).strip()
         close_order_status = str(close_response.get("status", "")).strip()
         close_filled_avg_price = ""
         close_filled_qty = qty

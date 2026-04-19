@@ -1069,6 +1069,37 @@ class IbkrGatewayClient:
                 trades.append(trade)
         return trades
 
+    def _is_scanner_close_order(self, order: Any, symbol: str) -> bool:
+        normalized_symbol = str(symbol or "").strip().upper()
+        if not normalized_symbol:
+            return False
+        order_ref = str(getattr(order, "orderRef", "")).strip().upper()
+        if order_ref != f"SCANNER-CLOSE-{normalized_symbol}":
+            return False
+        order_type = str(getattr(order, "orderType", "")).strip().upper()
+        return order_type in {"", "MKT"}
+
+    def _find_existing_scanner_close_trade(
+        self,
+        ib,
+        symbol: str,
+        action: str,
+        *,
+        open_trades: list[Any] | None = None,
+    ) -> Any | None:
+        normalized_symbol = str(symbol or "").strip().upper()
+        normalized_action = str(action or "").strip().upper()
+        trades = list(open_trades) if open_trades is not None else self._open_orders_for_symbol(ib, normalized_symbol)
+        for trade in trades:
+            order = getattr(trade, "order", None)
+            if not self._is_scanner_close_order(order, normalized_symbol):
+                continue
+            trade_action = str(getattr(order, "action", "")).strip().upper()
+            if normalized_action and trade_action and trade_action != normalized_action:
+                continue
+            return trade
+        return None
+
     def _cancel_settle_config(self) -> tuple[int, float]:
         try:
             attempts = max(1, int(os.getenv("IBKR_CANCEL_SETTLE_POLL_ATTEMPTS", "8")))
@@ -1496,6 +1527,15 @@ class IbkrGatewayClient:
         unresolved_order_id_detected = False
         for trade in self._open_orders_for_symbol(ib, normalized_symbol):
             order = getattr(trade, "order", None)
+            if self._is_scanner_close_order(order, normalized_symbol):
+                log_info(
+                    "IBKR bridge leaving scanner close order in place during cancel-by-symbol",
+                    component="ibkr_bridge",
+                    operation="cancel_orders_by_symbol",
+                    symbol=normalized_symbol,
+                    order_id=int(_to_float(getattr(order, "orderId", 0.0), 0)),
+                )
+                continue
             order_id = int(_to_float(getattr(order, "orderId", 0.0), 0))
             if order_id <= 0:
                 unresolved_order_id_detected = True
@@ -1631,10 +1671,56 @@ class IbkrGatewayClient:
         )
 
         action = "SELL" if qty > 0 else "BUY"
+        current_open_trades = self._open_orders_for_symbol(ib, normalized_symbol)
+        existing_close_trade = self._find_existing_scanner_close_trade(
+            ib,
+            normalized_symbol,
+            action,
+            open_trades=current_open_trades,
+        )
+        if existing_close_trade is not None:
+            existing_snapshot = self._order_status_snapshot(existing_close_trade)
+            broker_position_open = self._position_is_open(ib, normalized_symbol)
+            existing_order = getattr(existing_close_trade, "order", None)
+            existing_order_id = str(getattr(existing_order, "orderId", "")).strip()
+            existing_status = str(existing_snapshot.get("status", "")).strip()
+            log_info(
+                "IBKR bridge reusing existing scanner close order",
+                component="ibkr_bridge",
+                operation="close_position",
+                symbol=normalized_symbol,
+                order_id=existing_order_id,
+                status=existing_status,
+                broker_position_open=broker_position_open,
+            )
+            return {
+                "attempted": True,
+                "placed": True,
+                "symbol": normalized_symbol,
+                "action": action.lower(),
+                "qty": abs(qty),
+                "order_id": existing_order_id,
+                "status": existing_status,
+                "filled_qty": existing_snapshot.get("filled_qty", 0.0),
+                "filled_avg_price": existing_snapshot.get("avg_fill_price", 0.0),
+                "filled_at": existing_snapshot.get("filled_at", ""),
+                "position_closed": not broker_position_open,
+                "close_failed": False,
+                "reason": "existing_close_order_pending",
+                "canceled_order_ids": [],
+                "cancel_settle_transitions": [],
+                "status_transitions": [{
+                    "attempt": 0,
+                    **existing_snapshot,
+                    "broker_position_open": broker_position_open,
+                }],
+            }
         canceled_order_ids: list[str] = []
         unresolved_order_id_detected = False
-        for trade in self._open_orders_for_symbol(ib, normalized_symbol):
+        for trade in current_open_trades:
             order = getattr(trade, "order", None)
+            if self._is_scanner_close_order(order, normalized_symbol):
+                continue
             order_id = int(_to_float(getattr(order, "orderId", 0.0), 0))
             if order_id <= 0:
                 unresolved_order_id_detected = True
