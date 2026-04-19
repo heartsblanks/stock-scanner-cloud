@@ -1181,7 +1181,7 @@ class IbkrGatewayClient:
         client_order_id = f"scanner-{symbol}-{direction}-{int(round(entry * 10000))}-{final_shares}"
 
         base_order_id = ib.client.getReqId()
-        parent = MarketOrder(action, final_shares, transmit=False)
+        parent = LimitOrder(action, final_shares, round(entry, 2), transmit=False)
         parent.orderId = base_order_id
         parent.orderRef = client_order_id
         parent.tif = "DAY"
