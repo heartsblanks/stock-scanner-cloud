@@ -544,7 +544,7 @@ class IbkrConnectorTests(unittest.TestCase):
     def test_place_paper_bracket_order_marks_rejected_terminal_parent_status(self):
         client = IbkrGatewayClient.__new__(IbkrGatewayClient)
         fake_ib = _FakeIbForBracketFlow(symbol="TSLA", parent_status="Inactive")
-        client._connect = lambda: fake_ib
+        client._reset_connection = lambda: fake_ib
         client._load_order_classes = lambda: (
             _FakeLimitOrderForBracket,
             _FakeMarketOrderForBracket,
@@ -580,7 +580,7 @@ class IbkrConnectorTests(unittest.TestCase):
             status_after_sleep="Submitted",
             parent_perm_id_after_sleep=128001,
         )
-        client._connect = lambda: fake_ib
+        client._reset_connection = lambda: fake_ib
         client._load_order_classes = lambda: (
             _FakeLimitOrderForBracket,
             _FakeMarketOrderForBracket,
@@ -615,7 +615,7 @@ class IbkrConnectorTests(unittest.TestCase):
             parent_status="Submitted",
             parent_perm_id=0,
         )
-        client._connect = lambda: fake_ib
+        client._reset_connection = lambda: fake_ib
         client._load_order_classes = lambda: (
             _FakeLimitOrderForBracket,
             _FakeMarketOrderForBracket,

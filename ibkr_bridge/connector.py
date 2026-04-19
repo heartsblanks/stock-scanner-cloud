@@ -91,14 +91,17 @@ class IbkrGatewayClient:
 
     def _connect(self):
         self._ensure_event_loop()
-        if self._ib is not None and self._ib.isConnected():
-            return self._ib
+        cached_ib = getattr(self, "_ib", None)
+        if cached_ib is not None and cached_ib.isConnected():
+            return cached_ib
 
         return self._connect_with_client_id(self.config.client_id, use_cache=True)
 
     def _connect_with_client_id(self, client_id: int, *, use_cache: bool):
         ib_class = self._load_ib_class()
         ib = ib_class()
+        request_timeout = float(max(1, int(self.config.timeout_seconds)))
+        setattr(ib, "RequestTimeout", request_timeout)
         ib.connect(
             self.config.host,
             self.config.port,
@@ -125,7 +128,7 @@ class IbkrGatewayClient:
             pass
 
     def _disconnect(self) -> None:
-        ib = self._ib
+        ib = getattr(self, "_ib", None)
         self._ib = None
         self._disconnect_ib(ib)
 
@@ -809,7 +812,9 @@ class IbkrGatewayClient:
                 },
             }
 
-        ib = self._connect()
+        # Use a fresh broker session for each sync batch so stale sockets
+        # cannot block the request pipeline.
+        ib = self._reset_connection()
         total_started_at = time.monotonic()
 
         resolved_by_order_id: dict[str, dict[str, Any]] = {}
@@ -1138,7 +1143,9 @@ class IbkrGatewayClient:
             notional_cap=round(notional_cap, 2),
         )
 
-        ib = self._connect()
+        # Use a fresh broker session for placement flow so stale sockets
+        # cannot block qualification/placeOrder indefinitely.
+        ib = self._reset_connection()
         LimitOrder, MarketOrder, StopOrder, Order, Stock = self._load_order_classes()
         contract = Stock(symbol, "SMART", "USD")
         try:
