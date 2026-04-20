@@ -222,7 +222,7 @@ export default function DashboardPage() {
   const [isPurgingTestData, setIsPurgingTestData] = useState(false);
   const [adminDrawerOpen, setAdminDrawerOpen] = useState(false);
   const [ibkrRepairDate, setIbkrRepairDate] = useState(todayDateInputValue);
-  const [dayCycleModes, setDayCycleModes] = useState("europe_test");
+  const [dayCycleModes, setDayCycleModes] = useState("us_test");
   const [dayCycleScanRounds, setDayCycleScanRounds] = useState("1");
   const [dayCycleIntervalSeconds, setDayCycleIntervalSeconds] = useState("0");
   const [dayCycleRunInitialSync, setDayCycleRunInitialSync] = useState(true);
@@ -698,7 +698,7 @@ export default function DashboardPage() {
                     value={dayCycleModes}
                     onChange={(event) => setDayCycleModes(event.target.value)}
                     className="dashboard-input"
-                    placeholder="europe_test"
+                    placeholder="us_test"
                   />
                 </div>
                 <div className="dashboard-date-filter-inline">

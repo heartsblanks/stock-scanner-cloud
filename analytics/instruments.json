@@ -43,6 +43,14 @@
     "Recursion": { "symbol": "RXRX", "type": "stock", "priority": 6, "market": "NASDAQ" },
     "Cerence": { "symbol": "CRNC", "type": "stock", "priority": 6, "market": "NASDAQ" }
   },
+  "us_test": {
+    "Qualcomm": { "symbol": "QCOM", "type": "stock", "priority": 10, "market": "NASDAQ", "exchange": "SMART", "primary_exchange": "NMS", "currency": "USD" },
+    "Cisco": { "symbol": "CSCO", "type": "stock", "priority": 9, "market": "NASDAQ", "exchange": "SMART", "primary_exchange": "NMS", "currency": "USD" },
+    "Applied Materials": { "symbol": "AMAT", "type": "stock", "priority": 9, "market": "NASDAQ", "exchange": "SMART", "primary_exchange": "NMS", "currency": "USD" },
+    "Texas Instruments": { "symbol": "TXN", "type": "stock", "priority": 8, "market": "NASDAQ", "exchange": "SMART", "primary_exchange": "NMS", "currency": "USD" },
+    "Automatic Data Processing": { "symbol": "ADP", "type": "stock", "priority": 8, "market": "NASDAQ", "exchange": "SMART", "primary_exchange": "NMS", "currency": "USD" },
+    "Palo Alto Networks": { "symbol": "PANW", "type": "stock", "priority": 8, "market": "NASDAQ", "exchange": "SMART", "primary_exchange": "NMS", "currency": "USD" }
+  },
   "europe_test": {
     "Siemens": { "symbol": "SIE", "type": "stock", "priority": 10, "market": "EUROPE", "exchange": "IBIS", "currency": "EUR" },
     "BMW": { "symbol": "BMW", "type": "stock", "priority": 9, "market": "EUROPE", "exchange": "IBIS", "currency": "EUR" },

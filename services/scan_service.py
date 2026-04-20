@@ -6,6 +6,7 @@ import os
 import math
 from core.logging_utils import log_exception, log_info, log_warning
 from services.alert_service import send_telegram_alert, telegram_alerts_enabled
+from orchestration.scan_context import IBKR_SCHEDULED_MODE_ORDER
 
 # NOTE: requires implementation
 # def get_recent_closed_trades_for_symbol(symbol: str, limit: int = 5) -> list[dict]
@@ -598,6 +599,7 @@ def execute_full_scan(
         "fourth",
         "fifth",
         "sixth",
+        "us_test",
         "europe_test",
         "core_one",
         "core_two",
@@ -605,7 +607,14 @@ def execute_full_scan(
     }:
         return {
             "ok": False,
-            "error": "mode must be primary, secondary, third, fourth, fifth, sixth, europe_test, core_one, core_two, or core_three",
+            "error": "mode must be primary, secondary, third, fourth, fifth, sixth, us_test, europe_test, core_one, core_two, or core_three",
+        }, 400
+
+    if scan_source == "SCHEDULED" and mode not in set(IBKR_SCHEDULED_MODE_ORDER):
+        return {
+            "ok": False,
+            "error": f"mode '{mode}' is test-only and cannot be used with scan_source=SCHEDULED",
+            "scheduled_modes": list(IBKR_SCHEDULED_MODE_ORDER),
         }, 400
 
     ignore_market_hours_raw = payload.get("ignore_market_hours", mode in {"europe_test"})
