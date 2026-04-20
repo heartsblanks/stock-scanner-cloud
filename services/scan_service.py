@@ -605,6 +605,14 @@ def execute_full_scan(
     else:
         ignore_market_hours = bool(ignore_market_hours_raw)
 
+    disable_strategy_gates_raw = payload.get("disable_strategy_gates", False)
+    if isinstance(disable_strategy_gates_raw, bool):
+        disable_strategy_gates = disable_strategy_gates_raw
+    elif isinstance(disable_strategy_gates_raw, str):
+        disable_strategy_gates = disable_strategy_gates_raw.strip().lower() in {"true", "1", "yes", "y", "on"}
+    else:
+        disable_strategy_gates = bool(disable_strategy_gates_raw)
+
     if ignore_market_hours:
         ok = True
         timing_msg = "Market-time gate bypassed."
@@ -731,6 +739,7 @@ def execute_full_scan(
         mode,
         current_open_positions=current_open_positions,
         current_open_exposure=current_open_exposure,
+        disable_strategy_gates=disable_strategy_gates,
     )
     try:
         log_info("Using live IBKR equity/account_size", component="scan_service", operation="execute_full_scan", account_size=account_size, mode=mode)
@@ -794,6 +803,7 @@ def execute_full_scan(
         "trades": [trade_to_dict(t) for t in trades],
         "paper_trade_enabled": paper_trade,
         "scan_source": scan_source,
+        "disable_strategy_gates": disable_strategy_gates,
         "current_open_positions": current_open_positions,
         "current_open_exposure": current_open_exposure,
     }
@@ -996,6 +1006,7 @@ def execute_full_scan(
                         candidate_benchmark_directions,
                         current_open_positions=current_open_positions,
                         current_open_exposure=current_open_exposure,
+                        disable_strategy_gates=disable_strategy_gates,
                     )
                     refreshed_candidate = paper_candidate_from_evaluation(refreshed_evaluation)
                     if refreshed_candidate is None:

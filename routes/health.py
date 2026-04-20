@@ -18,6 +18,7 @@ def register_health_routes(
     get_ibkr_operational_status,
     telegram_alerts_enabled,
     send_telegram_alert,
+    purge_all_test_data=None,
     purge_legacy_broker_data=None,
 ) -> None:
     cache: dict[tuple[str, str], tuple[float, dict]] = {}
@@ -73,6 +74,7 @@ def register_health_routes(
                 "/scheduler/ibkr-stale-close-repair",
                 "/scheduler/ibkr-vm-journal-repair",
                 "/admin/test-alert",
+                "/admin/purge-test-data",
                 "/admin/purge-legacy-broker-data",
             ],
         })
@@ -129,6 +131,32 @@ def register_health_routes(
             })
         except Exception as e:
             log_exception("legacy broker data purge failed", e, route="/admin/purge-legacy-broker-data")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.post("/admin/purge-test-data")
+    def admin_purge_test_data():
+        admin_token = str(os.getenv("ADMIN_API_TOKEN", "")).strip()
+        request_token = str(request.headers.get("X-Admin-Token", "")).strip()
+        if not purge_all_test_data:
+            return jsonify({"ok": False, "error": "purge_not_implemented"}), 501
+        if not admin_token:
+            return jsonify({"ok": False, "error": "admin_purge_disabled"}), 503
+        if request_token != admin_token:
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+        payload = request.get_json(silent=True) or {}
+        if not bool(payload.get("confirm", False)):
+            return jsonify({"ok": False, "error": "confirmation_required"}), 400
+
+        try:
+            result = purge_all_test_data()
+            return jsonify({
+                "ok": True,
+                "route": "/admin/purge-test-data",
+                **result,
+            })
+        except Exception as e:
+            log_exception("test data purge failed", e, route="/admin/purge-test-data")
             return jsonify({"ok": False, "error": str(e)}), 500
 
     @app.get("/db-health")

@@ -119,3 +119,39 @@ def purge_legacy_broker_data() -> dict[str, Any]:
         "deleted_counts": deleted_counts,
         "total_deleted": total_deleted,
     }
+
+
+def purge_all_test_data() -> dict[str, Any]:
+    tables: tuple[str, ...] = (
+        "paper_trade_attempts",
+        "trade_events",
+        "trade_lifecycles",
+        "broker_orders",
+        "signal_logs",
+        "scan_runs",
+        "reconciliation_details",
+        "reconciliation_runs",
+        "broker_api_logs",
+        "mode_rankings",
+    )
+
+    deleted_counts: dict[str, int] = {}
+    total_deleted = 0
+
+    with get_db_cursor(commit=True) as cur:
+        for table_name in tables:
+            cur.execute(f"SELECT COUNT(*)::INT AS row_count FROM {table_name}")
+            row = cur.fetchone()
+            row_count = int(row["row_count"]) if row and row.get("row_count") is not None else 0
+            deleted_counts[table_name] = row_count
+            total_deleted += row_count
+
+        table_list = ", ".join(tables)
+        cur.execute(f"TRUNCATE TABLE {table_list} RESTART IDENTITY CASCADE")
+
+    return {
+        "ok": True,
+        "tables_truncated": list(tables),
+        "deleted_counts": deleted_counts,
+        "total_deleted": total_deleted,
+    }

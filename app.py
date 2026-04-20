@@ -33,6 +33,7 @@ from storage import (
     upsert_trade_lifecycle,
     get_dashboard_summary,
     prune_operational_data,
+    purge_all_test_data,
     purge_legacy_broker_data,
 )
 from exports.export_daily_snapshot import run_daily_snapshot
@@ -222,11 +223,12 @@ def _run_ibkr_shadow_scan(payload: dict[str, Any]) -> dict[str, Any]:
         result = execute_scan_pipeline(
             ibkr_payload,
             broker_name="IBKR",
-            run_scan_fn=lambda account_size, mode, current_open_positions=0, current_open_exposure=0.0: run_scan(
+            run_scan_fn=lambda account_size, mode, current_open_positions=0, current_open_exposure=0.0, disable_strategy_gates=False: run_scan(
                 account_size,
                 mode,
                 current_open_positions=current_open_positions,
                 current_open_exposure=current_open_exposure,
+                disable_strategy_gates=disable_strategy_gates,
                 fetch_intraday_fn=fetch_ibkr_intraday,
                 source_label=f"IBKR_{mode.upper()}",
             ),
@@ -589,6 +591,7 @@ register_health_routes(
     get_ibkr_operational_status=get_ibkr_operational_status,
     telegram_alerts_enabled=telegram_alerts_enabled,
     send_telegram_alert=send_telegram_alert,
+    purge_all_test_data=purge_all_test_data,
     purge_legacy_broker_data=purge_legacy_broker_data,
 )
 register_export_routes(app, run_daily_snapshot=run_daily_snapshot)

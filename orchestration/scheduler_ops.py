@@ -509,6 +509,7 @@ def execute_test_day_cycle(
     paper_trade = _to_bool(request_payload.get("paper_trade", True), True)
     ignore_market_hours = _to_bool(request_payload.get("ignore_market_hours", True), True)
     debug = _to_bool(request_payload.get("debug", False), False)
+    disable_strategy_gates = _to_bool(request_payload.get("disable_strategy_gates", False), False)
     # Use MANUAL source so each requested mode is honored in the test cycle.
     # SCHEDULED source fans out to the full ranked mode set inside app_runtime.
     scan_source = "MANUAL"
@@ -537,6 +538,7 @@ def execute_test_day_cycle(
                 "scan_source": scan_source,
                 "ignore_market_hours": ignore_market_hours,
                 "debug": debug,
+                "disable_strategy_gates": disable_strategy_gates,
             }
             scan_payload.update(scan_payload_overrides)
             scan_payload["mode"] = mode
@@ -544,6 +546,7 @@ def execute_test_day_cycle(
             scan_payload["scan_source"] = scan_source
             scan_payload["ignore_market_hours"] = ignore_market_hours
             scan_payload["debug"] = debug
+            scan_payload["disable_strategy_gates"] = disable_strategy_gates
 
             scan_action = f"scan_r{round_index + 1}_{mode}"
             _record_action(scan_action, run_scan(scan_payload))
@@ -588,6 +591,7 @@ def execute_test_day_cycle(
         "scan_source": scan_source,
         "paper_trade": paper_trade,
         "ignore_market_hours": ignore_market_hours,
+        "disable_strategy_gates": disable_strategy_gates,
         "elapsed_seconds": elapsed_seconds,
         "results": results,
     }

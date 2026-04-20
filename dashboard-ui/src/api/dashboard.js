@@ -194,6 +194,23 @@ export async function runSchedulerTestDayCycle(payload = {}) {
   return data || {};
 }
 
+export async function runAdminPurgeTestData() {
+  const response = await fetch("/api/admin-purge-test-data", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ confirm: true }),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.error || "Failed to purge test data");
+  }
+
+  return data || {};
+}
+
 export async function fetchPaperTradeAttemptRecent(limit = 25, broker, decisionStage) {
   const params = { limit };
   if (broker) {

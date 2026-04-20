@@ -13,6 +13,7 @@ import ModePerformanceChart from "../components/ModePerformanceChart";
 import RefreshStatusPanel from "../components/dashboard/RefreshStatusPanel";
 import SymbolPerformanceChart from "../components/SymbolPerformanceChart";
 import {
+  runAdminPurgeTestData,
   runIbkrStaleCloseRepair,
   runIbkrVmJournalRepair,
   runSchedulerTestDayCycle,
@@ -218,6 +219,7 @@ export default function DashboardPage() {
   const [isRunningIbkrDeepRepair, setIsRunningIbkrDeepRepair] = useState(false);
   const [isRunningDayCycleTest, setIsRunningDayCycleTest] = useState(false);
   const [isRunningMorningCheck, setIsRunningMorningCheck] = useState(false);
+  const [isPurgingTestData, setIsPurgingTestData] = useState(false);
   const [adminDrawerOpen, setAdminDrawerOpen] = useState(false);
   const [ibkrRepairDate, setIbkrRepairDate] = useState(todayDateInputValue);
   const [dayCycleModes, setDayCycleModes] = useState("asia_test");
@@ -230,6 +232,7 @@ export default function DashboardPage() {
   const [dayCyclePaperTrade, setDayCyclePaperTrade] = useState(true);
   const [dayCycleIgnoreMarketHours, setDayCycleIgnoreMarketHours] = useState(true);
   const [dayCycleDebug, setDayCycleDebug] = useState(false);
+  const [dayCycleDisableStrategyGates, setDayCycleDisableStrategyGates] = useState(true);
 
   const {
     summary,
@@ -481,6 +484,7 @@ export default function DashboardPage() {
         paper_trade: dayCyclePaperTrade,
         ignore_market_hours: dayCycleIgnoreMarketHours,
         debug: dayCycleDebug,
+        disable_strategy_gates: dayCycleDisableStrategyGates,
       };
 
       const data = await runSchedulerTestDayCycle(payload);
@@ -502,6 +506,30 @@ export default function DashboardPage() {
       pushToast({ type: "error", message: err?.message || "Failed to run test day cycle" });
     } finally {
       setIsRunningDayCycleTest(false);
+    }
+  }
+
+  async function handlePurgeTestData() {
+    const confirmed = typeof window !== "undefined"
+      ? window.confirm("Delete test data from all operational tables? This cannot be undone.")
+      : true;
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setIsPurgingTestData(true);
+      const data = await runAdminPurgeTestData();
+      const deletedCount = Number(data?.total_deleted || 0);
+      pushToast({
+        type: "success",
+        message: `Test data purged. Deleted rows: ${deletedCount}.`,
+      });
+      refreshData();
+    } catch (err) {
+      pushToast({ type: "error", message: err?.message || "Failed to purge test data" });
+    } finally {
+      setIsPurgingTestData(false);
     }
   }
 
@@ -752,6 +780,14 @@ export default function DashboardPage() {
                   />
                   Debug Output
                 </label>
+                <label className="dashboard-inline-meta">
+                  <input
+                    type="checkbox"
+                    checked={dayCycleDisableStrategyGates}
+                    onChange={(event) => setDayCycleDisableStrategyGates(event.target.checked)}
+                  />
+                  Disable Strategy Gates (Test Only)
+                </label>
                 <button
                   type="button"
                   onClick={handleRunTestDayCycle}
@@ -793,6 +829,14 @@ export default function DashboardPage() {
                   className="dashboard-button dashboard-button-neutral"
                 >
                   {isSendingTestAlert ? "Sending..." : "Send Test Alert"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePurgeTestData}
+                  disabled={isPurgingTestData}
+                  className="dashboard-button dashboard-button-secondary"
+                >
+                  {isPurgingTestData ? "Purging..." : "Purge Test Data (All Tables)"}
                 </button>
               </div>
             </aside>

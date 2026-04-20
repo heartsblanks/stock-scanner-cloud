@@ -399,6 +399,7 @@ def evaluate_symbol(
     benchmark_directions: dict,
     current_open_positions: int = 0,
     current_open_exposure: float = 0.0,
+    disable_strategy_gates: bool = False,
 ):
     checks = {}
     metrics = {
@@ -406,7 +407,9 @@ def evaluate_symbol(
         "type": info["type"],
         "priority": info["priority"],
         "market": info["market"],
+        "disable_strategy_gates": bool(disable_strategy_gates),
     }
+    checks["strategy_gates_disabled"] = bool(disable_strategy_gates)
 
     or_data = build_opening_range(candles)
     if not or_data:
@@ -457,7 +460,7 @@ def evaluate_symbol(
     else:
         checks["volatility_filter"] = opening_range_pct >= 0.0015
 
-    if not checks["volatility_filter"]:
+    if not checks["volatility_filter"] and not disable_strategy_gates:
         return {
             "name": name,
             "decision": "REJECTED",
@@ -467,7 +470,7 @@ def evaluate_symbol(
         }
 
     checks["outside_opening_range"] = not (or_low <= price <= or_high)
-    if not checks["outside_opening_range"]:
+    if not checks["outside_opening_range"] and not disable_strategy_gates:
         return {
             "name": name,
             "decision": "REJECTED",
@@ -486,7 +489,13 @@ def evaluate_symbol(
             "metrics": metrics,
         }
 
-    direction = "BUY" if price > or_high else "SELL"
+    if price > or_high:
+        direction = "BUY"
+    elif price < or_low:
+        direction = "SELL"
+    else:
+        direction = "BUY" if disable_strategy_gates else ("BUY" if price >= vwap else "SELL")
+        metrics["inside_opening_range_forced_direction"] = True
     metrics["direction"] = direction
 
     
@@ -496,7 +505,7 @@ def evaluate_symbol(
     else:
         checks["vwap_alignment"] = price < vwap
 
-    if not checks["vwap_alignment"]:
+    if not checks["vwap_alignment"] and not disable_strategy_gates:
         return {
             "name": name,
             "decision": "REJECTED",
@@ -546,7 +555,7 @@ def evaluate_symbol(
     metrics["stop_to_atr_ratio"] = stop_to_atr_ratio
     metrics["min_stop_to_atr_ratio"] = min_stop_to_atr_ratio
     checks["atr_noise_filter"] = stop_to_atr_ratio >= min_stop_to_atr_ratio
-    if not checks["atr_noise_filter"]:
+    if not checks["atr_noise_filter"] and not disable_strategy_gates:
         return {
             "name": name,
             "decision": "REJECTED",
@@ -560,7 +569,7 @@ def evaluate_symbol(
     else:
         checks["anti_chase_filter"] = breakout <= opening_range * 0.8
 
-    if not checks["anti_chase_filter"]:
+    if not checks["anti_chase_filter"] and not disable_strategy_gates:
         return {
             "name": name,
             "decision": "REJECTED",
@@ -576,7 +585,7 @@ def evaluate_symbol(
 
     if market_key in ("SP500", "NASDAQ"):
         checks["benchmark_available"] = benchmark_direction is not None
-        if benchmark_direction is None:
+        if benchmark_direction is None and not disable_strategy_gates:
             return {
                 "name": name,
                 "decision": "REJECTED",
@@ -586,7 +595,7 @@ def evaluate_symbol(
             }
 
         checks["benchmark_not_neutral"] = benchmark_direction != "NEUTRAL"
-        if not checks["benchmark_not_neutral"]:
+        if not checks["benchmark_not_neutral"] and not disable_strategy_gates:
             return {
                 "name": name,
                 "decision": "REJECTED",
@@ -596,7 +605,7 @@ def evaluate_symbol(
             }
 
         checks["benchmark_alignment"] = benchmark_direction == direction
-        if not checks["benchmark_alignment"]:
+        if not checks["benchmark_alignment"] and not disable_strategy_gates:
             return {
                 "name": name,
                 "decision": "REJECTED",
@@ -624,7 +633,7 @@ def evaluate_symbol(
     checks["late_session_strict_rule"] = True
     if late_session_hard_block_enabled():
         late_session_strict = now_ny.hour > 11 or (now_ny.hour == 11 and now_ny.minute >= 30)
-        if late_session_strict and info["priority"] < 10 and info["type"] == "stock":
+        if late_session_strict and info["priority"] < 10 and info["type"] == "stock" and not disable_strategy_gates:
             checks["late_session_strict_rule"] = False
             return {
                 "name": name,
@@ -635,7 +644,7 @@ def evaluate_symbol(
             }
 
     checks["power_hour_long_rule"] = True
-    if direction == "BUY" and info["type"] == "stock" and minutes_after_open >= 300 and info["priority"] < 10:
+    if direction == "BUY" and info["type"] == "stock" and minutes_after_open >= 300 and info["priority"] < 10 and not disable_strategy_gates:
         checks["power_hour_long_rule"] = False
         return {
             "name": name,
@@ -679,7 +688,7 @@ def evaluate_symbol(
     })
 
     checks["remaining_slots_available"] = True if not sizing["position_limit_enforced"] else sizing["remaining_slots"] >= 1
-    if not checks["remaining_slots_available"]:
+    if not checks["remaining_slots_available"] and not disable_strategy_gates:
         return {
             "name": name,
             "decision": "REJECTED",
@@ -689,7 +698,7 @@ def evaluate_symbol(
         }
 
     checks["remaining_allocatable_capital_available"] = sizing["remaining_allocatable_capital"] >= MIN_REMAINING_ALLOCATABLE_CAPITAL
-    if not checks["remaining_allocatable_capital_available"]:
+    if not checks["remaining_allocatable_capital_available"] and not disable_strategy_gates:
         return {
             "name": name,
             "decision": "REJECTED",
@@ -702,7 +711,7 @@ def evaluate_symbol(
         checks["cash_affordability"] = sizing["cash_affordable_shares"] > 0
     else:
         checks["cash_affordability"] = sizing["cash_affordable_shares"] >= 1
-    if not checks["cash_affordability"]:
+    if not checks["cash_affordability"] and not disable_strategy_gates:
         return {
             "name": name,
             "decision": "REJECTED",
@@ -717,7 +726,7 @@ def evaluate_symbol(
     else:
         checks["notional_cap_affordability"] = sizing["notional_capped_shares"] >= 1
         checks["position_size_valid"] = shares >= 1
-    if not checks["position_size_valid"]:
+    if not checks["position_size_valid"] and not disable_strategy_gates:
         return {
             "name": name,
             "decision": "REJECTED",
@@ -733,7 +742,7 @@ def evaluate_symbol(
             extension = day_high - target
         metrics["reward_extension"] = extension
         checks["reward_sanity_filter"] = extension <= day_range * 1.5
-        if not checks["reward_sanity_filter"]:
+        if not checks["reward_sanity_filter"] and not disable_strategy_gates:
             return {
                 "name": name,
                 "decision": "REJECTED",
@@ -786,7 +795,7 @@ def evaluate_symbol(
     })
 
     checks["confidence_threshold"] = final_confidence >= required_confidence
-    if not checks["confidence_threshold"]:
+    if not checks["confidence_threshold"] and not disable_strategy_gates:
         return {
             "name": name,
             "decision": "REJECTED",
@@ -952,6 +961,7 @@ def run_scan(
     mode: str,
     current_open_positions: int = 0,
     current_open_exposure: float = 0.0,
+    disable_strategy_gates: bool = False,
     *,
     fetch_intraday_fn=fetch_intraday,
     source_label: str | None = None,
@@ -1024,6 +1034,7 @@ def run_scan(
                 benchmark_directions,
                 current_open_positions=current_open_positions,
                 current_open_exposure=current_open_exposure,
+                disable_strategy_gates=disable_strategy_gates,
             )
             result["info"] = info
             result["candles"] = candles

@@ -186,6 +186,7 @@ def paper_candidate_from_evaluation(eval_result: dict[str, Any], paper_trade_min
         return None
 
     metrics = eval_result.get("metrics") or {}
+    disable_strategy_gates = bool(metrics.get("disable_strategy_gates", False))
     direction = str(metrics.get("direction", "")).strip().upper()
     if direction not in {"BUY", "SELL"}:
         return None
@@ -205,12 +206,12 @@ def paper_candidate_from_evaluation(eval_result: dict[str, Any], paper_trade_min
     except (TypeError, ValueError):
         confidence_value = None
 
-    if confidence_value is None or confidence_value < paper_trade_min_confidence:
+    if (confidence_value is None or confidence_value < paper_trade_min_confidence) and not disable_strategy_gates:
         eval_result["final_reason"] = "below_paper_trade_confidence_threshold"
         metrics["paper_eligible"] = False
         return None
 
-    if not _long_market_regime_allows_entry(eval_result, direction):
+    if not _long_market_regime_allows_entry(eval_result, direction) and not disable_strategy_gates:
         eval_result["final_reason"] = "long_market_regime_blocked"
         metrics["paper_eligible"] = False
         return None
