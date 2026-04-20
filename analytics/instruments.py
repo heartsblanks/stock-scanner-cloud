@@ -358,15 +358,7 @@ def get_instrument_groups(*, force_refresh: bool = False) -> dict[str, dict[str,
                 )
                 return copy.deepcopy(_CACHE_DATA)
 
-            log_warning(
-                "Failed to load instrument catalog from DB, using in-process defaults",
-                component="instrument_catalog",
-                error=str(exc),
-            )
-            fallback = copy.deepcopy(_DEFAULT_INSTRUMENT_GROUPS)
-            _CACHE_DATA = fallback
-            _CACHE_LOADED_AT = now
-            return fallback
+            raise RuntimeError("instrument catalog unavailable from DB") from exc
 
 
 def get_mode_instruments(mode: str, *, force_refresh: bool = False) -> dict[str, dict[str, object]]:
