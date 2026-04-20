@@ -276,7 +276,8 @@ CREATE INDEX IF NOT EXISTS idx_mode_rankings_window ON mode_rankings(window_days
 CREATE UNIQUE INDEX IF NOT EXISTS uq_mode_rankings_day_broker_window_mode
     ON mode_rankings(ranking_date, broker, window_days, mode);
 
--- Per-session symbol eligibility snapshot used to pre-filter scans
+-- Rolling symbol eligibility snapshot used to pre-filter scans.
+-- Latest rows per mode replace older rows to avoid day-by-day growth.
 CREATE TABLE IF NOT EXISTS symbol_session_eligibility (
     id SERIAL PRIMARY KEY,
     session_date DATE NOT NULL,

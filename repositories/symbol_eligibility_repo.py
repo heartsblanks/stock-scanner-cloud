@@ -75,10 +75,9 @@ def replace_symbol_session_eligibility_rows(
         cur.execute(
             """
             DELETE FROM symbol_session_eligibility
-            WHERE session_date = %(session_date)s::date
-              AND mode = %(mode)s
+            WHERE mode = %(mode)s
             """,
-            {"session_date": session_date, "mode": normalized_mode},
+            {"mode": normalized_mode},
         )
         if rows:
             cur.executemany(
@@ -131,6 +130,36 @@ def replace_symbol_session_eligibility_rows(
     return len(rows)
 
 
+def get_current_symbol_session_eligibility_rows(*, mode: str) -> list[dict[str, Any]]:
+    ensure_symbol_eligibility_schema()
+    return fetch_all(
+        """
+        WITH latest AS (
+            SELECT MAX(session_date) AS latest_session_date
+            FROM symbol_session_eligibility
+            WHERE mode = %(mode)s
+        )
+        SELECT
+            s.session_date::text AS session_date,
+            s.mode,
+            s.symbol,
+            s.display_name,
+            s.currency,
+            s.last_price,
+            s.max_notional,
+            s.eligible,
+            s.ineligible_reason,
+            s.source,
+            s.price_timestamp
+        FROM symbol_session_eligibility s
+        JOIN latest l ON s.session_date = l.latest_session_date
+        WHERE s.mode = %(mode)s
+        ORDER BY s.symbol ASC
+        """,
+        {"mode": normalize_text(mode).lower()},
+    )
+
+
 def get_symbol_session_eligibility_rows(*, session_date: str, mode: str) -> list[dict[str, Any]]:
     ensure_symbol_eligibility_schema()
     return fetch_all(
@@ -164,34 +193,5 @@ def get_latest_symbol_session_eligibility_rows(
     mode: str,
     on_or_before_date: str,
 ) -> list[dict[str, Any]]:
-    ensure_symbol_eligibility_schema()
-    return fetch_all(
-        """
-        WITH latest AS (
-            SELECT MAX(session_date) AS latest_session_date
-            FROM symbol_session_eligibility
-            WHERE mode = %(mode)s
-              AND session_date <= %(on_or_before_date)s::date
-        )
-        SELECT
-            s.session_date::text AS session_date,
-            s.mode,
-            s.symbol,
-            s.display_name,
-            s.currency,
-            s.last_price,
-            s.max_notional,
-            s.eligible,
-            s.ineligible_reason,
-            s.source,
-            s.price_timestamp
-        FROM symbol_session_eligibility s
-        JOIN latest l ON s.session_date = l.latest_session_date
-        WHERE s.mode = %(mode)s
-        ORDER BY s.symbol ASC
-        """,
-        {
-            "mode": normalize_text(mode).lower(),
-            "on_or_before_date": on_or_before_date,
-        },
-    )
+    _ = on_or_before_date
+    return get_current_symbol_session_eligibility_rows(mode=mode)

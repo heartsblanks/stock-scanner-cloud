@@ -8,8 +8,8 @@ from zoneinfo import ZoneInfo
 from analytics.instruments import INSTRUMENT_GROUPS
 from core.logging_utils import log_exception, log_info, log_warning
 from repositories.symbol_eligibility_repo import (
+    get_current_symbol_session_eligibility_rows,
     get_latest_symbol_session_eligibility_rows,
-    get_symbol_session_eligibility_rows,
     replace_symbol_session_eligibility_rows,
 )
 
@@ -34,11 +34,6 @@ def _configured_notional_cap() -> float:
 
 def _allow_non_usd_symbols() -> bool:
     raw = str(os.getenv("ALLOW_NON_USD_SYMBOLS", "false")).strip().lower()
-    return raw in {"1", "true", "yes", "on"}
-
-
-def _fallback_to_latest_enabled() -> bool:
-    raw = str(os.getenv("SYMBOL_ELIGIBILITY_FALLBACK_TO_LATEST", "true")).strip().lower()
     return raw in {"1", "true", "yes", "on"}
 
 
@@ -236,19 +231,13 @@ def resolve_session_symbol_allowlist(
 
     current_ny = now_ny.astimezone(NY_TZ) if now_ny is not None else datetime.now(NY_TZ)
     requested_session_date = current_ny.date().isoformat()
-    fallback_used = False
-
     try:
-        rows = get_symbol_session_eligibility_rows(
-            session_date=requested_session_date,
-            mode=normalized_mode,
-        )
-        if not rows and _fallback_to_latest_enabled():
+        rows = get_current_symbol_session_eligibility_rows(mode=normalized_mode)
+        if not rows:
             rows = get_latest_symbol_session_eligibility_rows(
                 mode=normalized_mode,
                 on_or_before_date=requested_session_date,
             )
-            fallback_used = bool(rows)
 
         if not rows:
             return {
@@ -282,7 +271,7 @@ def resolve_session_symbol_allowlist(
             "mode": normalized_mode,
             "requested_session_date": requested_session_date,
             "source_session_date": source_date,
-            "fallback_used": fallback_used,
+            "fallback_used": False,
             "symbol_count": len(rows),
             "allowed_count": len(allowed_symbols),
             "excluded_count": len(excluded_symbols),
