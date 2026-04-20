@@ -225,12 +225,13 @@ def _run_ibkr_shadow_scan(payload: dict[str, Any]) -> dict[str, Any]:
         result = execute_scan_pipeline(
             ibkr_payload,
             broker_name="IBKR",
-            run_scan_fn=lambda account_size, mode, current_open_positions=0, current_open_exposure=0.0, disable_strategy_gates=False: run_scan(
+            run_scan_fn=lambda account_size, mode, current_open_positions=0, current_open_exposure=0.0, disable_strategy_gates=False, allowed_symbols=None: run_scan(
                 account_size,
                 mode,
                 current_open_positions=current_open_positions,
                 current_open_exposure=current_open_exposure,
                 disable_strategy_gates=disable_strategy_gates,
+                allowed_symbols=allowed_symbols,
                 fetch_intraday_fn=fetch_ibkr_intraday,
                 source_label=f"IBKR_{mode.upper()}",
             ),
