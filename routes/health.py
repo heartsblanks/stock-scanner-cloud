@@ -20,6 +20,7 @@ def register_health_routes(
     send_telegram_alert,
     purge_all_test_data=None,
     purge_legacy_broker_data=None,
+    run_symbol_eligibility_refresh=None,
 ) -> None:
     cache: dict[tuple[str, str], tuple[float, dict]] = {}
 
@@ -76,6 +77,7 @@ def register_health_routes(
                 "/admin/test-alert",
                 "/admin/purge-test-data",
                 "/admin/purge-legacy-broker-data",
+                "/admin/refresh-symbol-eligibility",
             ],
         })
 
@@ -157,6 +159,50 @@ def register_health_routes(
             })
         except Exception as e:
             log_exception("test data purge failed", e, route="/admin/purge-test-data")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.post("/admin/refresh-symbol-eligibility")
+    def admin_refresh_symbol_eligibility():
+        admin_token = str(os.getenv("ADMIN_API_TOKEN", "")).strip()
+        request_token = str(request.headers.get("X-Admin-Token", "")).strip()
+        if not run_symbol_eligibility_refresh:
+            return jsonify({"ok": False, "error": "refresh_not_implemented"}), 501
+        if not admin_token:
+            return jsonify({"ok": False, "error": "admin_refresh_disabled"}), 503
+        if request_token != admin_token:
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+        payload = request.get_json(silent=True) or {}
+        try:
+            result = run_symbol_eligibility_refresh(payload)
+            if not isinstance(result, dict):
+                return jsonify({
+                    "ok": True,
+                    "route": "/admin/refresh-symbol-eligibility",
+                    "result": result,
+                })
+
+            status_code = 200 if bool(result.get("ok", True)) else 500
+            return jsonify({
+                "route": "/admin/refresh-symbol-eligibility",
+                **result,
+            }), status_code
+        except TypeError:
+            # Backward compatibility for callback implementations without payload arg.
+            result = run_symbol_eligibility_refresh()
+            if not isinstance(result, dict):
+                return jsonify({
+                    "ok": True,
+                    "route": "/admin/refresh-symbol-eligibility",
+                    "result": result,
+                })
+            status_code = 200 if bool(result.get("ok", True)) else 500
+            return jsonify({
+                "route": "/admin/refresh-symbol-eligibility",
+                **result,
+            }), status_code
+        except Exception as e:
+            log_exception("symbol eligibility refresh failed", e, route="/admin/refresh-symbol-eligibility")
             return jsonify({"ok": False, "error": str(e)}), 500
 
     @app.get("/db-health")

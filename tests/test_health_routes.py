@@ -8,7 +8,7 @@ from routes.health import register_health_routes
 
 
 class HealthRoutesTests(unittest.TestCase):
-    def _build_client(self, *, send_telegram_alert=None, telegram_alerts_enabled=None):
+    def _build_client(self, *, send_telegram_alert=None, telegram_alerts_enabled=None, run_symbol_eligibility_refresh=None):
         app = Flask(__name__)
         register_health_routes(
             app,
@@ -22,6 +22,7 @@ class HealthRoutesTests(unittest.TestCase):
             get_ibkr_operational_status=lambda: {"ok": True},
             telegram_alerts_enabled=telegram_alerts_enabled or (lambda: True),
             send_telegram_alert=send_telegram_alert or (lambda **kwargs: {"ok": True, "sent": True, "reason": "delivered"}),
+            run_symbol_eligibility_refresh=run_symbol_eligibility_refresh,
         )
         return app.test_client()
 
@@ -51,6 +52,35 @@ class HealthRoutesTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(sent["message"], "hello from test")
         self.assertEqual(sent["alert_key"], "admin-test-alert")
+
+    def test_admin_refresh_symbol_eligibility_requires_admin_token(self):
+        client = self._build_client(run_symbol_eligibility_refresh=lambda payload=None: {"ok": True})
+        with patch.dict(os.environ, {"ADMIN_API_TOKEN": "secret-token"}, clear=False):
+            response = client.post("/admin/refresh-symbol-eligibility", json={})
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.get_json()["error"], "unauthorized")
+
+    def test_admin_refresh_symbol_eligibility_runs_when_authorized(self):
+        captured = {}
+
+        def _refresh(payload=None):
+            captured["payload"] = payload or {}
+            return {"ok": True, "target_session_date": "2026-04-21", "eligible_count": 5}
+
+        client = self._build_client(run_symbol_eligibility_refresh=_refresh)
+        with patch.dict(os.environ, {"ADMIN_API_TOKEN": "secret-token"}, clear=False):
+            response = client.post(
+                "/admin/refresh-symbol-eligibility",
+                json={"modes": ["us_test"]},
+                headers={"X-Admin-Token": "secret-token"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["target_session_date"], "2026-04-21")
+        self.assertEqual(captured["payload"]["modes"], ["us_test"])
 
 
 if __name__ == "__main__":

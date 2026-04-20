@@ -146,7 +146,10 @@ from services.sync_service import execute_sync_paper_trades
 from services.ibkr_repair_service import repair_ibkr_stale_closes
 from services.ibkr_vm_journal_repair_service import repair_ibkr_stale_closes_from_bridge_journal
 from services.scan_service import execute_full_scan
-from services.symbol_eligibility_service import refresh_symbol_eligibility_for_next_session
+from services.symbol_eligibility_service import (
+    refresh_symbol_eligibility_for_date,
+    refresh_symbol_eligibility_for_next_session,
+)
 from services.trade_service import execute_close_all_paper_positions
 
 from analytics.trade_scan import (
@@ -584,6 +587,33 @@ def run_ibkr_login_alert_scheduler(*, now_ny: datetime):
     )
 
 
+def run_symbol_eligibility_refresh(payload: dict[str, Any] | None = None):
+    request_payload = payload or {}
+    current_ny = datetime.now(NY_TZ)
+
+    raw_modes = request_payload.get("modes")
+    if isinstance(raw_modes, str):
+        modes = [token.strip().lower() for token in raw_modes.split(",") if token.strip()]
+    elif isinstance(raw_modes, list):
+        modes = [str(token).strip().lower() for token in raw_modes if str(token).strip()]
+    else:
+        modes = None
+
+    target_session_date = str(request_payload.get("target_session_date", "")).strip()
+    if target_session_date:
+        return refresh_symbol_eligibility_for_date(
+            target_session_date=target_session_date,
+            fetch_intraday_fn=fetch_ibkr_intraday,
+            modes=modes,
+        )
+
+    return refresh_symbol_eligibility_for_next_session(
+        now_ny=current_ny,
+        fetch_intraday_fn=fetch_ibkr_intraday,
+        modes=modes,
+    )
+
+
 register_health_routes(
     app,
     db_healthcheck=db_healthcheck,
@@ -598,6 +628,7 @@ register_health_routes(
     send_telegram_alert=send_telegram_alert,
     purge_all_test_data=purge_all_test_data,
     purge_legacy_broker_data=purge_legacy_broker_data,
+    run_symbol_eligibility_refresh=run_symbol_eligibility_refresh,
 )
 register_export_routes(app, run_daily_snapshot=run_daily_snapshot)
 register_analysis_routes(
