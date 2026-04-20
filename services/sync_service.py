@@ -193,14 +193,14 @@ def _first_sync_timestamp(sync_result: dict[str, Any], keys: tuple[str, ...]) ->
     return None
 
 
-def _expected_ibkr_client_order_id(
+def _expected_ibkr_client_order_ids(
     open_row: dict[str, Any],
     *,
     to_float_or_none: Callable[[Any], float | None],
-) -> str:
+) -> set[str]:
     symbol = str(open_row.get("symbol", "") or "").strip().upper()
     if not symbol:
-        return ""
+        return set()
 
     direction = str(open_row.get("direction", "") or "").strip().upper()
     if not direction:
@@ -213,19 +213,31 @@ def _expected_ibkr_client_order_id(
         )
         direction = str(inferred_direction or "").strip().upper()
     if direction not in {"LONG", "SHORT"}:
-        return ""
+        return set()
 
     entry_price = to_float_or_none(open_row.get("entry_price", ""))
     shares = to_float_or_none(open_row.get("shares", ""))
     if entry_price is None or shares is None or shares <= 0:
-        return ""
+        return set()
 
     try:
         entry_basis = int(round(entry_price * 10000))
         share_count = int(round(shares))
     except Exception:
-        return ""
-    return f"scanner-{symbol}-{direction}-{entry_basis}-{share_count}"
+        return set()
+
+    direction_tokens: set[str] = set()
+    if direction == "LONG":
+        direction_tokens.update({"LONG", "BUY"})
+    elif direction == "SHORT":
+        direction_tokens.update({"SHORT", "SELL"})
+    else:
+        direction_tokens.add(direction)
+
+    return {
+        f"scanner-{symbol}-{token}-{entry_basis}-{share_count}"
+        for token in direction_tokens
+    }
 
 
 def _validate_ibkr_sync_identity(
@@ -240,9 +252,13 @@ def _validate_ibkr_sync_identity(
         return False, f"symbol_mismatch:{open_symbol}->{sync_symbol}"
 
     actual_client_order_id = _normalize_ibkr_client_order_id(sync_result.get("client_order_id"))
-    expected_client_order_id = _expected_ibkr_client_order_id(open_row, to_float_or_none=to_float_or_none)
-    if actual_client_order_id and expected_client_order_id and actual_client_order_id != expected_client_order_id:
-        return False, f"client_order_id_mismatch:{expected_client_order_id}->{actual_client_order_id}"
+    expected_client_order_ids = _expected_ibkr_client_order_ids(open_row, to_float_or_none=to_float_or_none)
+    if actual_client_order_id and expected_client_order_ids:
+        normalized_actual = actual_client_order_id.upper()
+        normalized_expected = {candidate.upper() for candidate in expected_client_order_ids}
+        if normalized_actual not in normalized_expected:
+            expected_preview = ",".join(sorted(expected_client_order_ids))
+            return False, f"client_order_id_mismatch:{expected_preview}->{actual_client_order_id}"
 
     stored_entry_price = to_float_or_none(open_row.get("entry_price", ""))
     synced_entry_price = to_float_or_none(
