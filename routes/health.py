@@ -60,7 +60,6 @@ def register_health_routes(
                 "/read-trades-by-date",
                 "/health",
                 "/db-health",
-                "/export-daily-snapshot",
                 "/ops-summary",
                 "/paper-trade-attempts/recent",
                 "/paper-trade-attempts/rejections",

@@ -73,13 +73,23 @@ def execute_close_all_paper_positions(
     to_float_or_none: Callable[[Any], float | None],
     parse_iso_utc: Callable[[str], Any],
 ) -> dict[str, Any] | tuple[dict[str, Any], int]:
+    positions: list[dict[str, Any]] = []
     try:
         positions = get_open_positions()
     except Exception as e:
         log_exception("Open position read failed", e, component="trade_service", operation="execute_close_all_paper_positions")
-        return {"ok": False, "error": f"open position read failed: {e}"}, 500
+        positions = []
 
-    open_paper_rows = get_managed_open_paper_trades_for_eod_close()
+    try:
+        open_paper_rows = get_managed_open_paper_trades_for_eod_close()
+    except Exception as e:
+        log_exception(
+            "Managed open trade read failed during EOD close",
+            e,
+            component="trade_service",
+            operation="execute_close_all_paper_positions",
+        )
+        open_paper_rows = []
     open_paper_symbols = {
         str(row.get("symbol", "")).strip().upper()
         for row in open_paper_rows
@@ -90,6 +100,31 @@ def execute_close_all_paper_positions(
         row_symbol = str(row.get("symbol", "")).strip().upper()
         if row_symbol and row_symbol not in open_paper_rows_by_symbol:
             open_paper_rows_by_symbol[row_symbol] = row
+
+    # Broker snapshots can temporarily report no open positions while we still
+    # have managed OPEN lifecycle rows. Build a merged symbol list so EOD close
+    # still attempts broker flattening for those tracked rows.
+    merged_positions_by_symbol: dict[str, dict[str, Any]] = {}
+    for position in positions:
+        symbol = str(position.get("symbol", "")).strip().upper()
+        if symbol and symbol not in merged_positions_by_symbol:
+            merged_positions_by_symbol[symbol] = position
+
+    for symbol, row in open_paper_rows_by_symbol.items():
+        if symbol in merged_positions_by_symbol:
+            continue
+        side = str(row.get("side", "")).strip().upper()
+        is_short = side in {"SELL", "SHORT"}
+        merged_positions_by_symbol[symbol] = {
+            "symbol": symbol,
+            "qty": row.get("shares", ""),
+            "side": "short" if is_short else "long",
+            "current_price": row.get("entry_price", ""),
+            "broker": row.get("broker", "IBKR"),
+            "synthetic_from_lifecycle": True,
+        }
+
+    positions = list(merged_positions_by_symbol.values())
 
     results: list[dict[str, Any]] = []
     closed_count = 0

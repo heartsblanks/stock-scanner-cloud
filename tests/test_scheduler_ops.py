@@ -76,18 +76,16 @@ class SchedulerOpsTests(unittest.TestCase):
             run_reconcile=lambda: {"ok": True, "task": "reconcile"},
             run_trade_analysis=lambda: {"ok": True, "task": "trade_analysis"},
             run_signal_analysis=lambda: {"ok": True, "task": "signal_analysis"},
-            run_snapshot_export=lambda: {"ok": True, "task": "snapshot"},
             run_mode_ranking_refresh=lambda: {"ok": True, "task": "mode_ranking"},
         )
 
         self.assertTrue(result["ok"])
-        self.assertEqual(result["action_count"], 7)
+        self.assertEqual(result["action_count"], 6)
         self.assertIn("sync", result["results"])
         self.assertIn("repair_ibkr_stale_closes", result["results"])
         self.assertIn("reconcile", result["results"])
         self.assertIn("analyze_paper_trades", result["results"])
         self.assertIn("analyze_signals", result["results"])
-        self.assertIn("export_daily_snapshot", result["results"])
         self.assertIn("refresh_mode_rankings", result["results"])
 
     def test_pre_close_prep_reports_ibkr_readiness(self):
@@ -116,7 +114,6 @@ class SchedulerOpsTests(unittest.TestCase):
             run_reconcile=lambda: {"ok": True, "task": "reconcile"},
             run_trade_analysis=lambda: ([{"group_name": "mode"}], [{"symbol": "SNAP"}], []),
             run_signal_analysis=lambda: ([{"group_name": "skip_reason"}], [{"timestamp_utc": "2026-04-02T20:30:00Z"}]),
-            run_snapshot_export=lambda: {"ok": True, "task": "snapshot"},
             run_mode_ranking_refresh=lambda: {"ok": True, "task": "mode_ranking"},
         )
 
@@ -134,7 +131,6 @@ class SchedulerOpsTests(unittest.TestCase):
             run_reconcile=lambda: {"ok": True, "task": "reconcile"},
             run_trade_analysis=lambda: {"ok": True, "task": "trade_analysis"},
             run_signal_analysis=lambda: {"ok": True, "task": "signal_analysis"},
-            run_snapshot_export=lambda: {"ok": True, "task": "snapshot"},
             run_mode_ranking_refresh=None,
         )
 
@@ -151,12 +147,28 @@ class SchedulerOpsTests(unittest.TestCase):
             run_reconcile=lambda: {"ok": True, "task": "reconcile"},
             run_trade_analysis=lambda: {"ok": True, "task": "trade_analysis"},
             run_signal_analysis=lambda: {"ok": True, "task": "signal_analysis"},
-            run_snapshot_export=lambda: {"ok": True, "task": "snapshot"},
             run_mode_ranking_refresh=None,
         )
 
         self.assertTrue(result["ok"])
         self.assertIn("refresh_symbol_eligibility", result["results"])
+
+    def test_post_close_ops_captures_action_exception_without_crashing_whole_flow(self):
+        now_ny = datetime(2026, 4, 2, 16, 30, tzinfo=NY_TZ)
+        result = execute_post_close_ops(
+            now_ny=now_ny,
+            run_sync=lambda: {"ok": True, "task": "sync"},
+            run_ibkr_stale_close_repair=None,
+            run_reconcile=lambda: {"ok": True, "task": "reconcile"},
+            run_trade_analysis=lambda: {"ok": True, "task": "trade_analysis"},
+            run_signal_analysis=lambda: (_ for _ in ()).throw(RuntimeError("analysis failed")),
+            run_mode_ranking_refresh=None,
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["results"]["analyze_signals"]["status_code"], 500)
+        self.assertEqual(result["results"]["analyze_signals"]["body"]["action"], "analyze_signals")
+        self.assertIn("analysis failed", result["results"]["analyze_signals"]["body"]["error"])
 
     def test_maintenance_ops_prunes_operational_tables(self):
         now_ny = datetime(2026, 4, 2, 18, 0, tzinfo=NY_TZ)

@@ -7,6 +7,7 @@ import requests
 
 from brokers import get_paper_broker
 from core.logging_utils import log_exception
+from core.logging_utils import log_warning
 from core.paper_trade_config import get_paper_trade_limits
 from orchestration.scan_context import NY_TZ, parse_iso_utc, to_float_or_none
 from storage import (
@@ -182,6 +183,16 @@ def get_managed_open_paper_trades_for_eod_close(broker=None) -> list[dict]:
             leg_id = str(leg.get("id", "")).strip()
             if leg_id:
                 open_order_ids.add(leg_id)
+
+    if open_rows and not open_position_symbols and not open_order_ids:
+        log_warning(
+            "Broker open snapshot empty while managed OPEN lifecycle rows exist; returning managed rows for EOD close fallback",
+            component="paper_trade_context",
+            operation="get_managed_open_paper_trades_for_eod_close",
+            broker=getattr(target_broker, "name", ""),
+            managed_open_count=len(open_rows),
+        )
+        return open_rows
 
     validated_open_rows = []
     for row in open_rows:

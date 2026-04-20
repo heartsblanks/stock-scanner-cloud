@@ -15,7 +15,6 @@ Cloud-native trading workflow system for scanning markets, executing IBKR paper 
 - Stores detailed scan signal rows in **PostgreSQL**
 - Builds **trade lifecycle analytics**
 - Runs reconciliation between local and broker data
-- Exports daily snapshots and backs them up to **GitHub**
 - Serves a **React dashboard** for monitoring and insights
 
 ---
@@ -29,7 +28,6 @@ Cloud-native trading workflow system for scanning markets, executing IBKR paper 
 - **Scheduling:** Google Cloud Scheduler
 - **CI/CD:** Google Cloud Build
 - **Broker:** IBKR (paper trading)
-- **Backup:** GitHub (daily snapshots)
 
 ---
 
@@ -45,8 +43,7 @@ Cloud-native trading workflow system for scanning markets, executing IBKR paper 
 ├── repositories/
 ├── ibkr/
 ├── analysis/
-├── export_daily_snapshot.py
-├── github_export.py
+├── exports/
 ├── dashboard-ui/
 ├── Dockerfile
 ├── cloudbuild.yaml
@@ -181,7 +178,6 @@ Cloud Scheduler triggers:
 - end-of-day close
 - reconciliation
 - analytics generation
-- daily GitHub snapshot export
 
 Recommended consolidated scheduler setup:
 
@@ -192,7 +188,7 @@ Recommended consolidated scheduler setup:
 - `daily-post-close`
   - `30 16 * * 1-5 (America/New_York)`
   - Calls `POST /scheduler/daily-post-close`
-  - Internally runs sync first, then reconciliation, trade analysis, signal analysis, and daily snapshot export
+  - Internally runs sync first, then reconciliation, trade analysis, signal analysis, and mode ranking refresh
 - `maintenance`
   - `0 18 * * * (America/New_York)`
   - Calls `POST /scheduler/maintenance`
@@ -204,7 +200,7 @@ Recommended consolidated scheduler setup:
 - `test-day-cycle` (manual on-demand endpoint)
   - Calls `POST /scheduler/test-day-cycle`
   - Requires `X-Admin-Token: $ADMIN_API_TOKEN`
-  - Runs a compressed E2E cycle in one request: scan rounds (by mode), sync, optional EOD close, and optional post-close reconciliation/analysis/snapshot ops
+  - Runs a compressed E2E cycle in one request: scan rounds (by mode), sync, optional EOD close, and optional post-close reconciliation/analysis ops
   - Useful for repeatable QA drills from Cloud Run (for example, replaying a "full day" in ~1 hour)
 
 Example on-demand US test compressed cycle:
@@ -309,23 +305,6 @@ Schema defined in:
 ```
 schema.sql
 ```
-
----
-
-## 🔁 Daily Snapshot Backup
-
-Endpoint:
-```
-POST /export-daily-snapshot
-```
-
-Flow:
-1. export reports + DB snapshots
-2. clone GitHub repo
-3. copy snapshot files
-4. commit + push
-
-Snapshots are DB-derived and no longer depend on operational `signals.csv` or `trades.csv` log files.
 
 ---
 

@@ -642,6 +642,77 @@ class IbkrConnectorTests(unittest.TestCase):
         self.assertEqual(result["broker_perm_id"], 128001)
         self.assertGreaterEqual(len(result.get("order_status_transitions", [])), 2)
 
+    def test_place_paper_bracket_order_uses_market_entry_by_default(self):
+        client = IbkrGatewayClient.__new__(IbkrGatewayClient)
+        fake_ib = _FakeIbForBracketFlow(
+            symbol="TSLA",
+            parent_status="Submitted",
+            parent_perm_id=128001,
+        )
+        client._reset_connection = lambda: fake_ib
+        client._load_order_classes = lambda: (
+            _FakeLimitOrderForBracket,
+            _FakeMarketOrderForBracket,
+            _FakeGenericOrderForBracket,
+            _FakeGenericOrderForBracket,
+            _FakeStockForBracket,
+        )
+        client._entry_poll_config = lambda: (1, 0.0)
+
+        with patch.dict(os.environ, {}, clear=False):
+            result = client.place_paper_bracket_order(
+                {
+                    "metrics": {
+                        "symbol": "TSLA",
+                        "direction": "BUY",
+                        "entry": 401.0,
+                        "stop": 399.0,
+                        "target": 405.0,
+                        "shares": 10,
+                    }
+                }
+            )
+
+        self.assertTrue(result["placed"])
+        self.assertEqual(result.get("entry_order_type"), "market")
+        self.assertEqual(getattr(fake_ib.placed_orders[0], "orderType", ""), "MKT")
+
+    def test_place_paper_bracket_order_uses_limit_entry_when_configured(self):
+        client = IbkrGatewayClient.__new__(IbkrGatewayClient)
+        fake_ib = _FakeIbForBracketFlow(
+            symbol="TSLA",
+            parent_status="Submitted",
+            parent_perm_id=128001,
+        )
+        client._reset_connection = lambda: fake_ib
+        client._load_order_classes = lambda: (
+            _FakeLimitOrderForBracket,
+            _FakeMarketOrderForBracket,
+            _FakeGenericOrderForBracket,
+            _FakeGenericOrderForBracket,
+            _FakeStockForBracket,
+        )
+        client._entry_poll_config = lambda: (1, 0.0)
+
+        with patch.dict(os.environ, {"IBKR_ENTRY_ORDER_TYPE": "LIMIT"}, clear=False):
+            result = client.place_paper_bracket_order(
+                {
+                    "metrics": {
+                        "symbol": "TSLA",
+                        "direction": "BUY",
+                        "entry": 401.0,
+                        "stop": 399.0,
+                        "target": 405.0,
+                        "shares": 10,
+                    }
+                }
+            )
+
+        self.assertTrue(result["placed"])
+        self.assertEqual(result.get("entry_order_type"), "limit")
+        self.assertEqual(getattr(fake_ib.placed_orders[0], "orderType", ""), "LMT")
+        self.assertEqual(getattr(fake_ib.placed_orders[0], "lmtPrice", 0.0), 401.0)
+
     def test_place_paper_bracket_order_requires_server_ack_perm_id(self):
         client = IbkrGatewayClient.__new__(IbkrGatewayClient)
         fake_ib = _FakeIbForBracketFlow(

@@ -36,9 +36,7 @@ from storage import (
     purge_all_test_data,
     purge_legacy_broker_data,
 )
-from exports.export_daily_snapshot import run_daily_snapshot
 from routes.health import register_health_routes
-from routes.export import register_export_routes
 from routes.analysis import register_analysis_routes
 from routes.reconcile import register_reconcile_routes
 from routes.reconcile_legacy import register_legacy_reconcile_routes
@@ -462,7 +460,6 @@ def run_daily_post_close_scheduler(*, now_ny: datetime):
         run_reconcile=lambda: {"ok": True, "skipped": True, "reason": "reconciliation_disabled_in_ibkr_only_mode"},
         run_trade_analysis=run_trade_analysis,
         run_signal_analysis=run_signal_analysis,
-        run_snapshot_export=run_daily_snapshot,
         run_mode_ranking_refresh=lambda: refresh_ibkr_mode_rankings(ranking_date=now_ny.date().isoformat()),
     )
 
@@ -630,7 +627,6 @@ register_health_routes(
     purge_legacy_broker_data=purge_legacy_broker_data,
     run_symbol_eligibility_refresh=run_symbol_eligibility_refresh,
 )
-register_export_routes(app, run_daily_snapshot=run_daily_snapshot)
 register_analysis_routes(
     app,
     run_trade_analysis=run_trade_analysis,

@@ -28,6 +28,21 @@ def _normalize_handler_result(result: Any) -> dict[str, Any]:
     }
 
 
+def _run_action_safely(action_name: str, handler: Callable[[], Any]) -> dict[str, Any]:
+    try:
+        return _normalize_handler_result(handler())
+    except Exception as exc:
+        return {
+            "ok": False,
+            "status_code": 500,
+            "body": {
+                "ok": False,
+                "action": action_name,
+                "error": str(exc),
+            },
+        }
+
+
 def is_weekday(now_ny: datetime) -> bool:
     return now_ny.weekday() < 5
 
@@ -184,22 +199,26 @@ def execute_post_close_ops(
     run_reconcile: Callable[[], Any],
     run_trade_analysis: Callable[[], Any],
     run_signal_analysis: Callable[[], Any],
-    run_snapshot_export: Callable[[], Any],
     run_mode_ranking_refresh: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
     results = {
-        "sync": _normalize_handler_result(run_sync()),
+        "sync": _run_action_safely("sync", run_sync),
     }
     if run_symbol_eligibility_refresh is not None:
-        results["refresh_symbol_eligibility"] = _normalize_handler_result(run_symbol_eligibility_refresh())
+        results["refresh_symbol_eligibility"] = _run_action_safely(
+            "refresh_symbol_eligibility",
+            run_symbol_eligibility_refresh,
+        )
     if run_ibkr_stale_close_repair is not None:
-        results["repair_ibkr_stale_closes"] = _normalize_handler_result(run_ibkr_stale_close_repair())
-    results["reconcile"] = _normalize_handler_result(run_reconcile())
-    results["analyze_paper_trades"] = _normalize_handler_result(run_trade_analysis())
-    results["analyze_signals"] = _normalize_handler_result(run_signal_analysis())
-    results["export_daily_snapshot"] = _normalize_handler_result(run_snapshot_export())
+        results["repair_ibkr_stale_closes"] = _run_action_safely(
+            "repair_ibkr_stale_closes",
+            run_ibkr_stale_close_repair,
+        )
+    results["reconcile"] = _run_action_safely("reconcile", run_reconcile)
+    results["analyze_paper_trades"] = _run_action_safely("analyze_paper_trades", run_trade_analysis)
+    results["analyze_signals"] = _run_action_safely("analyze_signals", run_signal_analysis)
     if run_mode_ranking_refresh is not None:
-        results["refresh_mode_rankings"] = _normalize_handler_result(run_mode_ranking_refresh())
+        results["refresh_mode_rankings"] = _run_action_safely("refresh_mode_rankings", run_mode_ranking_refresh)
     return {
         "ok": all(item.get("ok", False) for item in results.values()),
         "scheduler": "daily-post-close",

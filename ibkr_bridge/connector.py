@@ -45,6 +45,13 @@ def _configured_hard_notional_cap() -> float:
     return configured if configured > 0 else DEFAULT_PAPER_MAX_NOTIONAL
 
 
+def _configured_entry_order_type() -> str:
+    raw_value = str(os.getenv("IBKR_ENTRY_ORDER_TYPE", "MARKET")).strip().upper()
+    if raw_value in {"LMT", "LIMIT"}:
+        return "LMT"
+    return "MKT"
+
+
 def _fractional_share_decimals() -> int:
     try:
         return max(0, min(6, int(os.getenv("FRACTIONAL_SHARE_DECIMALS", "4"))))
@@ -1535,9 +1542,13 @@ class IbkrGatewayClient:
         action = "BUY" if direction == "BUY" else "SELL"
         exit_action = "SELL" if action == "BUY" else "BUY"
         client_order_id = f"scanner-{symbol}-{direction}-{int(round(entry * 10000))}-{_order_quantity_token(final_shares)}"
+        entry_order_type = _configured_entry_order_type()
 
         base_order_id = ib.client.getReqId()
-        parent = LimitOrder(action, final_shares, round(entry, 2), transmit=False)
+        if entry_order_type == "MKT":
+            parent = MarketOrder(action, final_shares, transmit=False)
+        else:
+            parent = LimitOrder(action, final_shares, round(entry, 2), transmit=False)
         parent.orderId = base_order_id
         parent.orderRef = client_order_id
         parent.tif = "DAY"
@@ -1576,6 +1587,7 @@ class IbkrGatewayClient:
             trailing_stop_order_id=base_order_id + 2,
             trail_amount=trail_amount,
             trail_percent=trail_percent,
+            entry_order_type=entry_order_type,
         )
 
         ib_api_errors: list[dict[str, Any]] = []
@@ -1808,6 +1820,7 @@ class IbkrGatewayClient:
                 "order_id": str(base_order_id),
                 "parent_order_id": str(base_order_id),
                 "order_status": parent_status,
+                "entry_order_type": "market" if entry_order_type == "MKT" else "limit",
                 "order_status_transitions": parent_snapshots,
                 "ib_api_errors": ib_api_errors,
                 "trade_errors": trade_errors,
