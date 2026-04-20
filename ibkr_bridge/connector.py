@@ -37,6 +37,14 @@ def _fractional_shares_enabled() -> bool:
     return _truthy_env("ENABLE_FRACTIONAL_SHARES", False)
 
 
+DEFAULT_PAPER_MAX_NOTIONAL = 250.0
+
+
+def _configured_hard_notional_cap() -> float:
+    configured = _to_float(os.getenv("PAPER_MAX_NOTIONAL"), DEFAULT_PAPER_MAX_NOTIONAL)
+    return configured if configured > 0 else DEFAULT_PAPER_MAX_NOTIONAL
+
+
 def _fractional_share_decimals() -> int:
     try:
         return max(0, min(6, int(os.getenv("FRACTIONAL_SHARE_DECIMALS", "4"))))
@@ -1288,10 +1296,26 @@ class IbkrGatewayClient:
         if direction == "SELL" and not (target < entry < stop):
             return {"attempted": False, "placed": False, "broker": "IBKR", "symbol": symbol, "reason": "invalid_short_bracket"}
 
-        notional_cap_candidates = [value for value in (max_notional, per_trade_notional, remaining_allocatable_capital) if _to_float(value) > 0]
+        notional_cap_candidates = [
+            value
+            for value in (max_notional, per_trade_notional, remaining_allocatable_capital)
+            if _to_float(value) > 0
+        ]
+        # Defense-in-depth: when scanner sizing fields are present, enforce the
+        # configured hard cap at the broker layer too.
+        if notional_cap_candidates:
+            configured_hard_cap = _configured_hard_notional_cap()
+            if configured_hard_cap > 0:
+                notional_cap_candidates.append(configured_hard_cap)
         notional_cap = min(notional_cap_candidates) if notional_cap_candidates else 0.0
         capped_shares = _normalize_order_quantity((notional_cap / entry), allow_fractional=allow_fractional) if notional_cap > 0 else 0.0
-        final_shares = min(scanner_shares, capped_shares) if scanner_shares > 0 and capped_shares > 0 else max(scanner_shares, capped_shares)
+        if notional_cap > 0 and capped_shares <= 0:
+            # Hard cap says this symbol cannot afford even one share.
+            final_shares = 0.0
+        elif scanner_shares > 0 and capped_shares > 0:
+            final_shares = min(scanner_shares, capped_shares)
+        else:
+            final_shares = max(scanner_shares, capped_shares)
         if final_shares <= 0:
             return {"attempted": False, "placed": False, "broker": "IBKR", "symbol": symbol, "reason": "position_size_too_small"}
 

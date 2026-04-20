@@ -753,6 +753,90 @@ class IbkrConnectorTests(unittest.TestCase):
         self.assertEqual(result["existing_position_qty"], 146.0)
         self.assertEqual(result["existing_open_order_count"], 0)
 
+    def test_place_paper_bracket_order_blocks_when_hard_cap_cannot_afford_one_share(self):
+        client = IbkrGatewayClient.__new__(IbkrGatewayClient)
+        fake_ib = _FakeIbForBracketFlow(
+            symbol="TSLA",
+            parent_status="Submitted",
+            parent_perm_id=128001,
+        )
+        client._reset_connection = lambda: fake_ib
+        client._load_order_classes = lambda: (
+            _FakeLimitOrderForBracket,
+            _FakeMarketOrderForBracket,
+            _FakeGenericOrderForBracket,
+            _FakeGenericOrderForBracket,
+            _FakeStockForBracket,
+        )
+        client._entry_poll_config = lambda: (1, 0.0)
+
+        with patch.dict(
+            os.environ,
+            {"ENABLE_FRACTIONAL_SHARES": "false", "PAPER_MAX_NOTIONAL": "250"},
+            clear=False,
+        ):
+            result = client.place_paper_bracket_order(
+                {
+                    "metrics": {
+                        "symbol": "TSLA",
+                        "direction": "BUY",
+                        "entry": 401.0,
+                        "stop": 399.0,
+                        "target": 405.0,
+                        "shares": 10,
+                        "per_trade_notional": 1000.0,
+                        "remaining_allocatable_capital": 1000.0,
+                    }
+                }
+            )
+
+        self.assertFalse(result["attempted"])
+        self.assertFalse(result["placed"])
+        self.assertEqual(result["reason"], "position_size_too_small")
+        self.assertEqual(len(fake_ib.placed_orders), 0)
+
+    def test_place_paper_bracket_order_clamps_quantity_to_hard_notional_cap(self):
+        client = IbkrGatewayClient.__new__(IbkrGatewayClient)
+        fake_ib = _FakeIbForBracketFlow(
+            symbol="AMD",
+            parent_status="Submitted",
+            parent_perm_id=128001,
+        )
+        client._reset_connection = lambda: fake_ib
+        client._load_order_classes = lambda: (
+            _FakeLimitOrderForBracket,
+            _FakeMarketOrderForBracket,
+            _FakeGenericOrderForBracket,
+            _FakeGenericOrderForBracket,
+            _FakeStockForBracket,
+        )
+        client._entry_poll_config = lambda: (1, 0.0)
+
+        with patch.dict(
+            os.environ,
+            {"ENABLE_FRACTIONAL_SHARES": "false", "PAPER_MAX_NOTIONAL": "250"},
+            clear=False,
+        ):
+            result = client.place_paper_bracket_order(
+                {
+                    "metrics": {
+                        "symbol": "AMD",
+                        "direction": "BUY",
+                        "entry": 100.0,
+                        "stop": 99.0,
+                        "target": 103.0,
+                        "shares": 10,
+                        "per_trade_notional": 1000.0,
+                        "remaining_allocatable_capital": 1000.0,
+                    }
+                }
+            )
+
+        self.assertTrue(result["attempted"])
+        self.assertTrue(result["placed"])
+        self.assertEqual(result["shares"], 2.0)
+        self.assertEqual(fake_ib.placed_orders[0].totalQuantity, 2.0)
+
 
 if __name__ == "__main__":
     unittest.main()

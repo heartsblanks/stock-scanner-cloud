@@ -276,6 +276,31 @@ CREATE INDEX IF NOT EXISTS idx_mode_rankings_window ON mode_rankings(window_days
 CREATE UNIQUE INDEX IF NOT EXISTS uq_mode_rankings_day_broker_window_mode
     ON mode_rankings(ranking_date, broker, window_days, mode);
 
+-- Per-session symbol eligibility snapshot used to pre-filter scans
+CREATE TABLE IF NOT EXISTS symbol_session_eligibility (
+    id SERIAL PRIMARY KEY,
+    session_date DATE NOT NULL,
+    mode TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    display_name TEXT,
+    currency TEXT,
+    last_price NUMERIC,
+    max_notional NUMERIC,
+    eligible BOOLEAN NOT NULL DEFAULT FALSE,
+    ineligible_reason TEXT,
+    source TEXT,
+    price_timestamp TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_symbol_session_eligibility_session_mode_symbol
+    ON symbol_session_eligibility(session_date, mode, symbol);
+CREATE INDEX IF NOT EXISTS idx_symbol_session_eligibility_mode_session
+    ON symbol_session_eligibility(mode, session_date DESC);
+CREATE INDEX IF NOT EXISTS idx_symbol_session_eligibility_symbol
+    ON symbol_session_eligibility(symbol);
+
 ALTER TABLE paper_trade_attempts ADD COLUMN IF NOT EXISTS broker TEXT;
 ALTER TABLE trade_events ADD COLUMN IF NOT EXISTS broker TEXT;
 ALTER TABLE broker_orders ADD COLUMN IF NOT EXISTS broker TEXT;

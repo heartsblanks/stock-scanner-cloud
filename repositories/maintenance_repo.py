@@ -127,6 +127,7 @@ def purge_all_test_data() -> dict[str, Any]:
         "trade_events",
         "trade_lifecycles",
         "broker_orders",
+        "symbol_session_eligibility",
         "signal_logs",
         "scan_runs",
         "reconciliation_details",

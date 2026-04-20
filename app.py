@@ -146,6 +146,7 @@ from services.sync_service import execute_sync_paper_trades
 from services.ibkr_repair_service import repair_ibkr_stale_closes
 from services.ibkr_vm_journal_repair_service import repair_ibkr_stale_closes_from_bridge_journal
 from services.scan_service import execute_full_scan
+from services.symbol_eligibility_service import refresh_symbol_eligibility_for_next_session
 from services.trade_service import execute_close_all_paper_positions
 
 from analytics.trade_scan import (
@@ -441,6 +442,10 @@ def run_daily_post_close_scheduler(*, now_ny: datetime):
     return build_execute_post_close_ops(
         now_ny=now_ny,
         run_sync=handle_sync_paper_trades,
+        run_symbol_eligibility_refresh=lambda: refresh_symbol_eligibility_for_next_session(
+            now_ny=now_ny,
+            fetch_intraday_fn=fetch_ibkr_intraday,
+        ),
         run_ibkr_stale_close_repair=lambda: repair_ibkr_stale_closes(
             target_date=now_ny.date().isoformat(),
             get_stale_ibkr_closed_trade_lifecycles=get_stale_ibkr_closed_trade_lifecycles,

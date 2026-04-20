@@ -179,6 +179,7 @@ def execute_post_close_ops(
     *,
     now_ny: datetime,
     run_sync: Callable[[], Any],
+    run_symbol_eligibility_refresh: Callable[[], Any] | None = None,
     run_ibkr_stale_close_repair: Callable[[], Any] | None,
     run_reconcile: Callable[[], Any],
     run_trade_analysis: Callable[[], Any],
@@ -189,6 +190,8 @@ def execute_post_close_ops(
     results = {
         "sync": _normalize_handler_result(run_sync()),
     }
+    if run_symbol_eligibility_refresh is not None:
+        results["refresh_symbol_eligibility"] = _normalize_handler_result(run_symbol_eligibility_refresh())
     if run_ibkr_stale_close_repair is not None:
         results["repair_ibkr_stale_closes"] = _normalize_handler_result(run_ibkr_stale_close_repair())
     results["reconcile"] = _normalize_handler_result(run_reconcile())

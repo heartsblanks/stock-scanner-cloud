@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 import os
 import math
+import inspect
 from core.logging_utils import log_exception, log_info, log_warning
 from services.alert_service import send_telegram_alert, telegram_alerts_enabled
 from orchestration.scan_context import IBKR_SCHEDULED_MODE_ORDER
@@ -125,6 +126,8 @@ LOW_PRICE_NOTIONAL_CAP_ENABLED = str(os.getenv("LOW_PRICE_NOTIONAL_CAP_ENABLED",
 }
 LOW_PRICE_THRESHOLD = _to_float(os.getenv("LOW_PRICE_THRESHOLD", 20.0), 20.0)
 LOW_PRICE_MAX_NOTIONAL = _to_float(os.getenv("LOW_PRICE_MAX_NOTIONAL", 5000.0), 5000.0)
+DEFAULT_PAPER_MAX_NOTIONAL = 250.0
+DEFAULT_PAPER_ACCOUNT_HARD_CAP = 1000.0
 
 
 def _paper_trade_broker_name(paper_trade_result: dict[str, Any]) -> str:
@@ -160,6 +163,52 @@ def _paper_trade_order_status(paper_trade_result: dict[str, Any]) -> str:
         or paper_trade_result.get("order_status")
         or ""
     ).strip()
+
+
+def _configured_hard_notional_cap() -> float:
+    """
+    Per-trade hard cap with a conservative default.
+    If PAPER_MAX_NOTIONAL is unset/invalid, fall back to $250.
+    """
+    configured = _to_float(os.getenv("PAPER_MAX_NOTIONAL"), DEFAULT_PAPER_MAX_NOTIONAL)
+    return configured if configured > 0 else DEFAULT_PAPER_MAX_NOTIONAL
+
+
+def _configured_account_size_hard_cap() -> float:
+    configured = _to_float(
+        os.getenv("PAPER_ACCOUNT_HARD_CAP"),
+        _to_float(os.getenv("SCHEDULED_PAPER_ACCOUNT_SIZE"), DEFAULT_PAPER_ACCOUNT_HARD_CAP),
+    )
+    return configured if configured > 0 else DEFAULT_PAPER_ACCOUNT_HARD_CAP
+
+
+def _cap_account_size(account_size: float) -> float:
+    hard_cap = _configured_account_size_hard_cap()
+    if hard_cap > 0 and account_size > hard_cap:
+        return float(hard_cap)
+    return float(account_size)
+
+
+def _resolve_scan_symbol_allowlist(mode: str) -> dict[str, Any]:
+    try:
+        from services.symbol_eligibility_service import resolve_session_symbol_allowlist
+
+        result = resolve_session_symbol_allowlist(mode=mode)
+        if isinstance(result, dict):
+            return result
+    except Exception as exc:
+        log_warning(
+            "Failed to resolve scan symbol allowlist",
+            component="scan_service",
+            operation="execute_full_scan",
+            mode=mode,
+            error=str(exc),
+        )
+    return {
+        "filter_applied": False,
+        "reason": "symbol_allowlist_unavailable",
+        "allowed_symbols": None,
+    }
 
 
 def evaluate_symbol_performance_gate(recent_trades: list[dict[str, Any]]) -> tuple[bool, str, dict[str, float | int]]:
@@ -370,6 +419,7 @@ def _apply_minimum_viable_position_sizing(metrics: dict[str, Any]) -> None:
     remaining_allocatable_capital = _to_float(metrics.get("remaining_allocatable_capital"), 0.0)
     remaining_slots = _to_int(metrics.get("remaining_slots"), 0)
     current_shares = _to_float(metrics.get("shares"), 0.0)
+    current_notional = _to_float(metrics.get("per_trade_notional"), 0.0)
 
     if entry_price <= 0 or remaining_allocatable_capital <= 0 or remaining_slots <= 0:
         return
@@ -382,16 +432,21 @@ def _apply_minimum_viable_position_sizing(metrics: dict[str, Any]) -> None:
     if remaining_allocatable_capital < entry_price:
         return
 
+    # Respect any prior notional cap (for example PAPER_MAX_NOTIONAL).
+    if current_notional > 0 and current_notional < entry_price:
+        return
+
     # Compress slot count so that each slot can fund at least one share.
     affordable_single_share_slots = max(1, int(remaining_allocatable_capital // entry_price))
     effective_slots = max(1, min(remaining_slots, affordable_single_share_slots))
 
     adjusted_notional = remaining_allocatable_capital / effective_slots
+    if current_notional > 0:
+        adjusted_notional = min(adjusted_notional, current_notional)
     adjusted_shares = _normalize_share_quantity(adjusted_notional / entry_price)
 
     if adjusted_shares <= 0:
-        adjusted_shares = 1.0
-        adjusted_notional = entry_price
+        return
 
     actual_position_cost = adjusted_shares * entry_price
     if actual_position_cost > remaining_allocatable_capital:
@@ -444,7 +499,7 @@ def _apply_hard_notional_cap(metrics: dict[str, Any]) -> None:
         return
 
     remaining_allocatable_capital = _to_float(metrics.get("remaining_allocatable_capital"), 0.0)
-    configured_hard_cap = _to_float(os.getenv("PAPER_MAX_NOTIONAL"), 0.0)
+    configured_hard_cap = _configured_hard_notional_cap()
 
     hard_cap_candidates = [value for value in (remaining_allocatable_capital, configured_hard_cap) if value > 0]
     if not hard_cap_candidates:
@@ -475,6 +530,21 @@ def _apply_hard_notional_cap(metrics: dict[str, Any]) -> None:
     metrics["notional_capped_shares"] = capped_shares
     metrics["actual_position_cost"] = round(final_notional, 4)
     metrics["actual_risk"] = round(capped_shares * _to_float(metrics.get("risk_per_share"), 0.0), 4)
+
+
+def _requires_fractional_above_cap(metrics: dict[str, Any]) -> tuple[bool, str]:
+    """
+    If fractional shares are disabled, skip symbols whose entry price is above
+    the whole-share notional cap.
+    """
+    if _fractional_shares_enabled():
+        return False, ""
+
+    entry_price = _to_float(metrics.get("entry"), 0.0)
+    hard_cap = _to_float(metrics.get("hard_max_notional"), 0.0) or _configured_hard_notional_cap()
+    if entry_price > 0 and hard_cap > 0 and entry_price > hard_cap:
+        return True, f"entry_price_above_whole_share_cap_{hard_cap:.2f}"
+    return False, ""
 
 
 def _apply_low_price_notional_cap(metrics: dict[str, Any]) -> None:
@@ -587,6 +657,7 @@ def execute_full_scan(
             "error": f"unable to resolve account_size from {active_broker}",
             "details": str(e),
         }, 400
+    account_size = _cap_account_size(account_size)
     
     current_open_positions = _to_int(payload.get("current_open_positions", 0), 0)
     current_open_exposure = _to_float(payload.get("current_open_exposure", 0.0), 0.0)
@@ -778,12 +849,30 @@ def execute_full_scan(
             "paper_trade_enabled": paper_trade,
         }
 
+    symbol_allowlist = _resolve_scan_symbol_allowlist(mode)
+    allowed_symbols = symbol_allowlist.get("allowed_symbols")
+    run_scan_kwargs: dict[str, Any] = {}
+    try:
+        supports_allowed_symbols = "allowed_symbols" in inspect.signature(run_scan).parameters
+    except Exception:
+        supports_allowed_symbols = False
+    if supports_allowed_symbols and bool(symbol_allowlist.get("filter_applied")):
+        run_scan_kwargs["allowed_symbols"] = list(allowed_symbols or [])
+    elif bool(symbol_allowlist.get("filter_applied")):
+        log_warning(
+            "run_scan implementation does not support allowed_symbols; allowlist pre-filter was skipped",
+            component="scan_service",
+            operation="execute_full_scan",
+            mode=mode,
+        )
+
     all_trades, evaluations, _fetch_ok, _fetch_fail, benchmark_directions, source = run_scan(
         account_size,
         mode,
         current_open_positions=current_open_positions,
         current_open_exposure=current_open_exposure,
         disable_strategy_gates=disable_strategy_gates,
+        **run_scan_kwargs,
     )
     try:
         log_info("Using live IBKR equity/account_size", component="scan_service", operation="execute_full_scan", account_size=account_size, mode=mode)
@@ -848,8 +937,19 @@ def execute_full_scan(
         "paper_trade_enabled": paper_trade,
         "scan_source": scan_source,
         "disable_strategy_gates": disable_strategy_gates,
+        "account_size_hard_cap": _configured_account_size_hard_cap(),
         "current_open_positions": current_open_positions,
         "current_open_exposure": current_open_exposure,
+        "symbol_allowlist": {
+            "filter_applied": bool(symbol_allowlist.get("filter_applied")),
+            "mode": str(symbol_allowlist.get("mode", mode)),
+            "requested_session_date": symbol_allowlist.get("requested_session_date"),
+            "source_session_date": symbol_allowlist.get("source_session_date"),
+            "fallback_used": bool(symbol_allowlist.get("fallback_used", False)),
+            "allowed_count": _to_int(symbol_allowlist.get("allowed_count", 0), 0),
+            "excluded_count": _to_int(symbol_allowlist.get("excluded_count", 0), 0),
+            "reason": symbol_allowlist.get("reason"),
+        },
     }
 
     # --- Daily Risk Guardrail (block trading on drawdown) ---
@@ -930,6 +1030,11 @@ def execute_full_scan(
             skipped_symbols = []
             skip_reasons = []
             placed_trade_ids = []
+            place_supports_max_notional = False
+            try:
+                place_supports_max_notional = "max_notional" in inspect.signature(place_paper_orders_from_trade).parameters
+            except Exception:
+                place_supports_max_notional = False
 
             for paper_trade_candidate in paper_trade_candidates:
                 # --- Adaptive cooldown + sizing ---
@@ -1086,6 +1191,27 @@ def execute_full_scan(
                     _apply_low_price_notional_cap(paper_metrics)
                     _apply_minimum_viable_position_sizing(paper_metrics)
 
+                requires_fractional, cap_reason = _requires_fractional_above_cap(paper_metrics)
+                if requires_fractional:
+                    record_attempt(
+                        "PLACEMENT_SKIPPED",
+                        symbol=candidate_symbol,
+                        metrics=paper_metrics,
+                        final_reason=cap_reason,
+                        placed=False,
+                    )
+                    paper_results.append({
+                        "attempted": False,
+                        "placed": False,
+                        "reason": cap_reason,
+                        "symbol": candidate_symbol,
+                        "entry_price": _to_float(paper_metrics.get("entry"), 0.0),
+                        "hard_max_notional": _to_float(paper_metrics.get("hard_max_notional"), _configured_hard_notional_cap()),
+                    })
+                    skipped_symbols.append(candidate_symbol)
+                    skip_reasons.append(f"{candidate_symbol}:{cap_reason}")
+                    continue
+
                 if _to_float(paper_metrics.get("shares"), 0.0) <= 0:
                     log_warning(
                         "Paper trade candidate rejected after sizing",
@@ -1173,7 +1299,18 @@ def execute_full_scan(
                     continue
 
                 try:
-                    broker_results = _normalize_paper_trade_results(place_paper_orders_from_trade(paper_trade_candidate))
+                    placement_max_notional = _to_float(paper_metrics.get("hard_max_notional"), 0.0) or _to_float(
+                        paper_metrics.get("per_trade_notional"), 0.0
+                    )
+                    if place_supports_max_notional and placement_max_notional > 0:
+                        broker_results = _normalize_paper_trade_results(
+                            place_paper_orders_from_trade(
+                                paper_trade_candidate,
+                                max_notional=placement_max_notional,
+                            )
+                        )
+                    else:
+                        broker_results = _normalize_paper_trade_results(place_paper_orders_from_trade(paper_trade_candidate))
                     paper_results.extend(broker_results)
                     candidate_placed_any = False
                     candidate_rejection_reasons: list[str] = []

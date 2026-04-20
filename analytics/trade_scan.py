@@ -990,6 +990,7 @@ def run_scan(
     current_open_positions: int = 0,
     current_open_exposure: float = 0.0,
     disable_strategy_gates: bool = False,
+    allowed_symbols: list[str] | set[str] | tuple[str, ...] | None = None,
     *,
     fetch_intraday_fn=fetch_intraday,
     source_label: str | None = None,
@@ -1021,6 +1022,19 @@ def run_scan(
             "Mode must be 'primary', 'secondary', 'third', 'fourth', 'fifth', 'sixth', 'us_test', "
             "'europe_test', 'core_one', 'core_two', or 'core_three'"
         )
+
+    normalized_allowlist = None
+    if allowed_symbols is not None:
+        normalized_allowlist = {
+            str(symbol).strip().upper()
+            for symbol in allowed_symbols
+            if str(symbol).strip()
+        }
+        selected_instruments = {
+            name: info
+            for name, info in selected_instruments.items()
+            if str(info.get("symbol", "")).strip().upper() in normalized_allowlist
+        }
 
     benchmark_instruments = get_benchmark_instruments()
 

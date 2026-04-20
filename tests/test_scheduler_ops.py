@@ -141,6 +141,23 @@ class SchedulerOpsTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertNotIn("repair_ibkr_stale_closes", result["results"])
 
+    def test_post_close_ops_runs_symbol_eligibility_refresh_when_hook_is_provided(self):
+        now_ny = datetime(2026, 4, 2, 16, 30, tzinfo=NY_TZ)
+        result = execute_post_close_ops(
+            now_ny=now_ny,
+            run_sync=lambda: {"ok": True, "task": "sync"},
+            run_symbol_eligibility_refresh=lambda: {"ok": True, "task": "refresh_symbol_eligibility"},
+            run_ibkr_stale_close_repair=None,
+            run_reconcile=lambda: {"ok": True, "task": "reconcile"},
+            run_trade_analysis=lambda: {"ok": True, "task": "trade_analysis"},
+            run_signal_analysis=lambda: {"ok": True, "task": "signal_analysis"},
+            run_snapshot_export=lambda: {"ok": True, "task": "snapshot"},
+            run_mode_ranking_refresh=None,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertIn("refresh_symbol_eligibility", result["results"])
+
     def test_maintenance_ops_prunes_operational_tables(self):
         now_ny = datetime(2026, 4, 2, 18, 0, tzinfo=NY_TZ)
         result = execute_maintenance_ops(
