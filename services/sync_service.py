@@ -215,16 +215,26 @@ def _expected_ibkr_client_order_ids(
     if direction not in {"LONG", "SHORT"}:
         return set()
 
-    entry_price = to_float_or_none(open_row.get("entry_price", ""))
     shares = to_float_or_none(open_row.get("shares", ""))
-    if entry_price is None or shares is None or shares <= 0:
+    if shares is None or shares <= 0:
+        return set()
+
+    entry_candidates: list[float] = []
+    for key in ("entry_price", "signal_entry", "linked_signal_entry"):
+        parsed_value = to_float_or_none(open_row.get(key, ""))
+        if parsed_value is None or parsed_value <= 0:
+            continue
+        entry_candidates.append(parsed_value)
+
+    if not entry_candidates:
         return set()
 
     try:
-        entry_basis = int(round(entry_price * 10000))
         share_count = int(round(shares))
     except Exception:
         return set()
+
+    entry_bases = {int(round(price * 10000)) for price in entry_candidates}
 
     direction_tokens: set[str] = set()
     if direction == "LONG":
@@ -236,6 +246,7 @@ def _expected_ibkr_client_order_ids(
 
     return {
         f"scanner-{symbol}-{token}-{entry_basis}-{share_count}"
+        for entry_basis in entry_bases
         for token in direction_tokens
     }
 
