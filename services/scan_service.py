@@ -863,6 +863,26 @@ def execute_full_scan(
         supports_allowed_symbols = False
     if supports_allowed_symbols and bool(symbol_allowlist.get("filter_applied")):
         run_scan_kwargs["allowed_symbols"] = list(allowed_symbols or [])
+    elif supports_allowed_symbols and paper_trade:
+        # Fail closed for paper trading when eligibility rows are unavailable.
+        # This prevents scanning symbols that may violate whole-share notional caps.
+        run_scan_kwargs["allowed_symbols"] = []
+        symbol_allowlist["filter_applied"] = True
+        symbol_allowlist["fallback_used"] = True
+        symbol_allowlist["allowed_symbols"] = []
+        symbol_allowlist["allowed_count"] = 0
+        symbol_allowlist["excluded_count"] = _to_int(symbol_allowlist.get("excluded_count", 0), 0)
+        symbol_allowlist["reason"] = str(
+            symbol_allowlist.get("reason") or "symbol_allowlist_missing_fail_closed_for_paper_trade"
+        )
+        log_warning(
+            "Symbol allowlist unavailable; forcing empty allowlist for paper-trade fail-closed behavior",
+            component="scan_service",
+            operation="execute_full_scan",
+            mode=mode,
+            scan_source=scan_source,
+            reason=symbol_allowlist.get("reason"),
+        )
     elif bool(symbol_allowlist.get("filter_applied")):
         log_warning(
             "run_scan implementation does not support allowed_symbols; allowlist pre-filter was skipped",
