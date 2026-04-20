@@ -591,13 +591,25 @@ def execute_full_scan(
     current_open_exposure = _to_float(payload.get("current_open_exposure", 0.0), 0.0)
     payload["account_size"] = account_size
 
-    if mode not in {"primary", "secondary", "third", "fourth", "fifth", "sixth", "core_one", "core_two", "core_three"}:
+    if mode not in {"primary", "secondary", "third", "fourth", "fifth", "sixth", "asia_test", "core_one", "core_two", "core_three"}:
         return {
             "ok": False,
-            "error": "mode must be primary, secondary, third, fourth, fifth, sixth, core_one, core_two, or core_three",
+            "error": "mode must be primary, secondary, third, fourth, fifth, sixth, asia_test, core_one, core_two, or core_three",
         }, 400
 
-    ok, timing_msg = market_time_check()
+    ignore_market_hours_raw = payload.get("ignore_market_hours", mode in {"asia_test"})
+    if isinstance(ignore_market_hours_raw, bool):
+        ignore_market_hours = ignore_market_hours_raw
+    elif isinstance(ignore_market_hours_raw, str):
+        ignore_market_hours = ignore_market_hours_raw.strip().lower() in {"true", "1", "yes", "y", "on"}
+    else:
+        ignore_market_hours = bool(ignore_market_hours_raw)
+
+    if ignore_market_hours:
+        ok = True
+        timing_msg = "Market-time gate bypassed."
+    else:
+        ok, timing_msg = market_time_check()
     scan_started_at = datetime.now(timezone.utc)
     timestamp_utc = datetime.now(timezone.utc).isoformat()
 

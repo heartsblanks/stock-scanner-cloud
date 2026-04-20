@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime
 from typing import Any, Callable
 
@@ -428,4 +429,161 @@ def execute_ibkr_login_alert(
         "reason": "login_required_alert_attempted",
         "ibkr_status": status,
         "alert_result": alert_result,
+    }
+
+
+def execute_test_day_cycle(
+    *,
+    now_ny: datetime,
+    payload: dict[str, Any] | None,
+    run_scan: Callable[[dict[str, Any]], Any],
+    run_sync: Callable[[], Any],
+    run_close: Callable[[], Any],
+    run_post_close_ops: Callable[[], Any] | None = None,
+    sleep_fn: Callable[[float], None] | None = None,
+) -> dict[str, Any]:
+    def _to_bool(value: Any, default: bool) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {"1", "true", "yes", "y", "on"}:
+                return True
+            if lowered in {"0", "false", "no", "n", "off"}:
+                return False
+        return bool(value)
+
+    def _to_int(value: Any, default: int, *, minimum: int = 0) -> int:
+        try:
+            return max(minimum, int(value))
+        except Exception:
+            return max(minimum, default)
+
+    def _to_float(value: Any, default: float, *, minimum: float = 0.0) -> float:
+        try:
+            return max(minimum, float(value))
+        except Exception:
+            return max(minimum, default)
+
+    request_payload = payload or {}
+    raw_modes = request_payload.get("modes")
+    if isinstance(raw_modes, str):
+        modes = [token.strip().lower() for token in raw_modes.split(",") if token.strip()]
+    elif isinstance(raw_modes, list):
+        modes = [str(token).strip().lower() for token in raw_modes if str(token).strip()]
+    else:
+        default_mode = str(request_payload.get("mode", "asia_test")).strip().lower() or "asia_test"
+        modes = [default_mode]
+
+    valid_modes = {
+        "primary",
+        "secondary",
+        "third",
+        "fourth",
+        "fifth",
+        "sixth",
+        "asia_test",
+        "core_one",
+        "core_two",
+        "core_three",
+    }
+    invalid_modes = [mode for mode in modes if mode not in valid_modes]
+    if invalid_modes:
+        return {
+            "ok": False,
+            "scheduler": "test-day-cycle",
+            "current_new_york_time": now_ny.strftime("%Y-%m-%d %H:%M"),
+            "error": "invalid_modes",
+            "invalid_modes": invalid_modes,
+            "valid_modes": sorted(valid_modes),
+        }
+
+    scan_rounds = _to_int(request_payload.get("scan_rounds", 1), 1, minimum=1)
+    scan_interval_seconds = _to_float(request_payload.get("scan_interval_seconds", 0), 0.0, minimum=0.0)
+    run_initial_sync = _to_bool(request_payload.get("run_initial_sync", True), True)
+    sync_after_each_scan = _to_bool(request_payload.get("sync_after_each_scan", True), True)
+    run_eod_close = _to_bool(request_payload.get("run_eod_close", True), True)
+    run_post_close = _to_bool(request_payload.get("run_post_close", True), True)
+    paper_trade = _to_bool(request_payload.get("paper_trade", True), True)
+    ignore_market_hours = _to_bool(request_payload.get("ignore_market_hours", True), True)
+    debug = _to_bool(request_payload.get("debug", False), False)
+    scan_payload_overrides = request_payload.get("scan_payload") if isinstance(request_payload.get("scan_payload"), dict) else {}
+
+    actions: list[str] = []
+    results: dict[str, Any] = {}
+    scan_plan: list[dict[str, Any]] = []
+    started_monotonic = time.monotonic()
+
+    def _record_action(action_name: str, action_result: Any) -> None:
+        actions.append(action_name)
+        results[action_name] = _normalize_handler_result(action_result)
+
+    if run_initial_sync:
+        _record_action("initial_sync", run_sync())
+
+    total_scan_steps = scan_rounds * len(modes)
+    current_scan_step = 0
+    for round_index in range(scan_rounds):
+        for mode in modes:
+            current_scan_step += 1
+            scan_payload: dict[str, Any] = {
+                "mode": mode,
+                "paper_trade": paper_trade,
+                "scan_source": "SCHEDULED",
+                "ignore_market_hours": ignore_market_hours,
+                "debug": debug,
+            }
+            scan_payload.update(scan_payload_overrides)
+            scan_payload["mode"] = mode
+            scan_payload["paper_trade"] = paper_trade
+            scan_payload["scan_source"] = "SCHEDULED"
+            scan_payload["ignore_market_hours"] = ignore_market_hours
+            scan_payload["debug"] = debug
+
+            scan_action = f"scan_r{round_index + 1}_{mode}"
+            _record_action(scan_action, run_scan(scan_payload))
+            scan_plan.append(
+                {
+                    "round": round_index + 1,
+                    "mode": mode,
+                    "scan_action": scan_action,
+                }
+            )
+
+            if sync_after_each_scan:
+                _record_action(f"sync_r{round_index + 1}_{mode}", run_sync())
+
+            should_sleep = (
+                scan_interval_seconds > 0
+                and sleep_fn is not None
+                and current_scan_step < total_scan_steps
+            )
+            if should_sleep:
+                sleep_fn(scan_interval_seconds)
+
+    if run_eod_close:
+        _record_action("eod_close", run_close())
+
+    _record_action("final_sync", run_sync())
+
+    if run_post_close and run_post_close_ops is not None:
+        _record_action("post_close", run_post_close_ops())
+
+    elapsed_seconds = round(max(0.0, time.monotonic() - started_monotonic), 3)
+    return {
+        "ok": all(item.get("ok", False) for item in results.values()) if results else True,
+        "scheduler": "test-day-cycle",
+        "current_new_york_time": now_ny.strftime("%Y-%m-%d %H:%M"),
+        "actions": actions,
+        "action_count": len(actions),
+        "scan_plan": scan_plan,
+        "scan_rounds": scan_rounds,
+        "modes": modes,
+        "scan_interval_seconds": scan_interval_seconds,
+        "paper_trade": paper_trade,
+        "ignore_market_hours": ignore_market_hours,
+        "elapsed_seconds": elapsed_seconds,
+        "results": results,
     }

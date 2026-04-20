@@ -19,6 +19,7 @@ def register_scheduler_routes(
     execute_ibkr_login_alert,
     execute_ibkr_stale_close_repair,
     execute_ibkr_vm_journal_repair,
+    execute_test_day_cycle,
 ):
     def _require_admin_token():
         admin_token = str(os.getenv("ADMIN_API_TOKEN", "")).strip()
@@ -142,4 +143,21 @@ def register_scheduler_routes(
             return jsonify(result)
         except Exception as e:
             log_exception("scheduler ibkr vm journal repair failed", e, route="/scheduler/ibkr-vm-journal-repair")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.post("/scheduler/test-day-cycle")
+    def scheduler_test_day_cycle():
+        auth_error = _require_admin_token()
+        if auth_error is not None:
+            return auth_error
+        if execute_test_day_cycle is None:
+            return jsonify({"ok": False, "error": "Not implemented"}), 501
+
+        now_ny = datetime.now(ny_tz)
+        payload = request.get_json(silent=True) or {}
+        try:
+            result = execute_test_day_cycle(now_ny=now_ny, payload=payload)
+            return jsonify(result)
+        except Exception as e:
+            log_exception("scheduler test day cycle failed", e, route="/scheduler/test-day-cycle")
             return jsonify({"ok": False, "error": str(e)}), 500

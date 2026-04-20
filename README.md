@@ -201,6 +201,30 @@ Recommended consolidated scheduler setup:
   - `*/10 9-16 * * 1-5 (America/New_York)`
   - Calls `POST /scheduler/ibkr-login-alert`
   - Applies a low-call check gate (default `30` minutes) and only sends an alert when the IBKR bridge reports `LOGIN_REQUIRED` and Telegram alert credentials are configured
+- `test-day-cycle` (manual on-demand endpoint)
+  - Calls `POST /scheduler/test-day-cycle`
+  - Requires `X-Admin-Token: $ADMIN_API_TOKEN`
+  - Runs a compressed E2E cycle in one request: scan rounds (by mode), sync, optional EOD close, and optional post-close reconciliation/analysis/snapshot ops
+  - Useful for repeatable QA drills from Cloud Run (for example, replaying a "full day" in ~1 hour)
+
+Example on-demand Asia-focused compressed cycle:
+
+```bash
+curl -sS -X POST "$RUN_BASE_URL/scheduler/test-day-cycle" \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: $ADMIN_API_TOKEN" \
+  -d '{
+    "modes": ["asia_test"],
+    "scan_rounds": 6,
+    "scan_interval_seconds": 600,
+    "paper_trade": true,
+    "ignore_market_hours": true,
+    "run_initial_sync": true,
+    "sync_after_each_scan": true,
+    "run_eod_close": true,
+    "run_post_close": true
+  }'
+```
 
 Low-call mode toggle:
 

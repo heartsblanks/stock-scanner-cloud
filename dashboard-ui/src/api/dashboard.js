@@ -1,8 +1,15 @@
 import apiClient from "./client";
 
-export async function fetchDashboardSummary(date) {
+export async function fetchDashboardSummary(date, broker) {
+  const params = {};
+  if (date) {
+    params.date = date;
+  }
+  if (broker) {
+    params.broker = broker;
+  }
   const response = await apiClient.get("/dashboard-summary", {
-    params: date ? { date } : {},
+    params,
   });
 
   const data = response.data || {};
@@ -165,6 +172,23 @@ export async function runIbkrVmJournalRepair(targetDate, options = {}) {
   const data = await response.json();
   if (!response.ok) {
     throw new Error(data?.error || "Failed to run IBKR VM journal repair");
+  }
+
+  return data || {};
+}
+
+export async function runSchedulerTestDayCycle(payload = {}) {
+  const response = await fetch("/api/test-day-cycle", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload || {}),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.error || "Failed to run scheduler test day cycle");
   }
 
   return data || {};

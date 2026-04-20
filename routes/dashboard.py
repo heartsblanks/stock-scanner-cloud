@@ -22,10 +22,12 @@ def register_dashboard_routes(app, *, get_dashboard_summary, get_risk_exposure_s
     def dashboard_summary():
         try:
             target_date = request.args.get("date")
-            payload = get_cached_json(("dashboard-summary", target_date or ""), 45, lambda: {
+            broker = str(request.args.get("broker", "")).strip().upper() or None
+            payload = get_cached_json(("dashboard-summary", f"{target_date or ''}|{broker or ''}"), 45, lambda: {
                 "ok": True,
                 "date": target_date,
-                **_build_dashboard_summary_payload(get_dashboard_summary(target_date=target_date)),
+                "broker": broker,
+                **_build_dashboard_summary_payload(get_dashboard_summary(target_date=target_date, broker=broker)),
             })
             return jsonify(payload)
         except Exception as e:

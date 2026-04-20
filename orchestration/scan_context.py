@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 import math
 import os
 from typing import Any
@@ -56,8 +56,10 @@ def build_scheduled_scan_payload(
     }
 
 
-def parse_iso_utc(ts: str) -> datetime:
-    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+def parse_iso_utc(ts: Any) -> datetime:
+    if isinstance(ts, datetime):
+        return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
+    return datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
 
 
 def to_float_or_none(value: Any) -> float | None:

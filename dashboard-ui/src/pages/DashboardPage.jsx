@@ -12,7 +12,12 @@ import InsightCard from "../components/InsightCard";
 import ModePerformanceChart from "../components/ModePerformanceChart";
 import RefreshStatusPanel from "../components/dashboard/RefreshStatusPanel";
 import SymbolPerformanceChart from "../components/SymbolPerformanceChart";
-import { runIbkrStaleCloseRepair, runIbkrVmJournalRepair, sendAdminTestAlert } from "../api/dashboard";
+import {
+  runIbkrStaleCloseRepair,
+  runIbkrVmJournalRepair,
+  runSchedulerTestDayCycle,
+  sendAdminTestAlert,
+} from "../api/dashboard";
 import { useDashboardData } from "../hooks/useDashboardData";
 import { Component, Suspense, lazy, useEffect, useState } from "react";
 
@@ -211,9 +216,20 @@ export default function DashboardPage() {
   const [isSendingTestAlert, setIsSendingTestAlert] = useState(false);
   const [isRunningIbkrRepair, setIsRunningIbkrRepair] = useState(false);
   const [isRunningIbkrDeepRepair, setIsRunningIbkrDeepRepair] = useState(false);
+  const [isRunningDayCycleTest, setIsRunningDayCycleTest] = useState(false);
   const [isRunningMorningCheck, setIsRunningMorningCheck] = useState(false);
   const [adminDrawerOpen, setAdminDrawerOpen] = useState(false);
   const [ibkrRepairDate, setIbkrRepairDate] = useState(todayDateInputValue);
+  const [dayCycleModes, setDayCycleModes] = useState("asia_test");
+  const [dayCycleScanRounds, setDayCycleScanRounds] = useState("1");
+  const [dayCycleIntervalSeconds, setDayCycleIntervalSeconds] = useState("0");
+  const [dayCycleRunInitialSync, setDayCycleRunInitialSync] = useState(true);
+  const [dayCycleSyncAfterEachScan, setDayCycleSyncAfterEachScan] = useState(true);
+  const [dayCycleRunEodClose, setDayCycleRunEodClose] = useState(true);
+  const [dayCycleRunPostClose, setDayCycleRunPostClose] = useState(true);
+  const [dayCyclePaperTrade, setDayCyclePaperTrade] = useState(true);
+  const [dayCycleIgnoreMarketHours, setDayCycleIgnoreMarketHours] = useState(true);
+  const [dayCycleDebug, setDayCycleDebug] = useState(false);
 
   const {
     summary,
@@ -444,6 +460,51 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleRunTestDayCycle() {
+    try {
+      setIsRunningDayCycleTest(true);
+      const parsedModes = dayCycleModes
+        .split(",")
+        .map((token) => token.trim().toLowerCase())
+        .filter(Boolean);
+      const scanRounds = Math.max(1, Number.parseInt(dayCycleScanRounds || "1", 10) || 1);
+      const scanIntervalSeconds = Math.max(0, Number.parseFloat(dayCycleIntervalSeconds || "0") || 0);
+
+      const payload = {
+        modes: parsedModes,
+        scan_rounds: scanRounds,
+        scan_interval_seconds: scanIntervalSeconds,
+        run_initial_sync: dayCycleRunInitialSync,
+        sync_after_each_scan: dayCycleSyncAfterEachScan,
+        run_eod_close: dayCycleRunEodClose,
+        run_post_close: dayCycleRunPostClose,
+        paper_trade: dayCyclePaperTrade,
+        ignore_market_hours: dayCycleIgnoreMarketHours,
+        debug: dayCycleDebug,
+      };
+
+      const data = await runSchedulerTestDayCycle(payload);
+      const actionCount = Number(data?.action_count || 0);
+      const elapsedSeconds = Number(data?.elapsed_seconds || 0);
+      if (data?.ok) {
+        pushToast({
+          type: "success",
+          message: `Test cycle completed: ${actionCount} action(s) in ${elapsedSeconds.toFixed(2)}s.`,
+        });
+      } else {
+        pushToast({
+          type: "error",
+          message: data?.error || "Test cycle completed with issues.",
+        });
+      }
+      refreshData();
+    } catch (err) {
+      pushToast({ type: "error", message: err?.message || "Failed to run test day cycle" });
+    } finally {
+      setIsRunningDayCycleTest(false);
+    }
+  }
+
   useEffect(() => {
     document.documentElement.dataset.theme = "dark";
   }, []);
@@ -601,6 +662,104 @@ export default function DashboardPage() {
                 </button>
               </div>
               <div className="dashboard-admin-body">
+                <div className="dashboard-date-filter-inline">
+                  <label htmlFor="test-cycle-modes">Test Modes</label>
+                  <input
+                    id="test-cycle-modes"
+                    type="text"
+                    value={dayCycleModes}
+                    onChange={(event) => setDayCycleModes(event.target.value)}
+                    className="dashboard-input"
+                    placeholder="asia_test"
+                  />
+                </div>
+                <div className="dashboard-date-filter-inline">
+                  <label htmlFor="test-cycle-rounds">Scan Rounds</label>
+                  <input
+                    id="test-cycle-rounds"
+                    type="number"
+                    min="1"
+                    value={dayCycleScanRounds}
+                    onChange={(event) => setDayCycleScanRounds(event.target.value)}
+                    className="dashboard-input"
+                  />
+                </div>
+                <div className="dashboard-date-filter-inline">
+                  <label htmlFor="test-cycle-interval">Interval Seconds</label>
+                  <input
+                    id="test-cycle-interval"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={dayCycleIntervalSeconds}
+                    onChange={(event) => setDayCycleIntervalSeconds(event.target.value)}
+                    className="dashboard-input"
+                  />
+                </div>
+                <label className="dashboard-inline-meta">
+                  <input
+                    type="checkbox"
+                    checked={dayCycleRunInitialSync}
+                    onChange={(event) => setDayCycleRunInitialSync(event.target.checked)}
+                  />
+                  Run Initial Sync
+                </label>
+                <label className="dashboard-inline-meta">
+                  <input
+                    type="checkbox"
+                    checked={dayCycleSyncAfterEachScan}
+                    onChange={(event) => setDayCycleSyncAfterEachScan(event.target.checked)}
+                  />
+                  Sync After Each Scan
+                </label>
+                <label className="dashboard-inline-meta">
+                  <input
+                    type="checkbox"
+                    checked={dayCycleRunEodClose}
+                    onChange={(event) => setDayCycleRunEodClose(event.target.checked)}
+                  />
+                  Run EOD Close
+                </label>
+                <label className="dashboard-inline-meta">
+                  <input
+                    type="checkbox"
+                    checked={dayCycleRunPostClose}
+                    onChange={(event) => setDayCycleRunPostClose(event.target.checked)}
+                  />
+                  Run Post Close
+                </label>
+                <label className="dashboard-inline-meta">
+                  <input
+                    type="checkbox"
+                    checked={dayCyclePaperTrade}
+                    onChange={(event) => setDayCyclePaperTrade(event.target.checked)}
+                  />
+                  Paper Trade
+                </label>
+                <label className="dashboard-inline-meta">
+                  <input
+                    type="checkbox"
+                    checked={dayCycleIgnoreMarketHours}
+                    onChange={(event) => setDayCycleIgnoreMarketHours(event.target.checked)}
+                  />
+                  Ignore Market Hours
+                </label>
+                <label className="dashboard-inline-meta">
+                  <input
+                    type="checkbox"
+                    checked={dayCycleDebug}
+                    onChange={(event) => setDayCycleDebug(event.target.checked)}
+                  />
+                  Debug Output
+                </label>
+                <button
+                  type="button"
+                  onClick={handleRunTestDayCycle}
+                  disabled={isRunningDayCycleTest || !dayCycleModes.trim()}
+                  className="dashboard-button dashboard-button-primary"
+                >
+                  {isRunningDayCycleTest ? "Running Test Cycle..." : "Run Test Day Cycle"}
+                </button>
                 <div className="dashboard-date-filter-inline">
                   <label htmlFor="ibkr-repair-date">Repair Date</label>
                   <input

@@ -148,7 +148,7 @@ export function useDashboardData(activeView = "overview") {
         ibkrLifecycleRes,
         latestScanRes,
       ] = await Promise.all([
-        fetchDashboardSummary(activeFilters?.date || undefined),
+        fetchDashboardSummary(activeFilters?.date || undefined, "IBKR"),
         fetchOpenTrades({ limit: IBKR_OPEN_TRADES_PAGE_SIZE, broker: "IBKR", enrichLive: false }),
         fetchTradeLifecycle({ limit: IBKR_LIFECYCLE_PAGE_SIZE, broker: "IBKR" }),
         fetchLatestScanSummary(),

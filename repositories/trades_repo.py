@@ -651,21 +651,28 @@ def get_daily_realized_pnl(target_date: str) -> float:
         return 0.0
 
 
-def get_trade_lifecycles_for_date(target_date: str, limit: int = 1000) -> list[dict]:
+def get_trade_lifecycles_for_date(target_date: str, limit: int = 1000, broker: Optional[str] = None) -> list[dict]:
+    params: dict[str, Any] = {"target_date": target_date, "limit": limit}
+    broker_clause = ""
+    normalized_broker = normalize_text(broker).upper() if broker else ""
+    if normalized_broker:
+        broker_clause = f"AND {_broker_filter_sql(normalized_broker)}"
+        params["broker"] = normalized_broker
     return fetch_all(
-        """
+        f"""
         SELECT *
         FROM trade_lifecycles
         WHERE (entry_time::date = %(target_date)s::date OR exit_time::date = %(target_date)s::date)
+          {broker_clause}
         ORDER BY COALESCE(entry_time, created_at) DESC, id DESC
         LIMIT %(limit)s
         """,
-        {"target_date": target_date, "limit": limit},
+        params,
     )
 
 
-def get_trade_lifecycle_summary_for_date(target_date: str, limit: int = 5000) -> dict:
-    rows = get_trade_lifecycles_for_date(target_date=target_date, limit=limit)
+def get_trade_lifecycle_summary_for_date(target_date: str, limit: int = 5000, broker: Optional[str] = None) -> dict:
+    rows = get_trade_lifecycles_for_date(target_date=target_date, limit=limit, broker=broker)
     closed_rows = [row for row in rows if str(row.get("status", "")).strip().upper() == "CLOSED"]
     open_rows = [row for row in rows if str(row.get("status", "")).strip().upper() == "OPEN"]
     pnl_values = [to_optional_float(row.get("realized_pnl")) for row in closed_rows if to_optional_float(row.get("realized_pnl")) is not None]
@@ -690,12 +697,17 @@ def get_trade_lifecycle_summary_for_date(target_date: str, limit: int = 5000) ->
     }
 
 
-def get_symbol_performance(limit: int = 100, target_date: Optional[str] = None) -> list[dict]:
-    date_filter = ""
+def get_symbol_performance(limit: int = 100, target_date: Optional[str] = None, broker: Optional[str] = None) -> list[dict]:
     params: dict[str, Any] = {"limit": limit}
+    where_clauses: list[str] = []
     if target_date:
-        date_filter = "WHERE (entry_time::date = %(target_date)s::date OR exit_time::date = %(target_date)s::date)"
+        where_clauses.append("(entry_time::date = %(target_date)s::date OR exit_time::date = %(target_date)s::date)")
         params["target_date"] = target_date
+    normalized_broker = normalize_text(broker).upper() if broker else ""
+    if normalized_broker:
+        where_clauses.append(_broker_filter_sql(normalized_broker))
+        params["broker"] = normalized_broker
+    where_filter = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
     return fetch_all(
         f"""
         SELECT symbol, COUNT(*)::INT AS trade_count,
@@ -706,7 +718,7 @@ def get_symbol_performance(limit: int = 100, target_date: Optional[str] = None) 
                ROUND(AVG(realized_pnl)::numeric, 6) AS average_realized_pnl,
                ROUND(AVG(duration_minutes)::numeric, 6) AS average_duration_minutes
         FROM trade_lifecycles
-        {date_filter}
+        {where_filter}
         GROUP BY symbol
         ORDER BY realized_pnl_total DESC, symbol ASC
         LIMIT %(limit)s
@@ -715,12 +727,17 @@ def get_symbol_performance(limit: int = 100, target_date: Optional[str] = None) 
     )
 
 
-def get_mode_performance(limit: int = 100, target_date: Optional[str] = None) -> list[dict]:
-    date_filter = ""
+def get_mode_performance(limit: int = 100, target_date: Optional[str] = None, broker: Optional[str] = None) -> list[dict]:
     params: dict[str, Any] = {"limit": limit}
+    where_clauses: list[str] = []
     if target_date:
-        date_filter = "WHERE (entry_time::date = %(target_date)s::date OR exit_time::date = %(target_date)s::date)"
+        where_clauses.append("(entry_time::date = %(target_date)s::date OR exit_time::date = %(target_date)s::date)")
         params["target_date"] = target_date
+    normalized_broker = normalize_text(broker).upper() if broker else ""
+    if normalized_broker:
+        where_clauses.append(_broker_filter_sql(normalized_broker))
+        params["broker"] = normalized_broker
+    where_filter = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
     return fetch_all(
         f"""
         SELECT COALESCE(mode, '') AS mode, COUNT(*)::INT AS trade_count,
@@ -731,7 +748,7 @@ def get_mode_performance(limit: int = 100, target_date: Optional[str] = None) ->
                ROUND(AVG(realized_pnl)::numeric, 6) AS average_realized_pnl,
                ROUND(AVG(duration_minutes)::numeric, 6) AS average_duration_minutes
         FROM trade_lifecycles
-        {date_filter}
+        {where_filter}
         GROUP BY COALESCE(mode, '')
         ORDER BY realized_pnl_total DESC, mode ASC
         LIMIT %(limit)s
@@ -740,12 +757,17 @@ def get_mode_performance(limit: int = 100, target_date: Optional[str] = None) ->
     )
 
 
-def get_exit_reason_breakdown(limit: int = 100, target_date: Optional[str] = None) -> list[dict]:
+def get_exit_reason_breakdown(limit: int = 100, target_date: Optional[str] = None, broker: Optional[str] = None) -> list[dict]:
     date_filter = ""
+    broker_filter = ""
     params: dict[str, Any] = {"limit": limit}
     if target_date:
         date_filter = "AND (entry_time::date = %(target_date)s::date OR exit_time::date = %(target_date)s::date)"
         params["target_date"] = target_date
+    normalized_broker = normalize_text(broker).upper() if broker else ""
+    if normalized_broker:
+        broker_filter = f"AND {_broker_filter_sql(normalized_broker)}"
+        params["broker"] = normalized_broker
     return fetch_all(
         f"""
         SELECT COALESCE(exit_reason, '') AS exit_reason,
@@ -755,6 +777,7 @@ def get_exit_reason_breakdown(limit: int = 100, target_date: Optional[str] = Non
         FROM trade_lifecycles
         WHERE UPPER(COALESCE(status, '')) = 'CLOSED'
           {date_filter}
+          {broker_filter}
         GROUP BY COALESCE(exit_reason, '')
         ORDER BY trade_count DESC, exit_reason ASC
         LIMIT %(limit)s
@@ -763,12 +786,17 @@ def get_exit_reason_breakdown(limit: int = 100, target_date: Optional[str] = Non
     )
 
 
-def get_external_exit_summary(target_date: Optional[str] = None) -> dict | None:
+def get_external_exit_summary(target_date: Optional[str] = None, broker: Optional[str] = None) -> dict | None:
     date_filter = ""
+    broker_filter = ""
     params: dict[str, Any] = {}
     if target_date:
         date_filter = "AND (entry_time::date = %(target_date)s::date OR exit_time::date = %(target_date)s::date)"
         params["target_date"] = target_date
+    normalized_broker = normalize_text(broker).upper() if broker else ""
+    if normalized_broker:
+        broker_filter = f"AND {_broker_filter_sql(normalized_broker)}"
+        params["broker"] = normalized_broker
     row = fetch_one(
         f"""
         SELECT COUNT(*)::INT AS trade_count,
@@ -778,6 +806,7 @@ def get_external_exit_summary(target_date: Optional[str] = None) -> dict | None:
         WHERE UPPER(COALESCE(status, '')) = 'CLOSED'
           AND UPPER(COALESCE(exit_reason, '')) = 'EXTERNAL_EXIT'
           {date_filter}
+          {broker_filter}
         """,
         params,
     )
@@ -786,12 +815,17 @@ def get_external_exit_summary(target_date: Optional[str] = None) -> dict | None:
     return row
 
 
-def get_hourly_performance(limit: int = 100, target_date: Optional[str] = None) -> list[dict]:
+def get_hourly_performance(limit: int = 100, target_date: Optional[str] = None, broker: Optional[str] = None) -> list[dict]:
     date_filter = ""
+    broker_filter = ""
     params: dict[str, Any] = {"limit": limit}
     if target_date:
         date_filter = "AND (entry_time::date = %(target_date)s::date OR exit_time::date = %(target_date)s::date)"
         params["target_date"] = target_date
+    normalized_broker = normalize_text(broker).upper() if broker else ""
+    if normalized_broker:
+        broker_filter = f"AND {_broker_filter_sql(normalized_broker)}"
+        params["broker"] = normalized_broker
     return fetch_all(
         f"""
         SELECT EXTRACT(HOUR FROM entry_time)::INT AS entry_hour_utc,
@@ -803,6 +837,7 @@ def get_hourly_performance(limit: int = 100, target_date: Optional[str] = None) 
         FROM trade_lifecycles
         WHERE entry_time IS NOT NULL
           {date_filter}
+          {broker_filter}
         GROUP BY EXTRACT(HOUR FROM entry_time)
         ORDER BY entry_hour_utc ASC
         LIMIT %(limit)s
@@ -816,15 +851,21 @@ def get_hourly_outcome_quality(
     *,
     exclude_external_exit: bool = False,
     target_date: Optional[str] = None,
+    broker: Optional[str] = None,
 ) -> list[dict]:
     external_exit_filter = ""
     if exclude_external_exit:
         external_exit_filter = "AND UPPER(COALESCE(exit_reason, '')) <> 'EXTERNAL_EXIT'"
     date_filter = ""
+    broker_filter = ""
     params: dict[str, Any] = {"limit": limit}
     if target_date:
         date_filter = "AND (entry_time::date = %(target_date)s::date OR exit_time::date = %(target_date)s::date)"
         params["target_date"] = target_date
+    normalized_broker = normalize_text(broker).upper() if broker else ""
+    if normalized_broker:
+        broker_filter = f"AND {_broker_filter_sql(normalized_broker)}"
+        params["broker"] = normalized_broker
     return fetch_all(
         f"""
         SELECT EXTRACT(HOUR FROM (entry_time AT TIME ZONE 'America/New_York'))::INT AS entry_hour_ny,
@@ -848,6 +889,7 @@ def get_hourly_outcome_quality(
         FROM trade_lifecycles
         WHERE entry_time IS NOT NULL
           {date_filter}
+          {broker_filter}
           {external_exit_filter}
         GROUP BY EXTRACT(HOUR FROM (entry_time AT TIME ZONE 'America/New_York'))
         ORDER BY entry_hour_ny ASC
@@ -857,17 +899,22 @@ def get_hourly_outcome_quality(
     )
 
 
-def get_equity_curve(limit: int = 5000, target_date: Optional[str] = None) -> list[dict]:
-    date_filter = ""
+def get_equity_curve(limit: int = 5000, target_date: Optional[str] = None, broker: Optional[str] = None) -> list[dict]:
+    where_clauses: list[str] = []
     params: dict[str, Any] = {"limit": limit}
     if target_date:
-        date_filter = "WHERE COALESCE(exit_time, entry_time, created_at)::date = %(target_date)s::date"
+        where_clauses.append("COALESCE(exit_time, entry_time, created_at)::date = %(target_date)s::date")
         params["target_date"] = target_date
+    normalized_broker = normalize_text(broker).upper() if broker else ""
+    if normalized_broker:
+        where_clauses.append(_broker_filter_sql(normalized_broker))
+        params["broker"] = normalized_broker
+    where_filter = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
     rows = fetch_all(
         f"""
         SELECT COALESCE(exit_time, entry_time, created_at) AS timestamp, COALESCE(realized_pnl, 0) AS realized_pnl
         FROM trade_lifecycles
-        {date_filter}
+        {where_filter}
         ORDER BY COALESCE(exit_time, entry_time, created_at) ASC, id ASC
         LIMIT %(limit)s
         """,
@@ -887,16 +934,26 @@ def get_equity_curve(limit: int = 5000, target_date: Optional[str] = None) -> li
     return curve
 
 
-def get_dashboard_summary(target_date: Optional[str] = None) -> dict:
-    base_summary = get_trade_lifecycle_summary_for_date(target_date=target_date, limit=5000) if target_date else get_trade_lifecycle_summary_from_table(limit=5000)
-    symbol_performance = get_symbol_performance(limit=10, target_date=target_date)
-    mode_performance = get_mode_performance(limit=10, target_date=target_date)
-    exit_reason_breakdown = get_exit_reason_breakdown(limit=20, target_date=target_date)
-    external_exit_summary = get_external_exit_summary(target_date=target_date)
-    hourly_performance = get_hourly_performance(limit=24, target_date=target_date)
-    hourly_outcome_quality = get_hourly_outcome_quality(limit=24, target_date=target_date)
-    strategy_hourly_outcome_quality = get_hourly_outcome_quality(limit=24, exclude_external_exit=True, target_date=target_date)
-    equity_curve = get_equity_curve(limit=5000, target_date=target_date)
+def get_dashboard_summary(target_date: Optional[str] = None, broker: Optional[str] = None) -> dict:
+    normalized_broker = normalize_text(broker).upper() if broker else None
+    base_summary = (
+        get_trade_lifecycle_summary_for_date(target_date=target_date, limit=5000, broker=normalized_broker)
+        if target_date
+        else get_trade_lifecycle_summary_from_table(limit=5000, broker=normalized_broker)
+    )
+    symbol_performance = get_symbol_performance(limit=10, target_date=target_date, broker=normalized_broker)
+    mode_performance = get_mode_performance(limit=10, target_date=target_date, broker=normalized_broker)
+    exit_reason_breakdown = get_exit_reason_breakdown(limit=20, target_date=target_date, broker=normalized_broker)
+    external_exit_summary = get_external_exit_summary(target_date=target_date, broker=normalized_broker)
+    hourly_performance = get_hourly_performance(limit=24, target_date=target_date, broker=normalized_broker)
+    hourly_outcome_quality = get_hourly_outcome_quality(limit=24, target_date=target_date, broker=normalized_broker)
+    strategy_hourly_outcome_quality = get_hourly_outcome_quality(
+        limit=24,
+        exclude_external_exit=True,
+        target_date=target_date,
+        broker=normalized_broker,
+    )
+    equity_curve = get_equity_curve(limit=5000, target_date=target_date, broker=normalized_broker)
     return {
         "summary": base_summary,
         "top_symbols": symbol_performance,

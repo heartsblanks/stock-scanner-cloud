@@ -43,6 +43,14 @@
     "Recursion": { "symbol": "RXRX", "type": "stock", "priority": 6, "market": "NASDAQ" },
     "Cerence": { "symbol": "CRNC", "type": "stock", "priority": 6, "market": "NASDAQ" }
   },
+  "asia_test": {
+    "Alibaba": { "symbol": "BABA", "type": "stock", "priority": 10, "market": "NYSE" },
+    "JD.com": { "symbol": "JD", "type": "stock", "priority": 9, "market": "NASDAQ" },
+    "PDD Holdings": { "symbol": "PDD", "type": "stock", "priority": 9, "market": "NASDAQ" },
+    "Baidu": { "symbol": "BIDU", "type": "stock", "priority": 8, "market": "NASDAQ" },
+    "Bilibili": { "symbol": "BILI", "type": "stock", "priority": 8, "market": "NASDAQ" },
+    "NetEase": { "symbol": "NTES", "type": "stock", "priority": 8, "market": "NASDAQ" }
+  },
   "core_one": {
     "NVIDIA": { "symbol": "NVDA", "type": "stock", "priority": 10, "market": "NASDAQ" },
     "Tesla": { "symbol": "TSLA", "type": "stock", "priority": 10, "market": "NASDAQ" },

@@ -78,6 +78,7 @@ from orchestration.scheduler_ops import (
     execute_maintenance_ops as build_execute_maintenance_ops,
     execute_ibkr_login_alert as build_execute_ibkr_login_alert,
     execute_pre_close_prep as build_execute_pre_close_prep,
+    execute_test_day_cycle as build_execute_test_day_cycle,
     execute_ibkr_vm_control as build_execute_ibkr_vm_control,
     execute_market_ops as build_execute_market_ops,
     execute_post_close_ops as build_execute_post_close_ops,
@@ -218,7 +219,7 @@ execute_scan_pipeline = build_scan_pipeline_runner(
 def _run_ibkr_shadow_scan(payload: dict[str, Any]) -> dict[str, Any]:
     ibkr_payload = dict(payload)
     try:
-        return execute_scan_pipeline(
+        result = execute_scan_pipeline(
             ibkr_payload,
             broker_name="IBKR",
             run_scan_fn=lambda account_size, mode, current_open_positions=0, current_open_exposure=0.0: run_scan(
@@ -239,6 +240,19 @@ def _run_ibkr_shadow_scan(payload: dict[str, Any]) -> dict[str, Any]:
                 min_confidence=IBKR_PAPER_TRADE_MIN_CONFIDENCE,
             ),
         )
+        if isinstance(result, tuple) and len(result) == 2 and isinstance(result[0], dict):
+            body, status_code = result
+            body = dict(body)
+            body.setdefault("status_code", status_code)
+            return body
+        if isinstance(result, dict):
+            return result
+        return {
+            "ok": False,
+            "error": "invalid_ibkr_shadow_scan_result",
+            "details": str(type(result)),
+            "mode": ibkr_payload.get("mode"),
+        }
     except Exception as exc:
         return {
             "ok": False,
@@ -443,6 +457,18 @@ def run_daily_post_close_scheduler(*, now_ny: datetime):
     )
 
 
+def run_test_day_cycle_scheduler(*, now_ny: datetime, payload: dict[str, Any]):
+    return build_execute_test_day_cycle(
+        now_ny=now_ny,
+        payload=payload,
+        run_scan=handle_scan_request,
+        run_sync=handle_sync_paper_trades,
+        run_close=close_all_paper_positions,
+        run_post_close_ops=lambda: run_daily_post_close_scheduler(now_ny=datetime.now(NY_TZ)),
+        sleep_fn=time.sleep,
+    )
+
+
 def run_ibkr_stale_close_repair(*, target_date: str):
     return repair_ibkr_stale_closes(
         target_date=target_date,
@@ -644,6 +670,7 @@ register_scheduler_routes(
     execute_ibkr_login_alert=run_ibkr_login_alert_scheduler,
     execute_ibkr_stale_close_repair=run_ibkr_stale_close_repair,
     execute_ibkr_vm_journal_repair=run_ibkr_vm_journal_repair,
+    execute_test_day_cycle=run_test_day_cycle_scheduler,
 )
 register_legacy_reconcile_routes(
     app,
