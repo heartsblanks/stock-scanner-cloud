@@ -366,10 +366,24 @@ def get_latest_open_paper_trade_for_symbol_for_broker(symbol: str, broker_name: 
     return existing_open_trade
 
 
-def fetch_ibkr_intraday(symbol: str, interval: str = "1min", outputsize: int | None = None) -> list[dict]:
+def fetch_ibkr_intraday(
+    symbol: str,
+    interval: str = "1min",
+    outputsize: int | None = None,
+    *,
+    exchange: str | None = None,
+    primary_exchange: str | None = None,
+    currency: str | None = None,
+) -> list[dict]:
     params: dict[str, Any] = {"symbol": symbol, "interval": interval}
     if outputsize is not None:
         params["outputsize"] = int(outputsize)
+    if exchange:
+        params["exchange"] = str(exchange).strip().upper()
+    if primary_exchange:
+        params["primary_exchange"] = str(primary_exchange).strip().upper()
+    if currency:
+        params["currency"] = str(currency).strip().upper()
     timeout_seconds = int(os.getenv("IBKR_BRIDGE_MARKET_DATA_TIMEOUT_SECONDS", "12"))
     log_info(
         "IBKR intraday fetch requested",
@@ -379,6 +393,9 @@ def fetch_ibkr_intraday(symbol: str, interval: str = "1min", outputsize: int | N
         symbol=symbol,
         interval=interval,
         outputsize=outputsize,
+        exchange=params.get("exchange"),
+        primary_exchange=params.get("primary_exchange"),
+        currency=params.get("currency"),
         timeout=timeout_seconds,
     )
     try:
@@ -396,6 +413,9 @@ def fetch_ibkr_intraday(symbol: str, interval: str = "1min", outputsize: int | N
                 symbol=symbol,
                 interval=interval,
                 outputsize=outputsize,
+                exchange=params.get("exchange"),
+                primary_exchange=params.get("primary_exchange"),
+                currency=params.get("currency"),
                 timeout=timeout_seconds,
                 duration="2 D",
                 bar_size=("1 min" if str(interval).strip().lower() == "1min" else "5 mins" if str(interval).strip().lower() == "5min" else None),
@@ -410,6 +430,9 @@ def fetch_ibkr_intraday(symbol: str, interval: str = "1min", outputsize: int | N
             symbol=symbol,
             interval=interval,
             outputsize=outputsize,
+            exchange=params.get("exchange"),
+            primary_exchange=params.get("primary_exchange"),
+            currency=params.get("currency"),
             candle_count=len(candles),
             last_bar_datetime=(candles[-1].get("datetime") if candles else None),
         )
@@ -424,6 +447,9 @@ def fetch_ibkr_intraday(symbol: str, interval: str = "1min", outputsize: int | N
             symbol=symbol,
             interval=interval,
             outputsize=outputsize,
+            exchange=params.get("exchange"),
+            primary_exchange=params.get("primary_exchange"),
+            currency=params.get("currency"),
             timeout=timeout_seconds,
         )
         raise

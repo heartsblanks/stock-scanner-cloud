@@ -214,7 +214,7 @@ curl -sS -X POST "$RUN_BASE_URL/scheduler/test-day-cycle" \
   -H "Content-Type: application/json" \
   -H "X-Admin-Token: $ADMIN_API_TOKEN" \
   -d '{
-    "modes": ["asia_test"],
+    "modes": ["europe_test"],
     "scan_rounds": 6,
     "scan_interval_seconds": 600,
     "paper_trade": true,

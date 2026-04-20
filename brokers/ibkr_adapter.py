@@ -40,6 +40,9 @@ def _compact_trade_for_bridge(trade: dict[str, Any]) -> dict[str, Any]:
         "shares": metrics.get("shares"),
         "per_trade_notional": metrics.get("per_trade_notional"),
         "remaining_allocatable_capital": metrics.get("remaining_allocatable_capital"),
+        "exchange": metrics.get("exchange"),
+        "primary_exchange": metrics.get("primary_exchange"),
+        "currency": metrics.get("currency"),
     }
 
     compact_trade = {

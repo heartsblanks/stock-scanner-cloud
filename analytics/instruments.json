@@ -51,6 +51,14 @@
     "Bilibili": { "symbol": "BILI", "type": "stock", "priority": 8, "market": "NASDAQ" },
     "NetEase": { "symbol": "NTES", "type": "stock", "priority": 8, "market": "NASDAQ" }
   },
+  "europe_test": {
+    "Siemens": { "symbol": "SIE", "type": "stock", "priority": 10, "market": "EUROPE", "exchange": "SMART", "primary_exchange": "IBIS", "currency": "EUR" },
+    "BMW": { "symbol": "BMW", "type": "stock", "priority": 9, "market": "EUROPE", "exchange": "SMART", "primary_exchange": "IBIS", "currency": "EUR" },
+    "Allianz": { "symbol": "ALV", "type": "stock", "priority": 9, "market": "EUROPE", "exchange": "SMART", "primary_exchange": "IBIS", "currency": "EUR" },
+    "Adidas": { "symbol": "ADS", "type": "stock", "priority": 8, "market": "EUROPE", "exchange": "SMART", "primary_exchange": "IBIS", "currency": "EUR" },
+    "Deutsche Telekom": { "symbol": "DTE", "type": "stock", "priority": 8, "market": "EUROPE", "exchange": "SMART", "primary_exchange": "IBIS", "currency": "EUR" },
+    "BASF": { "symbol": "BAS", "type": "stock", "priority": 8, "market": "EUROPE", "exchange": "SMART", "primary_exchange": "IBIS", "currency": "EUR" }
+  },
   "core_one": {
     "NVIDIA": { "symbol": "NVDA", "type": "stock", "priority": 10, "market": "NASDAQ" },
     "Tesla": { "symbol": "TSLA", "type": "stock", "priority": 10, "market": "NASDAQ" },

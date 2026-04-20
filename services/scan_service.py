@@ -591,13 +591,25 @@ def execute_full_scan(
     current_open_exposure = _to_float(payload.get("current_open_exposure", 0.0), 0.0)
     payload["account_size"] = account_size
 
-    if mode not in {"primary", "secondary", "third", "fourth", "fifth", "sixth", "asia_test", "core_one", "core_two", "core_three"}:
+    if mode not in {
+        "primary",
+        "secondary",
+        "third",
+        "fourth",
+        "fifth",
+        "sixth",
+        "asia_test",
+        "europe_test",
+        "core_one",
+        "core_two",
+        "core_three",
+    }:
         return {
             "ok": False,
-            "error": "mode must be primary, secondary, third, fourth, fifth, sixth, asia_test, core_one, core_two, or core_three",
+            "error": "mode must be primary, secondary, third, fourth, fifth, sixth, asia_test, europe_test, core_one, core_two, or core_three",
         }, 400
 
-    ignore_market_hours_raw = payload.get("ignore_market_hours", mode in {"asia_test"})
+    ignore_market_hours_raw = payload.get("ignore_market_hours", mode in {"asia_test", "europe_test"})
     if isinstance(ignore_market_hours_raw, bool):
         ignore_market_hours = ignore_market_hours_raw
     elif isinstance(ignore_market_hours_raw, str):
@@ -623,6 +635,7 @@ def execute_full_scan(
 
     scan_id = build_scan_id(timestamp_utc, mode)
     market_phase = market_phase_from_timestamp(timestamp_utc)
+    attempt_dedupe_keys: set[tuple[str, str, str, str, str]] = set()
 
     def record_attempt(
         decision_stage: str,
@@ -637,15 +650,38 @@ def execute_full_scan(
         broker_rejection_reason: str | None = None,
     ) -> None:
         attempt_metrics = metrics or {}
+        normalized_symbol = str(symbol or "").strip().upper()
         normalized_broker = str(broker or active_broker or "").strip().upper() or "IBKR"
+        normalized_stage = str(decision_stage or "").strip().upper()
+        dedupe_key = (
+            normalized_stage,
+            normalized_symbol,
+            normalized_broker,
+            str(broker_order_id or "").strip(),
+            str(broker_parent_order_id or "").strip(),
+        )
+        if dedupe_key in attempt_dedupe_keys:
+            log_warning(
+                "Skipped duplicate paper trade attempt row within same scan",
+                component="scan_service",
+                operation="execute_full_scan",
+                scan_id=scan_id,
+                symbol=normalized_symbol,
+                decision_stage=normalized_stage,
+                broker=normalized_broker,
+                broker_order_id=str(broker_order_id or "").strip(),
+                broker_parent_order_id=str(broker_parent_order_id or "").strip(),
+            )
+            return
+        attempt_dedupe_keys.add(dedupe_key)
         safe_insert_paper_trade_attempt(
             timestamp_utc=parse_iso_utc(timestamp_utc),
             scan_id=scan_id,
             mode=mode,
             scan_source=scan_source,
             market_phase=market_phase,
-            symbol=symbol,
-            decision_stage=decision_stage,
+            symbol=normalized_symbol,
+            decision_stage=normalized_stage,
             final_reason=final_reason,
             direction=str(attempt_metrics.get("direction", "") or ""),
             entry=to_float_or_none(attempt_metrics.get("entry", "")),

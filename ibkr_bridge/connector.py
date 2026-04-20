@@ -439,7 +439,16 @@ class IbkrGatewayClient:
 
         return normalized
 
-    def get_intraday_candles(self, symbol: str, interval: str = "1min", outputsize: int | None = None) -> list[dict[str, Any]]:
+    def get_intraday_candles(
+        self,
+        symbol: str,
+        interval: str = "1min",
+        outputsize: int | None = None,
+        *,
+        exchange: str | None = None,
+        primary_exchange: str | None = None,
+        currency: str | None = None,
+    ) -> list[dict[str, Any]]:
         normalized_symbol = str(symbol).strip().upper()
         if not normalized_symbol:
             raise RuntimeError("symbol is required")
@@ -454,17 +463,25 @@ class IbkrGatewayClient:
 
         ib = self._reset_connection()
         _LimitOrder, _MarketOrder, _StopOrder, _Order, Stock = self._load_order_classes()
+        route_exchange = str(exchange or "SMART").strip().upper() or "SMART"
+        normalized_currency = str(currency or "USD").strip().upper() or "USD"
+        normalized_primary_exchange = str(primary_exchange or "").strip().upper()
         try:
-            contract = Stock(normalized_symbol, "SMART", "USD")
+            contract = Stock(normalized_symbol, route_exchange, normalized_currency)
         except TypeError:
             # Test doubles may only accept `symbol`; set route fields afterward.
             contract = Stock(normalized_symbol)
             try:
-                contract.exchange = "SMART"
+                contract.exchange = route_exchange
             except Exception:
                 pass
             try:
-                contract.currency = "USD"
+                contract.currency = normalized_currency
+            except Exception:
+                pass
+        if normalized_primary_exchange and normalized_primary_exchange != route_exchange:
+            try:
+                contract.primaryExchange = normalized_primary_exchange
             except Exception:
                 pass
         log_info(
@@ -474,6 +491,9 @@ class IbkrGatewayClient:
             symbol=normalized_symbol,
             interval=interval,
             outputsize=outputsize,
+            exchange=route_exchange,
+            primary_exchange=(normalized_primary_exchange or None),
+            currency=normalized_currency,
             timeout=self.config.timeout_seconds,
         )
         try:
@@ -1244,6 +1264,9 @@ class IbkrGatewayClient:
     ) -> dict[str, Any]:
         metrics = trade.get("metrics", {}) if isinstance(trade, dict) else {}
         symbol = str(metrics.get("symbol", "")).strip().upper()
+        requested_exchange = str(metrics.get("exchange", "SMART") or "SMART").strip().upper() or "SMART"
+        requested_primary_exchange = str(metrics.get("primary_exchange", "") or "").strip().upper()
+        requested_currency = str(metrics.get("currency", "USD") or "USD").strip().upper() or "USD"
         direction = str(metrics.get("direction", "BUY")).strip().upper() or "BUY"
         entry = _to_float(metrics.get("entry"))
         stop = _to_float(metrics.get("stop"))
@@ -1331,13 +1354,33 @@ class IbkrGatewayClient:
             notional_cap=round(notional_cap, 2),
             allow_fractional=allow_fractional,
             fractional_retry_attempted=_fractional_retry_attempted,
+            exchange=requested_exchange,
+            primary_exchange=(requested_primary_exchange or None),
+            currency=requested_currency,
         )
 
         # Use a fresh broker session for placement flow so stale sockets
         # cannot block qualification/placeOrder indefinitely.
         ib = self._reset_connection()
         LimitOrder, MarketOrder, StopOrder, Order, Stock = self._load_order_classes()
-        contract = Stock(symbol, "SMART", "USD")
+        try:
+            contract = Stock(symbol, requested_exchange, requested_currency)
+        except TypeError:
+            # Test doubles may only accept `symbol`; set route fields afterward.
+            contract = Stock(symbol)
+            try:
+                contract.exchange = requested_exchange
+            except Exception:
+                pass
+            try:
+                contract.currency = requested_currency
+            except Exception:
+                pass
+        if requested_primary_exchange and requested_primary_exchange != requested_exchange:
+            try:
+                contract.primaryExchange = requested_primary_exchange
+            except Exception:
+                pass
         existing_position_row = self._find_position_row(ib, symbol)
         existing_position_qty = _to_float(getattr(existing_position_row, "position", 0.0)) if existing_position_row is not None else 0.0
         existing_open_trades = self._open_orders_for_symbol(ib, symbol)

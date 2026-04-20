@@ -474,7 +474,7 @@ def execute_test_day_cycle(
     elif isinstance(raw_modes, list):
         modes = [str(token).strip().lower() for token in raw_modes if str(token).strip()]
     else:
-        default_mode = str(request_payload.get("mode", "asia_test")).strip().lower() or "asia_test"
+        default_mode = str(request_payload.get("mode", "europe_test")).strip().lower() or "europe_test"
         modes = [default_mode]
 
     valid_modes = {
@@ -485,6 +485,7 @@ def execute_test_day_cycle(
         "fifth",
         "sixth",
         "asia_test",
+        "europe_test",
         "core_one",
         "core_two",
         "core_three",

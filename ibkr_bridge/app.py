@@ -204,12 +204,22 @@ def get_intraday_market_data():
     def fetch_intraday():
         symbol = str(request.args.get("symbol", "")).strip().upper()
         interval = str(request.args.get("interval", "1min")).strip().lower() or "1min"
+        exchange = str(request.args.get("exchange", "")).strip().upper() or None
+        primary_exchange = str(request.args.get("primary_exchange", "")).strip().upper() or None
+        currency = str(request.args.get("currency", "")).strip().upper() or None
         outputsize_raw = request.args.get("outputsize", "0")
         try:
             outputsize = int(outputsize_raw) if str(outputsize_raw).strip() else None
         except Exception:
             outputsize = None
-        payload = get_ibkr_client().get_intraday_candles(symbol, interval=interval, outputsize=outputsize)
+        payload = get_ibkr_client().get_intraday_candles(
+            symbol,
+            interval=interval,
+            outputsize=outputsize,
+            exchange=exchange,
+            primary_exchange=primary_exchange,
+            currency=currency,
+        )
         _audit_success(
             "IBKR bridge intraday candles fetched",
             operation="get_intraday_market_data",
@@ -218,6 +228,9 @@ def get_intraday_market_data():
                 "symbol": symbol,
                 "interval": interval,
                 "outputsize": outputsize,
+                "exchange": exchange,
+                "primary_exchange": primary_exchange,
+                "currency": currency,
                 "count": len(payload or []),
             },
         )

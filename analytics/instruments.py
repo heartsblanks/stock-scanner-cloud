@@ -11,6 +11,7 @@ REQUIRED_MODES = (
     "fifth",
     "sixth",
     "asia_test",
+    "europe_test",
     "core_one",
     "core_two",
     "core_three",
@@ -37,6 +38,9 @@ def _load_instrument_groups() -> dict[str, dict[str, dict]]:
             symbol = str(info.get("symbol", "")).strip().upper()
             instrument_type = str(info.get("type", "")).strip().lower()
             market = str(info.get("market", "")).strip().upper()
+            exchange = str(info.get("exchange", "")).strip().upper()
+            primary_exchange = str(info.get("primary_exchange", "")).strip().upper()
+            currency = str(info.get("currency", "")).strip().upper()
             priority = int(info.get("priority", 0))
 
             if not display_name or not symbol or not instrument_type or not market or priority <= 0:
@@ -53,6 +57,9 @@ def _load_instrument_groups() -> dict[str, dict[str, dict]]:
                 "type": instrument_type,
                 "priority": priority,
                 "market": market,
+                "exchange": exchange or None,
+                "primary_exchange": primary_exchange or None,
+                "currency": currency or None,
             }
 
         groups[mode] = normalized_group
@@ -68,6 +75,7 @@ FOURTH_INSTRUMENTS = INSTRUMENT_GROUPS["fourth"]
 FIFTH_INSTRUMENTS = INSTRUMENT_GROUPS["fifth"]
 SIXTH_INSTRUMENTS = INSTRUMENT_GROUPS["sixth"]
 ASIA_TEST_INSTRUMENTS = INSTRUMENT_GROUPS["asia_test"]
+EUROPE_TEST_INSTRUMENTS = INSTRUMENT_GROUPS["europe_test"]
 CORE_ONE_INSTRUMENTS = INSTRUMENT_GROUPS["core_one"]
 CORE_TWO_INSTRUMENTS = INSTRUMENT_GROUPS["core_two"]
 CORE_THREE_INSTRUMENTS = INSTRUMENT_GROUPS["core_three"]

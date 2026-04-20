@@ -19,6 +19,7 @@ from analytics.instruments import (
     CORE_ONE_INSTRUMENTS,
     CORE_THREE_INSTRUMENTS,
     CORE_TWO_INSTRUMENTS,
+    EUROPE_TEST_INSTRUMENTS,
     FIFTH_INSTRUMENTS,
     FOURTH_INSTRUMENTS,
     PRIMARY_INSTRUMENTS,
@@ -407,6 +408,9 @@ def evaluate_symbol(
         "type": info["type"],
         "priority": info["priority"],
         "market": info["market"],
+        "exchange": info.get("exchange"),
+        "primary_exchange": info.get("primary_exchange"),
+        "currency": info.get("currency"),
         "disable_strategy_gates": bool(disable_strategy_gates),
     }
     checks["strategy_gates_disabled"] = bool(disable_strategy_gates)
@@ -923,6 +927,30 @@ def get_benchmark_instruments():
     }
 
 
+def _fetch_intraday_for_instrument(fetch_intraday_fn, info: dict):
+    symbol = str(info.get("symbol", "")).strip().upper()
+    if not symbol:
+        raise ValueError("instrument symbol is required")
+
+    exchange = str(info.get("exchange", "")).strip().upper()
+    primary_exchange = str(info.get("primary_exchange", "")).strip().upper()
+    currency = str(info.get("currency", "")).strip().upper()
+
+    try:
+        return fetch_intraday_fn(
+            symbol,
+            exchange=(exchange or None),
+            primary_exchange=(primary_exchange or None),
+            currency=(currency or None),
+        )
+    except TypeError as exc:
+        message = str(exc)
+        if "unexpected keyword argument" not in message and "positional argument" not in message:
+            raise
+        # Backward-compatibility for providers that accept only symbol.
+        return fetch_intraday_fn(symbol)
+
+
 def fetch_instruments(instruments: dict, *, fetch_intraday_fn=fetch_intraday):
     cache = {}
     fetch_ok = []
@@ -930,7 +958,7 @@ def fetch_instruments(instruments: dict, *, fetch_intraday_fn=fetch_intraday):
 
     for name, info in instruments.items():
         try:
-            candles = fetch_intraday_fn(info["symbol"])
+            candles = _fetch_intraday_for_instrument(fetch_intraday_fn, info)
             cache[name] = candles
             fetch_ok.append(f"{name} ({info['symbol']})")
         except Exception as e:
@@ -980,6 +1008,8 @@ def run_scan(
         selected_instruments = SIXTH_INSTRUMENTS
     elif mode == "asia_test":
         selected_instruments = ASIA_TEST_INSTRUMENTS
+    elif mode == "europe_test":
+        selected_instruments = EUROPE_TEST_INSTRUMENTS
     elif mode == "core_one":
         selected_instruments = CORE_ONE_INSTRUMENTS
     elif mode == "core_two":
@@ -988,7 +1018,8 @@ def run_scan(
         selected_instruments = CORE_THREE_INSTRUMENTS
     else:
         raise ValueError(
-            "Mode must be 'primary', 'secondary', 'third', 'fourth', 'fifth', 'sixth', 'asia_test', 'core_one', 'core_two', or 'core_three'"
+            "Mode must be 'primary', 'secondary', 'third', 'fourth', 'fifth', 'sixth', 'asia_test', "
+            "'europe_test', 'core_one', 'core_two', or 'core_three'"
         )
 
     benchmark_instruments = get_benchmark_instruments()
@@ -1163,13 +1194,13 @@ def main():
     args = parsed_args
 
     if len(args) < 2:
-        print("Usage: python3 trade_scan.py <AccountSize> <primary|secondary|third|fourth|fifth|sixth|asia_test|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
-        print("   or: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|fifth|sixth|asia_test|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
+        print("Usage: python3 trade_scan.py <AccountSize> <primary|secondary|third|fourth|fifth|sixth|asia_test|europe_test|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
+        print("   or: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|fifth|sixth|asia_test|europe_test|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
         return
 
     if args[0] == "--test":
         if len(args) < 3:
-            print("Usage: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|fifth|sixth|asia_test|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
+            print("Usage: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|fifth|sixth|asia_test|europe_test|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
             return
         account_size = float(args[1])
         mode = args[2].lower()
