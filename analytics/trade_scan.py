@@ -18,7 +18,6 @@ from analytics.instruments import (
     CORE_ONE_INSTRUMENTS,
     CORE_THREE_INSTRUMENTS,
     CORE_TWO_INSTRUMENTS,
-    EUROPE_TEST_INSTRUMENTS,
     FIFTH_INSTRUMENTS,
     FOURTH_INSTRUMENTS,
     PRIMARY_INSTRUMENTS,
@@ -1009,8 +1008,6 @@ def run_scan(
         selected_instruments = SIXTH_INSTRUMENTS
     elif mode == "us_test":
         selected_instruments = US_TEST_INSTRUMENTS
-    elif mode == "europe_test":
-        selected_instruments = EUROPE_TEST_INSTRUMENTS
     elif mode == "core_one":
         selected_instruments = CORE_ONE_INSTRUMENTS
     elif mode == "core_two":
@@ -1020,7 +1017,7 @@ def run_scan(
     else:
         raise ValueError(
             "Mode must be 'primary', 'secondary', 'third', 'fourth', 'fifth', 'sixth', 'us_test', "
-            "'europe_test', 'core_one', 'core_two', or 'core_three'"
+            "'core_one', 'core_two', or 'core_three'"
         )
 
     normalized_allowlist = None
@@ -1208,13 +1205,13 @@ def main():
     args = parsed_args
 
     if len(args) < 2:
-        print("Usage: python3 trade_scan.py <AccountSize> <primary|secondary|third|fourth|fifth|sixth|us_test|europe_test|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
-        print("   or: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|fifth|sixth|us_test|europe_test|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
+        print("Usage: python3 trade_scan.py <AccountSize> <primary|secondary|third|fourth|fifth|sixth|us_test|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
+        print("   or: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|fifth|sixth|us_test|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
         return
 
     if args[0] == "--test":
         if len(args) < 3:
-            print("Usage: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|fifth|sixth|us_test|europe_test|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
+            print("Usage: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|fifth|sixth|us_test|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
             return
         account_size = float(args[1])
         mode = args[2].lower()

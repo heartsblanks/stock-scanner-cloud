@@ -207,14 +207,14 @@ Recommended consolidated scheduler setup:
   - Runs a compressed E2E cycle in one request: scan rounds (by mode), sync, optional EOD close, and optional post-close reconciliation/analysis/snapshot ops
   - Useful for repeatable QA drills from Cloud Run (for example, replaying a "full day" in ~1 hour)
 
-Example on-demand Asia-focused compressed cycle:
+Example on-demand US test compressed cycle:
 
 ```bash
 curl -sS -X POST "$RUN_BASE_URL/scheduler/test-day-cycle" \
   -H "Content-Type: application/json" \
   -H "X-Admin-Token: $ADMIN_API_TOKEN" \
   -d '{
-    "modes": ["europe_test"],
+    "modes": ["us_test"],
     "scan_rounds": 6,
     "scan_interval_seconds": 600,
     "paper_trade": true,

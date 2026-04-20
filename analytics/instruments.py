@@ -11,7 +11,6 @@ REQUIRED_MODES = (
     "fifth",
     "sixth",
     "us_test",
-    "europe_test",
     "core_one",
     "core_two",
     "core_three",
@@ -75,7 +74,6 @@ FOURTH_INSTRUMENTS = INSTRUMENT_GROUPS["fourth"]
 FIFTH_INSTRUMENTS = INSTRUMENT_GROUPS["fifth"]
 SIXTH_INSTRUMENTS = INSTRUMENT_GROUPS["sixth"]
 US_TEST_INSTRUMENTS = INSTRUMENT_GROUPS["us_test"]
-EUROPE_TEST_INSTRUMENTS = INSTRUMENT_GROUPS["europe_test"]
 CORE_ONE_INSTRUMENTS = INSTRUMENT_GROUPS["core_one"]
 CORE_TWO_INSTRUMENTS = INSTRUMENT_GROUPS["core_two"]
 CORE_THREE_INSTRUMENTS = INSTRUMENT_GROUPS["core_three"]
