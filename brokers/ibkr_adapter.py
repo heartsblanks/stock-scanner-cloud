@@ -33,6 +33,7 @@ def _compact_trade_for_bridge(trade: dict[str, Any]) -> dict[str, Any]:
 
     compact_metrics = {
         "symbol": metrics.get("symbol"),
+        "market": metrics.get("market"),
         "direction": metrics.get("direction"),
         "entry": metrics.get("entry"),
         "stop": metrics.get("stop"),

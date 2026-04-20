@@ -1342,72 +1342,74 @@ def execute_sync_paper_trades(
 
     auto_healed_positions: list[dict[str, Any]] = []
     auto_heal_errors: list[dict[str, Any]] = []
+    auto_heal_enabled = _bool_env("PAPER_SYNC_ENABLE_AUTO_HEAL_CLOSES", False)
 
-    broker_names = sorted(
-        {
-            str(row.get("broker", "") or "IBKR").strip().upper() or "IBKR"
-            for row in (open_rows or [])
-        }
-    )
-    if not broker_names and (get_open_positions_for_broker or get_open_positions):
-        broker_names = ["IBKR"]
+    if auto_heal_enabled:
+        broker_names = sorted(
+            {
+                str(row.get("broker", "") or "IBKR").strip().upper() or "IBKR"
+                for row in (open_rows or [])
+            }
+        )
+        if not broker_names and (get_open_positions_for_broker or get_open_positions):
+            broker_names = ["IBKR"]
 
-    for broker_name in broker_names:
-        try:
-            if get_open_positions_for_broker is not None:
-                leftover_positions = get_open_positions_for_broker(broker_name) or []
-            elif get_open_positions is not None:
-                leftover_positions = get_open_positions() or []
-            else:
-                leftover_positions = []
-        except Exception as e:
-            leftover_positions = []
-            auto_heal_errors.append({
-                "broker": broker_name,
-                "symbol": "",
-                "reason": "open_positions_read_failed",
-                "details": str(e),
-            })
-
-        db_open_symbols = {
-            str(row.get("symbol", "")).strip().upper()
-            for row in (open_rows or [])
-            if str(row.get("symbol", "")).strip()
-            and (str(row.get("broker", "") or "IBKR").strip().upper() or "IBKR") == broker_name
-        }
-
-        for position in leftover_positions:
+        for broker_name in broker_names:
             try:
-                symbol = str(position.get("symbol", "")).strip().upper()
-                qty = position.get("qty")
-                side = str(position.get("side", "")).strip().lower()
-                if not symbol:
-                    continue
-                if symbol in db_open_symbols:
-                    continue
-
-                if close_position_for_broker is not None:
-                    close_result = close_position_for_broker(broker_name, symbol)
-                elif close_position is not None:
-                    close_result = close_position(symbol)
+                if get_open_positions_for_broker is not None:
+                    leftover_positions = get_open_positions_for_broker(broker_name) or []
+                elif get_open_positions is not None:
+                    leftover_positions = get_open_positions() or []
                 else:
-                    raise RuntimeError("close_position is not configured")
-
-                auto_healed_positions.append({
-                    "broker": broker_name,
-                    "symbol": symbol,
-                    "qty": qty,
-                    "side": side,
-                    "closed": True,
-                    "result": close_result,
-                })
+                    leftover_positions = []
             except Exception as e:
+                leftover_positions = []
                 auto_heal_errors.append({
                     "broker": broker_name,
-                    "symbol": str(position.get("symbol", "")).strip().upper(),
-                    "reason": "auto_heal_close_failed",
+                    "symbol": "",
+                    "reason": "open_positions_read_failed",
                     "details": str(e),
                 })
+
+            db_open_symbols = {
+                str(row.get("symbol", "")).strip().upper()
+                for row in (open_rows or [])
+                if str(row.get("symbol", "")).strip()
+                and (str(row.get("broker", "") or "IBKR").strip().upper() or "IBKR") == broker_name
+            }
+
+            for position in leftover_positions:
+                try:
+                    symbol = str(position.get("symbol", "")).strip().upper()
+                    qty = position.get("qty")
+                    side = str(position.get("side", "")).strip().lower()
+                    if not symbol:
+                        continue
+                    if symbol in db_open_symbols:
+                        continue
+
+                    if close_position_for_broker is not None:
+                        close_result = close_position_for_broker(broker_name, symbol)
+                    elif close_position is not None:
+                        close_result = close_position(symbol)
+                    else:
+                        raise RuntimeError("close_position is not configured")
+
+                    auto_healed_positions.append({
+                        "broker": broker_name,
+                        "symbol": symbol,
+                        "qty": qty,
+                        "side": side,
+                        "closed": True,
+                        "result": close_result,
+                    })
+                except Exception as e:
+                    auto_heal_errors.append({
+                        "broker": broker_name,
+                        "symbol": str(position.get("symbol", "")).strip().upper(),
+                        "reason": "auto_heal_close_failed",
+                        "details": str(e),
+                    })
 
     return {
         "ok": True,
@@ -1423,6 +1425,7 @@ def execute_sync_paper_trades(
         "auto_healed_positions": auto_healed_positions,
         "auto_heal_error_count": len(auto_heal_errors),
         "auto_heal_errors": auto_heal_errors,
+        "auto_heal_enabled": auto_heal_enabled,
         "ibkr_sync_attempted": ibkr_sync_attempted,
         "ibkr_sync_max_per_run": ibkr_sync_max_per_run,
         "ibkr_batch_only_mode": ibkr_batch_only_mode,

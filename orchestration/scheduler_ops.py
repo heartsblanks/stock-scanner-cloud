@@ -484,7 +484,6 @@ def execute_test_day_cycle(
         "fourth",
         "fifth",
         "sixth",
-        "asia_test",
         "europe_test",
         "core_one",
         "core_two",

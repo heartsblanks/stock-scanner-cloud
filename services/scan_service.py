@@ -598,7 +598,6 @@ def execute_full_scan(
         "fourth",
         "fifth",
         "sixth",
-        "asia_test",
         "europe_test",
         "core_one",
         "core_two",
@@ -606,10 +605,10 @@ def execute_full_scan(
     }:
         return {
             "ok": False,
-            "error": "mode must be primary, secondary, third, fourth, fifth, sixth, asia_test, europe_test, core_one, core_two, or core_three",
+            "error": "mode must be primary, secondary, third, fourth, fifth, sixth, europe_test, core_one, core_two, or core_three",
         }, 400
 
-    ignore_market_hours_raw = payload.get("ignore_market_hours", mode in {"asia_test", "europe_test"})
+    ignore_market_hours_raw = payload.get("ignore_market_hours", mode in {"europe_test"})
     if isinstance(ignore_market_hours_raw, bool):
         ignore_market_hours = ignore_market_hours_raw
     elif isinstance(ignore_market_hours_raw, str):

@@ -1264,6 +1264,7 @@ class IbkrGatewayClient:
     ) -> dict[str, Any]:
         metrics = trade.get("metrics", {}) if isinstance(trade, dict) else {}
         symbol = str(metrics.get("symbol", "")).strip().upper()
+        requested_market = str(metrics.get("market", "") or "").strip().upper()
         requested_exchange = str(metrics.get("exchange", "SMART") or "SMART").strip().upper() or "SMART"
         requested_primary_exchange = str(metrics.get("primary_exchange", "") or "").strip().upper()
         requested_currency = str(metrics.get("currency", "USD") or "USD").strip().upper() or "USD"
@@ -1427,6 +1428,85 @@ class IbkrGatewayClient:
                 "reason": "ibkr_contract_qualification_failed",
                 "details": str(exc),
             }
+
+        qualified_exchange = str(getattr(contract, "exchange", "") or "").strip().upper()
+        qualified_primary_exchange = str(getattr(contract, "primaryExchange", "") or "").strip().upper()
+        qualified_currency = str(getattr(contract, "currency", "") or "").strip().upper()
+
+        if requested_currency and qualified_currency and qualified_currency != requested_currency:
+            return {
+                "attempted": True,
+                "placed": False,
+                "broker": "IBKR",
+                "symbol": symbol,
+                "reason": "qualified_currency_mismatch",
+                "details": (
+                    f"Requested currency {requested_currency}, but qualified contract currency is {qualified_currency}."
+                ),
+                "requested_exchange": requested_exchange,
+                "requested_primary_exchange": requested_primary_exchange,
+                "qualified_exchange": qualified_exchange,
+                "qualified_primary_exchange": qualified_primary_exchange,
+                "requested_currency": requested_currency,
+                "qualified_currency": qualified_currency,
+            }
+
+        if requested_primary_exchange and qualified_primary_exchange and qualified_primary_exchange != requested_primary_exchange:
+            return {
+                "attempted": True,
+                "placed": False,
+                "broker": "IBKR",
+                "symbol": symbol,
+                "reason": "qualified_primary_exchange_mismatch",
+                "details": (
+                    f"Requested primary exchange {requested_primary_exchange}, "
+                    f"but qualified contract primary exchange is {qualified_primary_exchange}."
+                ),
+                "requested_exchange": requested_exchange,
+                "requested_primary_exchange": requested_primary_exchange,
+                "qualified_exchange": qualified_exchange,
+                "qualified_primary_exchange": qualified_primary_exchange,
+                "requested_currency": requested_currency,
+                "qualified_currency": qualified_currency,
+            }
+
+        if requested_market == "EUROPE":
+            us_venues = {"NYSE", "NASDAQ", "ARCA", "AMEX", "BATS", "IEX", "NMS"}
+            if qualified_exchange in us_venues or qualified_primary_exchange in us_venues:
+                return {
+                    "attempted": True,
+                    "placed": False,
+                    "broker": "IBKR",
+                    "symbol": symbol,
+                    "reason": "qualified_us_venue_for_europe_symbol",
+                    "details": (
+                        "Qualified contract resolved to a US venue for a EUROPE mode symbol. "
+                        "Order was blocked."
+                    ),
+                    "requested_exchange": requested_exchange,
+                    "requested_primary_exchange": requested_primary_exchange,
+                    "qualified_exchange": qualified_exchange,
+                    "qualified_primary_exchange": qualified_primary_exchange,
+                    "requested_currency": requested_currency,
+                    "qualified_currency": qualified_currency,
+                }
+            if requested_currency == "EUR" and qualified_currency and qualified_currency != "EUR":
+                return {
+                    "attempted": True,
+                    "placed": False,
+                    "broker": "IBKR",
+                    "symbol": symbol,
+                    "reason": "qualified_non_eur_for_europe_symbol",
+                    "details": (
+                        f"Qualified contract currency {qualified_currency} is invalid for EUROPE mode."
+                    ),
+                    "requested_exchange": requested_exchange,
+                    "requested_primary_exchange": requested_primary_exchange,
+                    "qualified_exchange": qualified_exchange,
+                    "qualified_primary_exchange": qualified_primary_exchange,
+                    "requested_currency": requested_currency,
+                    "qualified_currency": qualified_currency,
+                }
 
         action = "BUY" if direction == "BUY" else "SELL"
         exit_action = "SELL" if action == "BUY" else "BUY"

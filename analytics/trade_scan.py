@@ -15,7 +15,6 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from analytics.instruments import (
-    ASIA_TEST_INSTRUMENTS,
     CORE_ONE_INSTRUMENTS,
     CORE_THREE_INSTRUMENTS,
     CORE_TWO_INSTRUMENTS,
@@ -1006,8 +1005,6 @@ def run_scan(
         selected_instruments = FIFTH_INSTRUMENTS
     elif mode == "sixth":
         selected_instruments = SIXTH_INSTRUMENTS
-    elif mode == "asia_test":
-        selected_instruments = ASIA_TEST_INSTRUMENTS
     elif mode == "europe_test":
         selected_instruments = EUROPE_TEST_INSTRUMENTS
     elif mode == "core_one":
@@ -1018,7 +1015,7 @@ def run_scan(
         selected_instruments = CORE_THREE_INSTRUMENTS
     else:
         raise ValueError(
-            "Mode must be 'primary', 'secondary', 'third', 'fourth', 'fifth', 'sixth', 'asia_test', "
+            "Mode must be 'primary', 'secondary', 'third', 'fourth', 'fifth', 'sixth', "
             "'europe_test', 'core_one', 'core_two', or 'core_three'"
         )
 
@@ -1194,13 +1191,13 @@ def main():
     args = parsed_args
 
     if len(args) < 2:
-        print("Usage: python3 trade_scan.py <AccountSize> <primary|secondary|third|fourth|fifth|sixth|asia_test|europe_test|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
-        print("   or: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|fifth|sixth|asia_test|europe_test|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
+        print("Usage: python3 trade_scan.py <AccountSize> <primary|secondary|third|fourth|fifth|sixth|europe_test|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
+        print("   or: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|fifth|sixth|europe_test|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
         return
 
     if args[0] == "--test":
         if len(args) < 3:
-            print("Usage: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|fifth|sixth|asia_test|europe_test|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
+            print("Usage: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|fifth|sixth|europe_test|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
             return
         account_size = float(args[1])
         mode = args[2].lower()
