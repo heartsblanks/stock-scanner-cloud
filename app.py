@@ -159,7 +159,7 @@ from analytics.trade_scan import (
     market_time_check,
     MIN_CONFIDENCE,
 )
-from analytics.instruments import INSTRUMENT_GROUPS
+from analytics.instruments import get_instrument_groups
 
 
 app = Flask(__name__)
@@ -176,7 +176,7 @@ def get_ibkr_operational_status() -> dict[str, Any]:
 
 def find_instrument_by_symbol(symbol: str) -> tuple[str, str] | tuple[None, None]:
     symbol = symbol.strip().upper()
-    for mode_name, instruments in INSTRUMENT_GROUPS.items():
+    for mode_name, instruments in get_instrument_groups().items():
         for display_name, info in instruments.items():
             if info.get("symbol", "").upper() == symbol:
                 return display_name, mode_name

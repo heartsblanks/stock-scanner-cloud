@@ -663,21 +663,27 @@ def execute_full_scan(
     current_open_exposure = _to_float(payload.get("current_open_exposure", 0.0), 0.0)
     payload["account_size"] = account_size
 
-    if mode not in {
-        "primary",
-        "secondary",
-        "third",
-        "fourth",
-        "fifth",
-        "sixth",
-        "us_test",
-        "core_one",
-        "core_two",
-        "core_three",
-    }:
+    try:
+        from analytics.instruments import REQUIRED_MODES
+        supported_modes = set(REQUIRED_MODES)
+    except Exception:
+        supported_modes = {
+            "primary",
+            "secondary",
+            "third",
+            "fourth",
+            "fifth",
+            "sixth",
+            "us_test",
+            "core_one",
+            "core_two",
+            "core_three",
+        }
+
+    if mode not in supported_modes:
         return {
             "ok": False,
-            "error": "mode must be primary, secondary, third, fourth, fifth, sixth, us_test, core_one, core_two, or core_three",
+            "error": "mode must be one of: " + ", ".join(sorted(supported_modes)),
         }, 400
 
     if scan_source == "SCHEDULED" and mode not in set(IBKR_SCHEDULED_MODE_ORDER):

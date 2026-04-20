@@ -15,16 +15,8 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from analytics.instruments import (
-    CORE_ONE_INSTRUMENTS,
-    CORE_THREE_INSTRUMENTS,
-    CORE_TWO_INSTRUMENTS,
-    FIFTH_INSTRUMENTS,
-    FOURTH_INSTRUMENTS,
-    PRIMARY_INSTRUMENTS,
-    SECONDARY_INSTRUMENTS,
-    SIXTH_INSTRUMENTS,
-    THIRD_INSTRUMENTS,
-    US_TEST_INSTRUMENTS,
+    REQUIRED_MODES,
+    get_mode_instruments,
 )
 from core.paper_trade_config import get_paper_trade_limits
 
@@ -994,30 +986,10 @@ def run_scan(
     fetch_intraday_fn=fetch_intraday,
     source_label: str | None = None,
 ):
-    if mode == "primary":
-        selected_instruments = PRIMARY_INSTRUMENTS
-    elif mode == "secondary":
-        selected_instruments = SECONDARY_INSTRUMENTS
-    elif mode == "third":
-        selected_instruments = THIRD_INSTRUMENTS
-    elif mode == "fourth":
-        selected_instruments = FOURTH_INSTRUMENTS
-    elif mode == "fifth":
-        selected_instruments = FIFTH_INSTRUMENTS
-    elif mode == "sixth":
-        selected_instruments = SIXTH_INSTRUMENTS
-    elif mode == "us_test":
-        selected_instruments = US_TEST_INSTRUMENTS
-    elif mode == "core_one":
-        selected_instruments = CORE_ONE_INSTRUMENTS
-    elif mode == "core_two":
-        selected_instruments = CORE_TWO_INSTRUMENTS
-    elif mode == "core_three":
-        selected_instruments = CORE_THREE_INSTRUMENTS
-    else:
+    selected_instruments = get_mode_instruments(mode)
+    if not selected_instruments:
         raise ValueError(
-            "Mode must be 'primary', 'secondary', 'third', 'fourth', 'fifth', 'sixth', 'us_test', "
-            "'core_one', 'core_two', or 'core_three'"
+            "Mode must be one of: " + ", ".join(REQUIRED_MODES)
         )
 
     normalized_allowlist = None
@@ -1205,13 +1177,15 @@ def main():
     args = parsed_args
 
     if len(args) < 2:
-        print("Usage: python3 trade_scan.py <AccountSize> <primary|secondary|third|fourth|fifth|sixth|us_test|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
-        print("   or: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|fifth|sixth|us_test|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
+        modes = "|".join(REQUIRED_MODES)
+        print(f"Usage: python3 trade_scan.py <AccountSize> <{modes}> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
+        print(f"   or: python3 trade_scan.py --test <AccountSize> <{modes}> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
         return
 
     if args[0] == "--test":
         if len(args) < 3:
-            print("Usage: python3 trade_scan.py --test <AccountSize> <primary|secondary|third|fourth|fifth|sixth|us_test|core_one|core_two|core_three> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
+            modes = "|".join(REQUIRED_MODES)
+            print(f"Usage: python3 trade_scan.py --test <AccountSize> <{modes}> [--open-positions N] [--open-exposure AMOUNT] [--debug]")
             return
         account_size = float(args[1])
         mode = args[2].lower()

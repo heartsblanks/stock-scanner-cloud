@@ -1,13 +1,14 @@
 import unittest
 
-from analytics.instruments import INSTRUMENT_GROUPS
+from analytics.instruments import get_instrument_groups
 
 
 class InstrumentRegistryTests(unittest.TestCase):
     def test_instrument_symbols_are_unique_across_modes(self):
+        instrument_groups = get_instrument_groups()
         seen_symbols = set()
 
-        for mode, instruments in INSTRUMENT_GROUPS.items():
+        for mode, instruments in instrument_groups.items():
             self.assertTrue(instruments, f"{mode} should not be empty")
             for display_name, info in instruments.items():
                 symbol = info["symbol"]
@@ -16,7 +17,8 @@ class InstrumentRegistryTests(unittest.TestCase):
                 seen_symbols.add(symbol)
 
     def test_each_instrument_mode_stays_within_six_symbol_target(self):
-        for mode, instruments in INSTRUMENT_GROUPS.items():
+        instrument_groups = get_instrument_groups()
+        for mode, instruments in instrument_groups.items():
             if mode.startswith("core_"):
                 self.assertLessEqual(len(instruments), 6, f"{mode} should stay at six or fewer symbols")
             else:

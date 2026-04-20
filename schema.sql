@@ -276,6 +276,30 @@ CREATE INDEX IF NOT EXISTS idx_mode_rankings_window ON mode_rankings(window_days
 CREATE UNIQUE INDEX IF NOT EXISTS uq_mode_rankings_day_broker_window_mode
     ON mode_rankings(ranking_date, broker, window_days, mode);
 
+-- Instrument catalog (DB source of truth)
+CREATE TABLE IF NOT EXISTS instrument_catalog (
+    id SERIAL PRIMARY KEY,
+    mode TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    instrument_type TEXT NOT NULL,
+    priority INT NOT NULL,
+    market TEXT NOT NULL,
+    exchange TEXT,
+    primary_exchange TEXT,
+    currency TEXT,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_instrument_catalog_mode_symbol
+    ON instrument_catalog(mode, symbol);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_instrument_catalog_symbol
+    ON instrument_catalog(symbol);
+CREATE INDEX IF NOT EXISTS idx_instrument_catalog_mode_active
+    ON instrument_catalog(mode, active);
+
 -- Rolling symbol eligibility snapshot used to pre-filter scans.
 -- Latest rows per mode replace older rows to avoid day-by-day growth.
 CREATE TABLE IF NOT EXISTS symbol_session_eligibility (

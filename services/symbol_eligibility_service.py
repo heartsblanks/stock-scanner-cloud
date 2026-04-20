@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
-from analytics.instruments import INSTRUMENT_GROUPS
+from analytics.instruments import get_instrument_groups
 from core.logging_utils import log_exception, log_info, log_warning
 from repositories.symbol_eligibility_repo import (
     get_current_symbol_session_eligibility_rows,
@@ -70,7 +70,8 @@ def refresh_symbol_eligibility_for_date(
 ) -> dict[str, Any]:
     notional_cap = _configured_notional_cap()
     allow_non_usd = _allow_non_usd_symbols()
-    selected_modes = [str(mode).strip().lower() for mode in (modes or list(INSTRUMENT_GROUPS.keys())) if str(mode).strip()]
+    instrument_groups = get_instrument_groups()
+    selected_modes = [str(mode).strip().lower() for mode in (modes or list(instrument_groups.keys())) if str(mode).strip()]
 
     mode_summaries: list[dict[str, Any]] = []
     total_symbols = 0
@@ -78,7 +79,7 @@ def refresh_symbol_eligibility_for_date(
     total_ineligible = 0
 
     for mode in selected_modes:
-        instruments = INSTRUMENT_GROUPS.get(mode) or {}
+        instruments = instrument_groups.get(mode) or {}
         rows: list[dict[str, Any]] = []
         mode_total = 0
         mode_eligible = 0
