@@ -509,6 +509,9 @@ def execute_test_day_cycle(
     paper_trade = _to_bool(request_payload.get("paper_trade", True), True)
     ignore_market_hours = _to_bool(request_payload.get("ignore_market_hours", True), True)
     debug = _to_bool(request_payload.get("debug", False), False)
+    # Use MANUAL source so each requested mode is honored in the test cycle.
+    # SCHEDULED source fans out to the full ranked mode set inside app_runtime.
+    scan_source = "MANUAL"
     scan_payload_overrides = request_payload.get("scan_payload") if isinstance(request_payload.get("scan_payload"), dict) else {}
 
     actions: list[str] = []
@@ -531,14 +534,14 @@ def execute_test_day_cycle(
             scan_payload: dict[str, Any] = {
                 "mode": mode,
                 "paper_trade": paper_trade,
-                "scan_source": "SCHEDULED",
+                "scan_source": scan_source,
                 "ignore_market_hours": ignore_market_hours,
                 "debug": debug,
             }
             scan_payload.update(scan_payload_overrides)
             scan_payload["mode"] = mode
             scan_payload["paper_trade"] = paper_trade
-            scan_payload["scan_source"] = "SCHEDULED"
+            scan_payload["scan_source"] = scan_source
             scan_payload["ignore_market_hours"] = ignore_market_hours
             scan_payload["debug"] = debug
 
@@ -582,6 +585,7 @@ def execute_test_day_cycle(
         "scan_rounds": scan_rounds,
         "modes": modes,
         "scan_interval_seconds": scan_interval_seconds,
+        "scan_source": scan_source,
         "paper_trade": paper_trade,
         "ignore_market_hours": ignore_market_hours,
         "elapsed_seconds": elapsed_seconds,

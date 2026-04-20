@@ -225,8 +225,8 @@ export default function DashboardPage() {
   const [dayCycleIntervalSeconds, setDayCycleIntervalSeconds] = useState("0");
   const [dayCycleRunInitialSync, setDayCycleRunInitialSync] = useState(true);
   const [dayCycleSyncAfterEachScan, setDayCycleSyncAfterEachScan] = useState(true);
-  const [dayCycleRunEodClose, setDayCycleRunEodClose] = useState(true);
-  const [dayCycleRunPostClose, setDayCycleRunPostClose] = useState(true);
+  const [dayCycleRunEodClose, setDayCycleRunEodClose] = useState(false);
+  const [dayCycleRunPostClose, setDayCycleRunPostClose] = useState(false);
   const [dayCyclePaperTrade, setDayCyclePaperTrade] = useState(true);
   const [dayCycleIgnoreMarketHours, setDayCycleIgnoreMarketHours] = useState(true);
   const [dayCycleDebug, setDayCycleDebug] = useState(false);
