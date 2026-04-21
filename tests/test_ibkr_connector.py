@@ -196,6 +196,19 @@ class _FakeLimitOrderForBracket:
         self.orderType = "LMT"
 
 
+class _FakeStopOrderForBracket:
+    def __init__(self, action, qty, stop_price, transmit=False):
+        self.action = action
+        self.totalQuantity = qty
+        self.auxPrice = stop_price
+        self.transmit = transmit
+        self.orderId = 0
+        self.parentId = 0
+        self.orderRef = ""
+        self.tif = ""
+        self.orderType = "STP"
+
+
 class _FakeGenericOrderForBracket:
     def __init__(self):
         self.action = ""
@@ -587,7 +600,7 @@ class IbkrConnectorTests(unittest.TestCase):
         client._load_order_classes = lambda: (
             _FakeLimitOrderForBracket,
             _FakeMarketOrderForBracket,
-            _FakeGenericOrderForBracket,
+            _FakeStopOrderForBracket,
             _FakeGenericOrderForBracket,
             _FakeStockForBracket,
         )
@@ -623,7 +636,7 @@ class IbkrConnectorTests(unittest.TestCase):
         client._load_order_classes = lambda: (
             _FakeLimitOrderForBracket,
             _FakeMarketOrderForBracket,
-            _FakeGenericOrderForBracket,
+            _FakeStopOrderForBracket,
             _FakeGenericOrderForBracket,
             _FakeStockForBracket,
         )
@@ -658,7 +671,7 @@ class IbkrConnectorTests(unittest.TestCase):
         client._load_order_classes = lambda: (
             _FakeLimitOrderForBracket,
             _FakeMarketOrderForBracket,
-            _FakeGenericOrderForBracket,
+            _FakeStopOrderForBracket,
             _FakeGenericOrderForBracket,
             _FakeStockForBracket,
         )
@@ -681,6 +694,9 @@ class IbkrConnectorTests(unittest.TestCase):
         self.assertTrue(result["placed"])
         self.assertEqual(result.get("entry_order_type"), "market")
         self.assertEqual(getattr(fake_ib.placed_orders[0], "orderType", ""), "MKT")
+        protective_order = fake_ib.placed_orders[-1]
+        self.assertEqual(getattr(protective_order, "orderType", ""), "STP")
+        self.assertEqual(getattr(protective_order, "auxPrice", 0.0), 399.0)
 
     def test_place_paper_bracket_order_uses_limit_entry_when_configured(self):
         client = IbkrGatewayClient.__new__(IbkrGatewayClient)
@@ -693,7 +709,7 @@ class IbkrConnectorTests(unittest.TestCase):
         client._load_order_classes = lambda: (
             _FakeLimitOrderForBracket,
             _FakeMarketOrderForBracket,
-            _FakeGenericOrderForBracket,
+            _FakeStopOrderForBracket,
             _FakeGenericOrderForBracket,
             _FakeStockForBracket,
         )
@@ -717,6 +733,8 @@ class IbkrConnectorTests(unittest.TestCase):
         self.assertEqual(result.get("entry_order_type"), "limit")
         self.assertEqual(getattr(fake_ib.placed_orders[0], "orderType", ""), "LMT")
         self.assertEqual(getattr(fake_ib.placed_orders[0], "lmtPrice", 0.0), 401.0)
+        protective_order = fake_ib.placed_orders[-1]
+        self.assertEqual(getattr(protective_order, "orderType", ""), "TRAIL")
 
     def test_place_paper_bracket_order_prefers_trade_entry_order_type_over_env(self):
         client = IbkrGatewayClient.__new__(IbkrGatewayClient)
@@ -729,7 +747,7 @@ class IbkrConnectorTests(unittest.TestCase):
         client._load_order_classes = lambda: (
             _FakeLimitOrderForBracket,
             _FakeMarketOrderForBracket,
-            _FakeGenericOrderForBracket,
+            _FakeStopOrderForBracket,
             _FakeGenericOrderForBracket,
             _FakeStockForBracket,
         )
@@ -765,7 +783,7 @@ class IbkrConnectorTests(unittest.TestCase):
         client._load_order_classes = lambda: (
             _FakeLimitOrderForBracket,
             _FakeMarketOrderForBracket,
-            _FakeGenericOrderForBracket,
+            _FakeStopOrderForBracket,
             _FakeGenericOrderForBracket,
             _FakeStockForBracket,
         )
@@ -801,7 +819,7 @@ class IbkrConnectorTests(unittest.TestCase):
         client._load_order_classes = lambda: (
             _FakeLimitOrderForBracket,
             _FakeMarketOrderForBracket,
-            _FakeGenericOrderForBracket,
+            _FakeStopOrderForBracket,
             _FakeGenericOrderForBracket,
             _FakeStockForBracket,
         )
@@ -825,9 +843,9 @@ class IbkrConnectorTests(unittest.TestCase):
         self.assertEqual(result["broker_order_status"], "PendingSubmit")
         self.assertEqual(result["broker_perm_id"], 128777)
         self.assertGreaterEqual(len(result.get("order_status_transitions", [])), 2)
-        trailing_order = next((order for order in fake_ib.placed_orders if getattr(order, "orderType", "") == "TRAIL"), None)
-        self.assertIsNotNone(trailing_order)
-        self.assertFalse(hasattr(trailing_order, "trailingPercent"))
+        stop_order = next((order for order in fake_ib.placed_orders if getattr(order, "orderType", "") == "STP"), None)
+        self.assertIsNotNone(stop_order)
+        self.assertEqual(getattr(stop_order, "auxPrice", 0.0), 399.0)
 
     def test_place_paper_bracket_order_rejects_when_symbol_already_has_position(self):
         client = IbkrGatewayClient.__new__(IbkrGatewayClient)
@@ -840,7 +858,7 @@ class IbkrConnectorTests(unittest.TestCase):
         client._load_order_classes = lambda: (
             _FakeLimitOrderForBracket,
             _FakeMarketOrderForBracket,
-            _FakeGenericOrderForBracket,
+            _FakeStopOrderForBracket,
             _FakeGenericOrderForBracket,
             _FakeStockForBracket,
         )
@@ -876,7 +894,7 @@ class IbkrConnectorTests(unittest.TestCase):
         client._load_order_classes = lambda: (
             _FakeLimitOrderForBracket,
             _FakeMarketOrderForBracket,
-            _FakeGenericOrderForBracket,
+            _FakeStopOrderForBracket,
             _FakeGenericOrderForBracket,
             _FakeStockForBracket,
         )
@@ -918,7 +936,7 @@ class IbkrConnectorTests(unittest.TestCase):
         client._load_order_classes = lambda: (
             _FakeLimitOrderForBracket,
             _FakeMarketOrderForBracket,
-            _FakeGenericOrderForBracket,
+            _FakeStopOrderForBracket,
             _FakeGenericOrderForBracket,
             _FakeStockForBracket,
         )

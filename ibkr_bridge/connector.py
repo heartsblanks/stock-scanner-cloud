@@ -1715,17 +1715,21 @@ class IbkrGatewayClient:
         if trail_amount > 0 and entry > 0:
             trail_percent = round((trail_amount / entry) * 100.0, 4)
 
-        trailing_stop = Order()
-        trailing_stop.action = exit_action
-        trailing_stop.totalQuantity = final_shares
-        trailing_stop.orderType = "TRAIL"
-        trailing_stop.transmit = True
+        protective_stop_type = "STP" if entry_order_type == "MKT" else "TRAIL"
+        if protective_stop_type == "STP":
+            trailing_stop = StopOrder(exit_action, final_shares, round(stop, 2), transmit=True)
+        else:
+            trailing_stop = Order()
+            trailing_stop.action = exit_action
+            trailing_stop.totalQuantity = final_shares
+            trailing_stop.orderType = "TRAIL"
+            trailing_stop.transmit = True
+            trailing_stop.auxPrice = trail_amount
+            trailing_stop.trailStopPrice = round(stop, 2)
         trailing_stop.orderId = base_order_id + 2
         trailing_stop.parentId = base_order_id
         trailing_stop.orderRef = client_order_id
         trailing_stop.tif = "GTC"
-        trailing_stop.auxPrice = trail_amount
-        trailing_stop.trailStopPrice = round(stop, 2)
 
         log_info(
             "IBKR bridge paper bracket orders prepared",
@@ -1736,6 +1740,7 @@ class IbkrGatewayClient:
             parent_order_id=base_order_id,
             take_profit_order_id=base_order_id + 1,
             trailing_stop_order_id=base_order_id + 2,
+            protective_stop_order_type=protective_stop_type,
             trail_amount=trail_amount,
             trail_percent=trail_percent,
             entry_order_type=entry_order_type,
