@@ -158,6 +158,13 @@ def _normalize_text(value: object) -> str:
     return str(value or "").strip()
 
 
+def _normalize_optional_market_field(value: object) -> str | None:
+    normalized = _normalize_text(value).upper()
+    if normalized in {"", "NONE", "NULL"}:
+        return None
+    return normalized
+
+
 def ensure_instrument_catalog_schema() -> None:
     global _SCHEMA_READY
     if _SCHEMA_READY:
@@ -274,9 +281,9 @@ def _rows_to_groups(rows: list[dict[str, object]]) -> dict[str, dict[str, dict[s
         symbol = _normalize_text(row.get("symbol")).upper()
         instrument_type = _normalize_text(row.get("instrument_type")).lower()
         market = _normalize_text(row.get("market")).upper()
-        exchange = _normalize_text(row.get("exchange")).upper() or None
-        primary_exchange = _normalize_text(row.get("primary_exchange")).upper() or None
-        currency = _normalize_text(row.get("currency")).upper() or None
+        exchange = _normalize_optional_market_field(row.get("exchange"))
+        primary_exchange = _normalize_optional_market_field(row.get("primary_exchange"))
+        currency = _normalize_optional_market_field(row.get("currency"))
 
         try:
             priority = int(row.get("priority") or 0)

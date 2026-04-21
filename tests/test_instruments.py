@@ -1,9 +1,46 @@
 import unittest
 
-from analytics.instruments import get_instrument_groups
+from analytics.instruments import _rows_to_groups, get_instrument_groups
 
 
 class InstrumentRegistryTests(unittest.TestCase):
+    def test_rows_to_groups_treats_none_literals_as_missing_market_metadata(self):
+        rows = []
+        for mode_index, mode in enumerate(
+            [
+                "primary",
+                "secondary",
+                "third",
+                "fourth",
+                "fifth",
+                "sixth",
+                "us_test",
+                "core_one",
+                "core_two",
+                "core_three",
+            ],
+            start=1,
+        ):
+            rows.append(
+                {
+                    "mode": mode,
+                    "display_name": f"{mode.title()} Name",
+                    "symbol": f"T{mode_index}",
+                    "instrument_type": "stock",
+                    "priority": 10,
+                    "market": "NASDAQ",
+                    "exchange": "NONE" if mode == "core_one" else None,
+                    "primary_exchange": "NONE" if mode == "core_one" else None,
+                    "currency": "NONE" if mode == "core_one" else None,
+                }
+            )
+
+        instrument_groups = _rows_to_groups(rows)
+        info = instrument_groups["core_one"]["Core_One Name"]
+        self.assertIsNone(info["exchange"])
+        self.assertIsNone(info["primary_exchange"])
+        self.assertIsNone(info["currency"])
+
     def test_instrument_symbols_are_unique_across_modes(self):
         instrument_groups = get_instrument_groups()
         seen_symbols = set()
