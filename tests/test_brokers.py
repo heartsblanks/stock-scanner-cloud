@@ -169,6 +169,7 @@ class BrokerRegistryTests(unittest.TestCase):
         posted_trade = mock_post.call_args.kwargs["json_body"]["trade"]
         self.assertEqual(posted_trade["metrics"]["symbol"], "JOBY")
         self.assertIsNone(posted_trade["metrics"]["per_trade_notional"])
+        self.assertEqual(posted_trade["entry_order_type"], "MKT")
         self.assertNotIn("candles", posted_trade)
 
 

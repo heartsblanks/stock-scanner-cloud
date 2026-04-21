@@ -52,6 +52,16 @@ def _configured_entry_order_type() -> str:
     return "MKT"
 
 
+def _resolve_entry_order_type(trade: dict[str, Any]) -> str:
+    if isinstance(trade, dict):
+        raw_value = str(trade.get("entry_order_type", "") or "").strip().upper()
+        if raw_value in {"LMT", "LIMIT"}:
+            return "LMT"
+        if raw_value in {"MKT", "MARKET"}:
+            return "MKT"
+    return _configured_entry_order_type()
+
+
 def _fractional_share_decimals() -> int:
     try:
         return max(0, min(6, int(os.getenv("FRACTIONAL_SHARE_DECIMALS", "4"))))
@@ -1676,7 +1686,7 @@ class IbkrGatewayClient:
         action = "BUY" if direction == "BUY" else "SELL"
         exit_action = "SELL" if action == "BUY" else "BUY"
         client_order_id = f"scanner-{symbol}-{direction}-{int(round(entry * 10000))}-{_order_quantity_token(final_shares)}"
-        entry_order_type = _configured_entry_order_type()
+        entry_order_type = _resolve_entry_order_type(trade)
 
         base_order_id = ib.client.getReqId()
         if entry_order_type == "MKT":

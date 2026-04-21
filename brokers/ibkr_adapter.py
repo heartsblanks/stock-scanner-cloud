@@ -30,6 +30,9 @@ def _json_safe_value(value: Any) -> Any:
 def _compact_trade_for_bridge(trade: dict[str, Any]) -> dict[str, Any]:
     trade_dict = trade if isinstance(trade, dict) else {}
     metrics = trade_dict.get("metrics") if isinstance(trade_dict.get("metrics"), dict) else {}
+    entry_order_type = str(trade_dict.get("entry_order_type", "MKT") or "MKT").strip().upper()
+    if entry_order_type not in {"MKT", "MARKET", "LMT", "LIMIT"}:
+        entry_order_type = "MKT"
 
     compact_metrics = {
         "symbol": metrics.get("symbol"),
@@ -50,6 +53,7 @@ def _compact_trade_for_bridge(trade: dict[str, Any]) -> dict[str, Any]:
         "name": trade_dict.get("name"),
         "final_reason": trade_dict.get("final_reason"),
         "decision": trade_dict.get("decision"),
+        "entry_order_type": entry_order_type,
         "metrics": compact_metrics,
     }
     return _json_safe_value(compact_trade)
