@@ -1359,7 +1359,11 @@ def execute_sync_paper_trades(
                 exit_timestamp = _resolve_exit_timestamp(sync_result, timestamp_utc, parse_iso_utc)
             exit_timestamp_utc = exit_timestamp.astimezone(timezone.utc).isoformat() if exit_timestamp else timestamp_utc
 
-            entry_price = open_row.get("entry_price", "")
+            entry_price = (
+                sync_result.get("entry_filled_avg_price", "")
+                or sync_result.get("entry_price", "")
+                or open_row.get("entry_price", "")
+            )
             stop_price = open_row.get("stop_price", "")
             target_price = open_row.get("target_price", "")
             exit_price = sync_result.get("exit_filled_avg_price", "") or sync_result.get("exit_price", "")

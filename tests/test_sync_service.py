@@ -57,6 +57,59 @@ class SyncServiceTests(unittest.TestCase):
         self.assertAlmostEqual(captured_lifecycle["realized_pnl"], -1.96, places=2)
         self.assertAlmostEqual(captured_lifecycle["realized_pnl_percent"], -0.805524, places=6)
 
+    def test_sync_close_prefers_broker_entry_fill_price_for_pnl(self):
+        captured_lifecycle = {}
+
+        def upsert_trade_lifecycle(**kwargs):
+            captured_lifecycle.update(kwargs)
+
+        result = execute_sync_paper_trades(
+            get_open_paper_trades=lambda: [
+                {
+                    "timestamp_utc": "2026-04-21T14:35:29+00:00",
+                    "symbol": "CLOV",
+                    "name": "Clover",
+                    "mode": "third",
+                    "side": "BUY",
+                    "shares": "21",
+                    "entry_price": "2.465",
+                    "stop_price": "2.39486",
+                    "target_price": "2.60528",
+                    "broker_order_id": "833",
+                    "broker_parent_order_id": "833",
+                }
+            ],
+            sync_order_by_id=lambda parent_id: {
+                "entry_filled_avg_price": "2.48",
+                "exit_event": "MANUAL_CLOSE",
+                "exit_price": "2.38",
+                "exit_status": "filled",
+                "exit_filled_qty": "21",
+                "exit_filled_avg_price": "2.38",
+                "exit_order_id": "835",
+                "exit_reason": "BROKER_FILLED_EXIT",
+                "parent_status": "filled",
+                "exit_filled_at": "2026-04-21T14:55:39+00:00",
+                "exit_realized_pnl": "0",
+                "exit_realized_pnl_confirmed": True,
+            },
+            paper_trade_exit_already_logged=lambda parent_order_id, exit_event: False,
+            append_trade_log=lambda row: None,
+            safe_insert_trade_event=lambda **kwargs: None,
+            safe_insert_broker_order=lambda **kwargs: None,
+            upsert_trade_lifecycle=upsert_trade_lifecycle,
+            parse_iso_utc=parse_iso_utc,
+            to_float_or_none=to_float_or_none,
+            get_open_positions=lambda: [],
+            close_position=lambda symbol: {"ok": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["synced_count"], 1)
+        self.assertAlmostEqual(captured_lifecycle["entry_price"], 2.48, places=2)
+        self.assertAlmostEqual(captured_lifecycle["realized_pnl"], -2.10, places=2)
+        self.assertAlmostEqual(captured_lifecycle["realized_pnl_percent"], -4.032258, places=6)
+
     def test_sync_close_preserves_long_direction_and_negative_pnl_for_losing_buy_trade(self):
         captured_lifecycle = {}
 
