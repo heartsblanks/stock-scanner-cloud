@@ -74,7 +74,7 @@ _DEFAULT_INSTRUMENT_GROUPS: dict[str, dict[str, dict[str, object]]] = {
             "priority": 10,
             "market": "NASDAQ",
             "exchange": "SMART",
-            "primary_exchange": "NMS",
+            "primary_exchange": "NASDAQ",
             "currency": "USD",
         },
         "Cisco": {
@@ -83,7 +83,7 @@ _DEFAULT_INSTRUMENT_GROUPS: dict[str, dict[str, dict[str, object]]] = {
             "priority": 9,
             "market": "NASDAQ",
             "exchange": "SMART",
-            "primary_exchange": "NMS",
+            "primary_exchange": "NASDAQ",
             "currency": "USD",
         },
         "Applied Materials": {
@@ -92,7 +92,7 @@ _DEFAULT_INSTRUMENT_GROUPS: dict[str, dict[str, dict[str, object]]] = {
             "priority": 9,
             "market": "NASDAQ",
             "exchange": "SMART",
-            "primary_exchange": "NMS",
+            "primary_exchange": "NASDAQ",
             "currency": "USD",
         },
         "Texas Instruments": {
@@ -101,7 +101,7 @@ _DEFAULT_INSTRUMENT_GROUPS: dict[str, dict[str, dict[str, object]]] = {
             "priority": 8,
             "market": "NASDAQ",
             "exchange": "SMART",
-            "primary_exchange": "NMS",
+            "primary_exchange": "NASDAQ",
             "currency": "USD",
         },
         "Automatic Data Processing": {
@@ -110,7 +110,7 @@ _DEFAULT_INSTRUMENT_GROUPS: dict[str, dict[str, dict[str, object]]] = {
             "priority": 8,
             "market": "NASDAQ",
             "exchange": "SMART",
-            "primary_exchange": "NMS",
+            "primary_exchange": "NASDAQ",
             "currency": "USD",
         },
         "Palo Alto Networks": {
@@ -119,7 +119,7 @@ _DEFAULT_INSTRUMENT_GROUPS: dict[str, dict[str, dict[str, object]]] = {
             "priority": 8,
             "market": "NASDAQ",
             "exchange": "SMART",
-            "primary_exchange": "NMS",
+            "primary_exchange": "NASDAQ",
             "currency": "USD",
         },
     },
@@ -162,6 +162,13 @@ def _normalize_optional_market_field(value: object) -> str | None:
     normalized = _normalize_text(value).upper()
     if normalized in {"", "NONE", "NULL"}:
         return None
+    return normalized
+
+
+def _normalize_primary_exchange(value: object) -> str | None:
+    normalized = _normalize_optional_market_field(value)
+    if normalized == "NMS":
+        return "NASDAQ"
     return normalized
 
 
@@ -229,7 +236,7 @@ def _seed_defaults_if_empty() -> None:
                     "priority": int(info.get("priority") or 0),
                     "market": _normalize_text(info.get("market")).upper(),
                     "exchange": _normalize_text(info.get("exchange")).upper() or None,
-                    "primary_exchange": _normalize_text(info.get("primary_exchange")).upper() or None,
+                    "primary_exchange": _normalize_primary_exchange(info.get("primary_exchange")),
                     "currency": _normalize_text(info.get("currency")).upper() or None,
                     "active": True,
                 }
@@ -282,7 +289,7 @@ def _rows_to_groups(rows: list[dict[str, object]]) -> dict[str, dict[str, dict[s
         instrument_type = _normalize_text(row.get("instrument_type")).lower()
         market = _normalize_text(row.get("market")).upper()
         exchange = _normalize_optional_market_field(row.get("exchange"))
-        primary_exchange = _normalize_optional_market_field(row.get("primary_exchange"))
+        primary_exchange = _normalize_primary_exchange(row.get("primary_exchange"))
         currency = _normalize_optional_market_field(row.get("currency"))
 
         try:

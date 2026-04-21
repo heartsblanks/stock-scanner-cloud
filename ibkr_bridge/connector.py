@@ -62,6 +62,13 @@ def _resolve_entry_order_type(trade: dict[str, Any]) -> str:
     return _configured_entry_order_type()
 
 
+def _normalize_primary_exchange(value: Any) -> str:
+    normalized = str(value or "").strip().upper()
+    if normalized == "NMS":
+        return "NASDAQ"
+    return normalized
+
+
 def _fractional_share_decimals() -> int:
     try:
         return max(0, min(6, int(os.getenv("FRACTIONAL_SHARE_DECIMALS", "4"))))
@@ -490,7 +497,7 @@ class IbkrGatewayClient:
         _LimitOrder, _MarketOrder, _StopOrder, _Order, Stock = self._load_order_classes()
         route_exchange = str(exchange or "SMART").strip().upper() or "SMART"
         normalized_currency = str(currency or "USD").strip().upper() or "USD"
-        normalized_primary_exchange = str(primary_exchange or "").strip().upper()
+        normalized_primary_exchange = _normalize_primary_exchange(primary_exchange)
         try:
             contract = Stock(normalized_symbol, route_exchange, normalized_currency)
         except TypeError:
@@ -1425,7 +1432,7 @@ class IbkrGatewayClient:
         symbol = str(metrics.get("symbol", "")).strip().upper()
         requested_market = str(metrics.get("market", "") or "").strip().upper()
         requested_exchange = str(metrics.get("exchange", "SMART") or "SMART").strip().upper() or "SMART"
-        requested_primary_exchange = str(metrics.get("primary_exchange", "") or "").strip().upper()
+        requested_primary_exchange = _normalize_primary_exchange(metrics.get("primary_exchange"))
         requested_currency = str(metrics.get("currency", "USD") or "USD").strip().upper() or "USD"
         direction = str(metrics.get("direction", "BUY")).strip().upper() or "BUY"
         entry = _to_float(metrics.get("entry"))

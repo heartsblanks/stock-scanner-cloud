@@ -1,6 +1,6 @@
 import unittest
 
-from analytics.instruments import _rows_to_groups, get_instrument_groups
+from analytics.instruments import _normalize_primary_exchange, _rows_to_groups, get_instrument_groups
 
 
 class InstrumentRegistryTests(unittest.TestCase):
@@ -40,6 +40,11 @@ class InstrumentRegistryTests(unittest.TestCase):
         self.assertIsNone(info["exchange"])
         self.assertIsNone(info["primary_exchange"])
         self.assertIsNone(info["currency"])
+
+    def test_normalize_primary_exchange_maps_nms_to_nasdaq(self):
+        self.assertEqual(_normalize_primary_exchange("NMS"), "NASDAQ")
+        self.assertEqual(_normalize_primary_exchange("nasdaq"), "NASDAQ")
+        self.assertIsNone(_normalize_primary_exchange("NONE"))
 
     def test_instrument_symbols_are_unique_across_modes(self):
         instrument_groups = get_instrument_groups()

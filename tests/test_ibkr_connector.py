@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from ibkr_bridge.connector import IbkrGatewayClient
+from ibkr_bridge.connector import IbkrGatewayClient, _normalize_primary_exchange
 
 
 class _FakeOrder:
@@ -298,6 +298,11 @@ class _FakeIbForBracketFlow:
 
 
 class IbkrConnectorTests(unittest.TestCase):
+    def test_normalize_primary_exchange_maps_nms_to_nasdaq(self):
+        self.assertEqual(_normalize_primary_exchange("NMS"), "NASDAQ")
+        self.assertEqual(_normalize_primary_exchange("NASDAQ"), "NASDAQ")
+        self.assertEqual(_normalize_primary_exchange(""), "")
+
     def test_get_open_orders_filters_cancelled_rows(self):
         client = IbkrGatewayClient.__new__(IbkrGatewayClient)
         client._connect_inspection = lambda: object()
