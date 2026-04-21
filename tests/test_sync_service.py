@@ -6,6 +6,57 @@ from services.sync_service import execute_sync_paper_trades
 
 
 class SyncServiceTests(unittest.TestCase):
+    def test_sync_close_falls_back_to_price_based_pnl_when_broker_reports_zero(self):
+        captured_lifecycle = {}
+
+        def upsert_trade_lifecycle(**kwargs):
+            captured_lifecycle.update(kwargs)
+
+        result = execute_sync_paper_trades(
+            get_open_paper_trades=lambda: [
+                {
+                    "timestamp_utc": "2026-04-21T14:35:03+00:00",
+                    "symbol": "RIVN",
+                    "name": "Rivian",
+                    "mode": "primary",
+                    "side": "BUY",
+                    "shares": "14",
+                    "entry_price": "17.38",
+                    "stop_price": "17.2505",
+                    "target_price": "17.639",
+                    "broker_order_id": "815",
+                    "broker_parent_order_id": "815",
+                }
+            ],
+            sync_order_by_id=lambda parent_id: {
+                "exit_event": "MANUAL_CLOSE",
+                "exit_price": "17.24",
+                "exit_status": "filled",
+                "exit_filled_qty": "14",
+                "exit_filled_avg_price": "17.24",
+                "exit_order_id": "817",
+                "exit_reason": "BROKER_FILLED_EXIT",
+                "parent_status": "filled",
+                "exit_filled_at": "2026-04-21T14:59:20+00:00",
+                "exit_realized_pnl": "0",
+                "exit_realized_pnl_confirmed": True,
+            },
+            paper_trade_exit_already_logged=lambda parent_order_id, exit_event: False,
+            append_trade_log=lambda row: None,
+            safe_insert_trade_event=lambda **kwargs: None,
+            safe_insert_broker_order=lambda **kwargs: None,
+            upsert_trade_lifecycle=upsert_trade_lifecycle,
+            parse_iso_utc=parse_iso_utc,
+            to_float_or_none=to_float_or_none,
+            get_open_positions=lambda: [],
+            close_position=lambda symbol: {"ok": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["synced_count"], 1)
+        self.assertAlmostEqual(captured_lifecycle["realized_pnl"], -1.96, places=2)
+        self.assertAlmostEqual(captured_lifecycle["realized_pnl_percent"], -0.805524, places=6)
+
     def test_sync_close_preserves_long_direction_and_negative_pnl_for_losing_buy_trade(self):
         captured_lifecycle = {}
 

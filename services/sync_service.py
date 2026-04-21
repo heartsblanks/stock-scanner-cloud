@@ -83,6 +83,48 @@ def _bool_env(name: str, default: bool) -> bool:
     return raw_value in {"1", "true", "yes", "on"}
 
 
+def _resolved_exit_pnl_values(
+    *,
+    sync_result: dict[str, Any],
+    entry_price: Any,
+    exit_price: Any,
+    shares_value: Any,
+    direction: str | None,
+    to_float_or_none: Callable[[Any], float | None],
+) -> tuple[float | None, float | None]:
+    computed_realized_pnl = compute_realized_pnl(entry_price, exit_price, shares_value, direction)
+    computed_realized_pnl_percent = compute_realized_pnl_percent(entry_price, exit_price, direction)
+
+    synced_realized_pnl = to_float_or_none(sync_result.get("exit_realized_pnl", ""))
+    if synced_realized_pnl is None:
+        return computed_realized_pnl, computed_realized_pnl_percent
+
+    # IBKR commission-reported realizedPNL can arrive as a literal 0.0 even when
+    # entry/exit fills clearly imply a non-zero outcome. In that case prefer the
+    # price-based computation so lifecycle rows do not get stuck at zero PnL.
+    if (
+        computed_realized_pnl is not None
+        and abs(synced_realized_pnl) < 1e-9
+        and abs(computed_realized_pnl) > 1e-9
+    ):
+        return computed_realized_pnl, computed_realized_pnl_percent
+
+    realized_pnl = round(synced_realized_pnl, 6)
+    entry_price_value = to_float_or_none(entry_price)
+    shares_float = to_float_or_none(shares_value)
+    if (
+        entry_price_value is not None
+        and shares_float is not None
+        and entry_price_value > 0
+        and shares_float > 0
+    ):
+        realized_pnl_percent = round((realized_pnl / (entry_price_value * shares_float)) * 100.0, 6)
+    else:
+        realized_pnl_percent = computed_realized_pnl_percent
+
+    return realized_pnl, realized_pnl_percent
+
+
 def _refresh_open_lifecycle_from_sync_snapshot(
     *,
     open_row: dict[str, Any],
@@ -1392,23 +1434,14 @@ def execute_sync_paper_trades(
             linked_signal_timestamp_utc = str(open_row.get("linked_signal_timestamp_utc", "")).strip()
             broker_order_id = str(open_row.get("broker_order_id", "") or parent_order_id)
             broker_parent_order_id = str(open_row.get("broker_parent_order_id", "") or parent_order_id)
-            entry_price_value = to_float_or_none(entry_price)
-            shares_float = to_float_or_none(shares_value)
-            synced_realized_pnl = to_float_or_none(sync_result.get("exit_realized_pnl", ""))
-            if synced_realized_pnl is not None:
-                realized_pnl = round(synced_realized_pnl, 6)
-                if (
-                    entry_price_value is not None
-                    and shares_float is not None
-                    and entry_price_value > 0
-                    and shares_float > 0
-                ):
-                    realized_pnl_percent = round((realized_pnl / (entry_price_value * shares_float)) * 100.0, 6)
-                else:
-                    realized_pnl_percent = compute_realized_pnl_percent(entry_price, exit_price, direction)
-            else:
-                realized_pnl = compute_realized_pnl(entry_price, exit_price, shares_value, direction)
-                realized_pnl_percent = compute_realized_pnl_percent(entry_price, exit_price, direction)
+            realized_pnl, realized_pnl_percent = _resolved_exit_pnl_values(
+                sync_result=sync_result,
+                entry_price=entry_price,
+                exit_price=exit_price,
+                shares_value=shares_value,
+                direction=direction,
+                to_float_or_none=to_float_or_none,
+            )
             duration_minutes = compute_duration_minutes(entry_timestamp, exit_timestamp)
             trade_key = normalize_trade_key(symbol, broker_parent_order_id, broker_order_id, broker_name)
 
