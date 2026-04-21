@@ -43,6 +43,8 @@ class SyncServiceTests(unittest.TestCase):
                 "exit_reason": "STOP_HIT",
                 "parent_status": "filled",
                 "exit_filled_at": "2026-03-31T14:25:02+00:00",
+                "exit_realized_pnl": "-25.44",
+                "exit_realized_pnl_confirmed": True,
             },
             paper_trade_exit_already_logged=lambda parent_order_id, exit_event: False,
             append_trade_log=lambda row: None,
@@ -103,13 +105,13 @@ class SyncServiceTests(unittest.TestCase):
         )
 
         self.assertTrue(result["ok"])
-        self.assertEqual(result["synced_count"], 1)
+        self.assertEqual(result["synced_count"], 0)
         self.assertEqual(result["results"][0]["broker"], "IBKR")
         self.assertTrue(result["results"][0]["stale_reconciled"])
-        self.assertTrue(result["results"][0]["synced"])
-        self.assertEqual(captured_lifecycle["status"], "CLOSED")
+        self.assertFalse(result["results"][0]["synced"])
+        self.assertEqual(result["results"][0]["reason"], "pending_exit_recon")
+        self.assertEqual(captured_lifecycle["status"], "PENDING_EXIT_RECON")
         self.assertEqual(captured_lifecycle["exit_reason"], "BROKER_POSITION_FLAT_PENDING_FILL_SYNC")
-        self.assertAlmostEqual(captured_lifecycle["exit_price"], 5.0, places=6)
 
     def test_ibkr_sync_timeout_is_classified_explicitly(self):
         result = execute_sync_paper_trades(
@@ -404,6 +406,8 @@ class SyncServiceTests(unittest.TestCase):
                     "exit_reason": "TARGET_HIT",
                     "parent_status": "filled",
                     "exit_filled_at": "2026-04-14T14:25:02+00:00",
+                    "exit_realized_pnl": "0.5",
+                    "exit_realized_pnl_confirmed": True,
                 },
                 paper_trade_exit_already_logged=lambda parent_order_id, exit_event: False,
                 append_trade_log=lambda row: None,
@@ -436,7 +440,9 @@ class SyncServiceTests(unittest.TestCase):
                 "exit_order_id": f"exit-{parent_id}",
                 "exit_reason": "TARGET_HIT",
                 "parent_status": "filled",
-                "exit_filled_at": "2026-04-14T14:25:02+00:00",
+                "exit_filled_at": "2026-04-16T14:25:02+00:00",
+                "exit_realized_pnl": "0.5",
+                "exit_realized_pnl_confirmed": True,
             }
 
         with patch("services.sync_service.time.monotonic", side_effect=[0.0, 1.0, 1.0, 91.0, 91.0]):
@@ -485,7 +491,7 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(synced_parent_ids, ["64"])
         self.assertEqual(result["results"][0]["parent_order_id"], "64")
         self.assertTrue(result["results"][0]["synced"])
-        self.assertTrue(result["results"][0]["stale_reconciled"])
+        self.assertFalse(result["results"][0]["stale_reconciled"])
 
     def test_ibkr_sync_respects_per_run_sync_cap(self):
         synced_parent_ids = []
@@ -658,6 +664,8 @@ class SyncServiceTests(unittest.TestCase):
                         "exit_filled_avg_price": "21.0",
                         "exit_reason": "TARGET_HIT",
                         "exit_filled_at": "2026-04-16T14:40:00+00:00",
+                        "exit_realized_pnl": "10.0",
+                        "exit_realized_pnl_confirmed": True,
                     },
                     "112": {
                         "id": "112",
@@ -672,6 +680,8 @@ class SyncServiceTests(unittest.TestCase):
                         "exit_filled_avg_price": "108.0",
                         "exit_reason": "TARGET_HIT",
                         "exit_filled_at": "2026-04-16T14:45:00+00:00",
+                        "exit_realized_pnl": "8.0",
+                        "exit_realized_pnl_confirmed": True,
                     },
                 }
             ),

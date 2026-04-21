@@ -166,6 +166,90 @@ def _refresh_open_lifecycle_from_sync_snapshot(
     )
 
 
+def _mark_trade_pending_exit_reconciliation(
+    *,
+    open_row: dict[str, Any],
+    sync_result: dict[str, Any],
+    broker_name: str,
+    parse_iso_utc: Callable[[str], Any],
+    to_float_or_none: Callable[[Any], float | None],
+    upsert_trade_lifecycle: Callable[..., None],
+    pending_reason: str,
+) -> None:
+    symbol = str(open_row.get("symbol", "") or "").strip().upper()
+    if not symbol:
+        return
+
+    entry_timestamp_raw = str(
+        open_row.get("timestamp_utc")
+        or open_row.get("entry_time")
+        or ""
+    ).strip()
+    entry_timestamp = parse_iso_utc(entry_timestamp_raw) if entry_timestamp_raw else None
+
+    linked_signal_timestamp_utc = str(open_row.get("linked_signal_timestamp_utc", "")).strip()
+    parent_order_id = str(open_row.get("broker_parent_order_id", "") or open_row.get("parent_order_id", "") or "").strip()
+    order_id = str(open_row.get("broker_order_id", "") or open_row.get("order_id", "") or parent_order_id).strip()
+    broker_order_id = order_id or parent_order_id
+    broker_parent_order_id = parent_order_id or order_id
+
+    entry_price = (
+        to_float_or_none(sync_result.get("entry_filled_avg_price", "") or sync_result.get("entry_price", ""))
+        or to_float_or_none(open_row.get("entry_price", ""))
+    )
+    shares = (
+        to_float_or_none(sync_result.get("entry_filled_qty", "") or sync_result.get("shares", ""))
+        or to_float_or_none(open_row.get("shares", ""))
+    )
+    stop_price = (
+        to_float_or_none(sync_result.get("live_stop_price", "") or sync_result.get("stop_price", ""))
+        or to_float_or_none(open_row.get("stop_price", ""))
+    )
+    target_price = (
+        to_float_or_none(sync_result.get("live_target_price", "") or sync_result.get("target_price", ""))
+        or to_float_or_none(open_row.get("target_price", ""))
+    )
+
+    direction = infer_direction(
+        entry_price,
+        "",
+        stop_price,
+        target_price,
+        open_row.get("side", ""),
+    )
+    lifecycle_side = resolve_lifecycle_side(open_row, direction)
+    trade_key = normalize_trade_key(symbol, broker_parent_order_id, broker_order_id, broker_name)
+
+    upsert_trade_lifecycle(
+        trade_key=trade_key,
+        symbol=symbol,
+        mode=str(open_row.get("mode", "") or ""),
+        side=lifecycle_side,
+        direction=direction,
+        status="PENDING_EXIT_RECON",
+        entry_time=entry_timestamp,
+        entry_price=entry_price,
+        exit_time=None,
+        exit_price=None,
+        stop_price=stop_price,
+        target_price=target_price,
+        exit_reason=str(pending_reason or "PENDING_EXIT_RECON"),
+        shares=shares,
+        realized_pnl=None,
+        realized_pnl_percent=None,
+        duration_minutes=None,
+        signal_timestamp=parse_iso_utc(linked_signal_timestamp_utc) if linked_signal_timestamp_utc else None,
+        signal_entry=to_float_or_none(open_row.get("linked_signal_entry", "")),
+        signal_stop=to_float_or_none(open_row.get("linked_signal_stop", "")),
+        signal_target=to_float_or_none(open_row.get("linked_signal_target", "")),
+        signal_confidence=to_float_or_none(open_row.get("linked_signal_confidence", "")),
+        broker=broker_name,
+        order_id=broker_order_id,
+        parent_order_id=broker_parent_order_id,
+        exit_order_id=str(sync_result.get("exit_order_id", "") or ""),
+    )
+
+
 def _normalize_ibkr_client_order_id(value: Any) -> str:
     return str(value or "").strip()
 
@@ -1052,7 +1136,7 @@ def execute_sync_paper_trades(
                     sync_result=sync_result,
                 )
                 if stale_reconciled:
-                    exit_event = "MANUAL_CLOSE"
+                    exit_event = str(sync_result.get("exit_event", "")).strip().upper()
                     log_info(
                         "IBKR unknown-parent recovery succeeded via stale reconciliation",
                         component="sync_service",
@@ -1065,6 +1149,40 @@ def execute_sync_paper_trades(
                     )
 
         if not exit_event:
+            if broker_name == "IBKR" and stale_reconciled:
+                pending_reason = str(
+                    sync_result.get("exit_reason", "") or "PENDING_EXIT_RECON_BROKER_FLAT_NO_EXECUTION_CONFIRMATION"
+                ).strip()
+                _mark_trade_pending_exit_reconciliation(
+                    open_row=open_row,
+                    sync_result=sync_result,
+                    broker_name=broker_name,
+                    parse_iso_utc=parse_iso_utc,
+                    to_float_or_none=to_float_or_none,
+                    upsert_trade_lifecycle=upsert_trade_lifecycle,
+                    pending_reason=pending_reason,
+                )
+                log_info(
+                    "IBKR stale reconciliation marked trade pending exit confirmation",
+                    component="sync_service",
+                    operation="execute_sync_paper_trades",
+                    symbol=symbol,
+                    parent_order_id=parent_order_id,
+                    broker=broker_name,
+                    pending_reason=pending_reason,
+                )
+                results.append({
+                    "symbol": symbol,
+                    "broker": broker_name,
+                    "parent_order_id": parent_order_id,
+                    "synced": False,
+                    "reason": "pending_exit_recon",
+                    "details": pending_reason,
+                    "stale_reconciled": True,
+                })
+                skipped_count += 1
+                continue
+
             open_lifecycle_refresh_enabled = _bool_env("SYNC_REFRESH_OPEN_LIFECYCLE_ON_STILL_OPEN", True)
             lifecycle_refreshed = False
             if open_lifecycle_refresh_enabled and not bool(sync_result.get("identity_conflict")):
@@ -1120,60 +1238,38 @@ def execute_sync_paper_trades(
             confirmed_exit_price = to_float_or_none(
                 sync_result.get("exit_filled_avg_price", "") or sync_result.get("exit_price", "")
             )
-            if confirmed_exit_timestamp is None or confirmed_exit_price is None:
-                fallback_timestamp_utc = datetime.now(timezone.utc).isoformat()
-                fallback_exit_timestamp = confirmed_exit_timestamp
-                if fallback_exit_timestamp is None:
-                    fallback_exit_timestamp = _resolve_exit_timestamp(sync_result, fallback_timestamp_utc, parse_iso_utc)
-                fallback_exit_timestamp_utc = (
-                    fallback_exit_timestamp.astimezone(timezone.utc).isoformat()
-                    if fallback_exit_timestamp
-                    else fallback_timestamp_utc
+            sync_realized_pnl = to_float_or_none(sync_result.get("exit_realized_pnl", ""))
+            realized_pnl_confirmed = bool(sync_result.get("exit_realized_pnl_confirmed"))
+            if (
+                confirmed_exit_timestamp is None
+                or confirmed_exit_price is None
+                or sync_realized_pnl is None
+                or not realized_pnl_confirmed
+            ):
+                pending_reason = str(
+                    sync_result.get("exit_reason", "") or "PENDING_EXIT_RECON_COMMISSION_AWAITED"
+                ).strip()
+                missing_parts: list[str] = []
+                if confirmed_exit_timestamp is None:
+                    missing_parts.append("exit_timestamp")
+                if confirmed_exit_price is None:
+                    missing_parts.append("exit_price")
+                if sync_realized_pnl is None:
+                    missing_parts.append("realized_pnl")
+                if not realized_pnl_confirmed:
+                    missing_parts.append("commission_confirmation")
+
+                _mark_trade_pending_exit_reconciliation(
+                    open_row=open_row,
+                    sync_result=sync_result,
+                    broker_name=broker_name,
+                    parse_iso_utc=parse_iso_utc,
+                    to_float_or_none=to_float_or_none,
+                    upsert_trade_lifecycle=upsert_trade_lifecycle,
+                    pending_reason=pending_reason,
                 )
-
-                fallback_exit_price = confirmed_exit_price
-                if fallback_exit_price is None:
-                    fallback_exit_price = to_float_or_none(sync_result.get("exit_price", ""))
-                if fallback_exit_price is None:
-                    sync_realized_pnl = to_float_or_none(sync_result.get("exit_realized_pnl", ""))
-                    entry_price_value = to_float_or_none(open_row.get("entry_price", ""))
-                    shares_value = to_float_or_none(open_row.get("shares", ""))
-                    fallback_direction = infer_direction(
-                        open_row.get("entry_price", ""),
-                        "",
-                        open_row.get("stop_price", ""),
-                        open_row.get("target_price", ""),
-                        open_row.get("side", ""),
-                    )
-                    if (
-                        sync_realized_pnl is not None
-                        and entry_price_value is not None
-                        and shares_value is not None
-                        and shares_value > 0
-                        and fallback_direction in {"LONG", "SHORT"}
-                    ):
-                        per_share_delta = sync_realized_pnl / shares_value
-                        if fallback_direction == "LONG":
-                            fallback_exit_price = entry_price_value + per_share_delta
-                        else:
-                            fallback_exit_price = entry_price_value - per_share_delta
-                if fallback_exit_price is None:
-                    # Keep lifecycle numerics usable even when broker omits fill details.
-                    fallback_exit_price = to_float_or_none(open_row.get("entry_price", ""))
-
-                fallback_exit_price_text = str(fallback_exit_price) if fallback_exit_price is not None else ""
-                sync_result = {
-                    **sync_result,
-                    "exit_reason": str(sync_result.get("exit_reason", "") or "BROKER_POSITION_FLAT_PENDING_FILL_SYNC"),
-                    "exit_time": str(sync_result.get("exit_time", "") or fallback_exit_timestamp_utc),
-                    "exit_filled_at": str(sync_result.get("exit_filled_at", "") or fallback_exit_timestamp_utc),
-                    "exit_price": str(sync_result.get("exit_price", "") or fallback_exit_price_text),
-                    "exit_filled_avg_price": str(sync_result.get("exit_filled_avg_price", "") or fallback_exit_price_text),
-                    "exit_order_id": str(sync_result.get("exit_order_id", "") or parent_order_id),
-                    "exit_filled_qty": str(sync_result.get("exit_filled_qty", "") or open_row.get("shares", "")),
-                }
                 log_warning(
-                    "IBKR close detected with partial fill evidence; applying fallback lifecycle close payload",
+                    "IBKR close detected but awaiting confirmed execution/commission evidence; trade kept pending",
                     component="sync_service",
                     operation="execute_sync_paper_trades",
                     symbol=symbol,
@@ -1181,12 +1277,24 @@ def execute_sync_paper_trades(
                     broker=broker_name,
                     stale_reconciled=stale_reconciled,
                     exit_event=exit_event,
-                    exit_reason=sync_result.get("exit_reason", ""),
-                    exit_filled_at=sync_result.get("exit_filled_at", ""),
-                    exit_time=sync_result.get("exit_time", ""),
-                    exit_filled_avg_price=sync_result.get("exit_filled_avg_price", ""),
-                    exit_price=sync_result.get("exit_price", ""),
+                    pending_reason=pending_reason,
+                    missing_parts=",".join(missing_parts),
+                    exit_fill_count=sync_result.get("exit_fill_count", ""),
+                    exit_commission_fill_count=sync_result.get("exit_commission_fill_count", ""),
+                    exit_missing_commission_count=sync_result.get("exit_missing_commission_count", ""),
                 )
+                results.append({
+                    "symbol": symbol,
+                    "broker": broker_name,
+                    "parent_order_id": parent_order_id,
+                    "synced": False,
+                    "reason": "pending_exit_recon",
+                    "details": pending_reason,
+                    "missing_parts": ",".join(missing_parts),
+                    "stale_reconciled": stale_reconciled,
+                })
+                skipped_count += 1
+                continue
 
         exit_already_logged = paper_trade_exit_already_logged(parent_order_id, exit_event)
         if exit_already_logged:

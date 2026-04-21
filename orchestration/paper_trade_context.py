@@ -93,7 +93,7 @@ def paper_trade_exit_already_logged(parent_order_id: str, exit_event: str) -> bo
 
 def get_open_paper_trades() -> list[dict]:
     try:
-        rows = get_trade_lifecycles(limit=1000, status="OPEN")
+        rows = get_trade_lifecycles(limit=2000)
     except Exception as exc:
         log_exception("Failed to read open trade lifecycles from DB", exc, component="paper_trade_context", operation="get_open_paper_trades")
         return []
@@ -101,6 +101,10 @@ def get_open_paper_trades() -> list[dict]:
     normalized_rows: list[dict] = []
     for row in rows or []:
         try:
+            status = str(row.get("status", "")).strip().upper()
+            if status not in {"OPEN", "PENDING_EXIT_RECON"}:
+                continue
+
             symbol = str(row.get("symbol", "")).strip().upper()
             if not symbol:
                 continue

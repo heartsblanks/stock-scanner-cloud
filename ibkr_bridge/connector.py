@@ -681,14 +681,129 @@ class IbkrGatewayClient:
             "message": message,
         }
 
-    def _fill_realized_pnl(self, fill: Any) -> float | None:
+    def _fill_realized_pnl_from_commission(self, fill: Any) -> float | None:
         commission_report = getattr(fill, "commissionReport", None)
-        if commission_report is not None:
-            value = _to_float_or_none(getattr(commission_report, "realizedPNL", None))
-            if value is not None:
-                return value
+        if commission_report is None:
+            return None
+        return _to_float_or_none(getattr(commission_report, "realizedPNL", None))
+
+    def _fill_realized_pnl(self, fill: Any) -> float | None:
+        value = self._fill_realized_pnl_from_commission(fill)
+        if value is not None:
+            return value
         execution = getattr(fill, "execution", None)
         return _to_float_or_none(getattr(execution, "realizedPNL", None))
+
+    def _execution_order_id(self, fill: Any) -> str:
+        execution = getattr(fill, "execution", None)
+        return str(getattr(execution, "orderId", "")).strip()
+
+    def _execution_parent_id(self, fill: Any) -> str:
+        execution = getattr(fill, "execution", None)
+        return str(getattr(execution, "parentId", "")).strip()
+
+    def _execution_order_ref(self, fill: Any) -> str:
+        execution = getattr(fill, "execution", None)
+        return str(getattr(execution, "orderRef", "")).strip()
+
+    def _execution_perm_id(self, fill: Any) -> str:
+        execution = getattr(fill, "execution", None)
+        perm_id = _to_float_or_none(getattr(execution, "permId", None))
+        if perm_id is None:
+            return ""
+        return str(int(perm_id))
+
+    def _execution_side(self, fill: Any) -> str:
+        execution = getattr(fill, "execution", None)
+        return str(getattr(execution, "side", "")).strip().upper()
+
+    def _related_fills_for_entry(
+        self,
+        *,
+        fills: list[Any],
+        entry_fill: Any,
+        order_id_text: str,
+    ) -> list[Any]:
+        entry_order_ref = self._execution_order_ref(entry_fill)
+        entry_perm_id = self._execution_perm_id(entry_fill)
+
+        related_fills: list[Any] = []
+        for fill in fills:
+            fill_order_id = self._execution_order_id(fill)
+            fill_parent_id = self._execution_parent_id(fill)
+            fill_order_ref = self._execution_order_ref(fill)
+            fill_perm_id = self._execution_perm_id(fill)
+
+            matches_by_order_ref = bool(entry_order_ref and fill_order_ref == entry_order_ref)
+            matches_by_parent = bool(order_id_text and (fill_order_id == order_id_text or fill_parent_id == order_id_text))
+            matches_by_perm_id = bool(entry_perm_id and fill_perm_id == entry_perm_id)
+
+            if matches_by_order_ref or matches_by_parent or matches_by_perm_id:
+                related_fills.append(fill)
+
+        if not related_fills:
+            related_fills = [entry_fill]
+        return sorted(related_fills, key=self._execution_time_value)
+
+    def _exit_fills_for_related_fills(
+        self,
+        *,
+        related_fills: list[Any],
+        entry_order_id: str,
+        entry_side: str,
+    ) -> list[Any]:
+        normalized_entry_side = str(entry_side or "").strip().upper()
+        expected_exit_side = ""
+        if normalized_entry_side == "BUY":
+            expected_exit_side = "SELL"
+        elif normalized_entry_side == "SELL":
+            expected_exit_side = "BUY"
+
+        strict_exit_fills: list[Any] = []
+        fallback_exit_fills: list[Any] = []
+        for fill in related_fills:
+            fill_order_id = self._execution_order_id(fill)
+            if not fill_order_id or fill_order_id == entry_order_id:
+                continue
+            fallback_exit_fills.append(fill)
+            fill_side = self._execution_side(fill)
+            if expected_exit_side and fill_side == expected_exit_side:
+                strict_exit_fills.append(fill)
+
+        if strict_exit_fills:
+            return strict_exit_fills
+        return fallback_exit_fills
+
+    def _aggregate_exit_realized_pnl_from_commissions(self, *, exit_fills: list[Any]) -> dict[str, Any]:
+        if not exit_fills:
+            return {
+                "confirmed": False,
+                "value": None,
+                "exit_fill_count": 0,
+                "commission_fill_count": 0,
+                "missing_commission_count": 0,
+            }
+
+        realized_pnl_total = 0.0
+        commission_fill_count = 0
+        missing_commission_count = 0
+
+        for fill in exit_fills:
+            pnl_value = self._fill_realized_pnl_from_commission(fill)
+            if pnl_value is None:
+                missing_commission_count += 1
+                continue
+            commission_fill_count += 1
+            realized_pnl_total += pnl_value
+
+        confirmed = commission_fill_count > 0 and missing_commission_count == 0
+        return {
+            "confirmed": confirmed,
+            "value": round(realized_pnl_total, 6) if confirmed else None,
+            "exit_fill_count": len(exit_fills),
+            "commission_fill_count": commission_fill_count,
+            "missing_commission_count": missing_commission_count,
+        }
 
     def _sync_order_from_fills(self, ib, order_id: str) -> dict[str, Any]:
         return self._sync_order_from_fills_snapshot(
@@ -712,15 +827,11 @@ class IbkrGatewayClient:
         entry_fill = entry_fills[-1]
         entry_execution = getattr(entry_fill, "execution", None)
         order_ref = str(getattr(entry_execution, "orderRef", "")).strip()
-        related_fills = fills
-        if order_ref:
-            related_fills = [
-                fill
-                for fill in fills
-                if str(getattr(getattr(fill, "execution", None), "orderRef", "")).strip() == order_ref
-            ] or entry_fills
-
-        related_fills = sorted(related_fills, key=self._execution_time_value)
+        related_fills = self._related_fills_for_entry(
+            fills=fills,
+            entry_fill=entry_fill,
+            order_id_text=order_id_text,
+        )
         latest_fill = related_fills[-1]
         latest_execution = getattr(latest_fill, "execution", None)
         latest_order_id = str(getattr(latest_execution, "orderId", "")).strip()
@@ -728,7 +839,13 @@ class IbkrGatewayClient:
         latest_qty = _to_float(getattr(latest_execution, "shares", 0.0))
         latest_avg_price = _to_float(getattr(latest_execution, "avgPrice", 0.0), latest_price)
         latest_side = str(getattr(latest_execution, "side", "")).strip().upper()
-        latest_realized_pnl = self._fill_realized_pnl(latest_fill)
+        entry_side = str(getattr(entry_execution, "side", "")).strip().upper()
+        exit_fills = self._exit_fills_for_related_fills(
+            related_fills=related_fills,
+            entry_order_id=order_id_text,
+            entry_side=entry_side,
+        )
+        exit_realized_pnl = self._aggregate_exit_realized_pnl_from_commissions(exit_fills=exit_fills)
 
         result = {
             "id": order_id_text,
@@ -757,8 +874,12 @@ class IbkrGatewayClient:
                     "exit_filled_at": self._execution_time_value(latest_fill),
                 }
             )
-            if latest_realized_pnl is not None:
-                result["exit_realized_pnl"] = round(latest_realized_pnl, 6)
+            result["exit_realized_pnl_confirmed"] = bool(exit_realized_pnl.get("confirmed"))
+            result["exit_fill_count"] = int(exit_realized_pnl.get("exit_fill_count", 0) or 0)
+            result["exit_commission_fill_count"] = int(exit_realized_pnl.get("commission_fill_count", 0) or 0)
+            result["exit_missing_commission_count"] = int(exit_realized_pnl.get("missing_commission_count", 0) or 0)
+            if exit_realized_pnl.get("confirmed"):
+                result["exit_realized_pnl"] = round(_to_float(exit_realized_pnl.get("value", 0.0)), 6)
 
         return result
 
@@ -829,6 +950,15 @@ class IbkrGatewayClient:
         latest_action = str(getattr(latest_order, "action", "")).strip().upper()
 
         entry_snapshot = self._trade_fill_snapshot(entry_trade)
+        related_fills: list[Any] = []
+        for trade in related_trades:
+            related_fills.extend(list(getattr(trade, "fills", []) or []))
+        exit_fills = self._exit_fills_for_related_fills(
+            related_fills=sorted(related_fills, key=self._execution_time_value),
+            entry_order_id=order_id_text,
+            entry_side=str(getattr(entry_order, "action", "")).strip().upper(),
+        )
+        exit_realized_pnl = self._aggregate_exit_realized_pnl_from_commissions(exit_fills=exit_fills)
         result = {
             "id": order_id_text,
             "status": str(getattr(entry_status, "status", "") or "filled"),
@@ -856,8 +986,12 @@ class IbkrGatewayClient:
                     "exit_filled_at": str(latest_snapshot["filled_at"] or ""),
                 }
             )
-            if latest_snapshot.get("realized_pnl") is not None:
-                result["exit_realized_pnl"] = round(_to_float(latest_snapshot["realized_pnl"]), 6)
+            result["exit_realized_pnl_confirmed"] = bool(exit_realized_pnl.get("confirmed"))
+            result["exit_fill_count"] = int(exit_realized_pnl.get("exit_fill_count", 0) or 0)
+            result["exit_commission_fill_count"] = int(exit_realized_pnl.get("commission_fill_count", 0) or 0)
+            result["exit_missing_commission_count"] = int(exit_realized_pnl.get("missing_commission_count", 0) or 0)
+            if exit_realized_pnl.get("confirmed"):
+                result["exit_realized_pnl"] = round(_to_float(exit_realized_pnl.get("value", 0.0)), 6)
 
         return result
 
