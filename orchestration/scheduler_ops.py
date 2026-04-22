@@ -57,17 +57,8 @@ def should_run_market_sync(now_ny: datetime) -> bool:
         return False
     if now_ny.hour == 15 and now_ny.minute == 55:
         return False
-    if should_run_market_scan(now_ny):
-        return False
-    if _low_call_mode_enabled():
-        # Low-call mode: keep sync on a 30-minute cadence.
-        if now_ny.hour == 9:
-            return now_ny.minute == 30
-        if now_ny.hour == 15:
-            return now_ny.minute in {0, 30, 50}
-        return 10 <= now_ny.hour <= 14 and now_ny.minute in {0, 30}
     if now_ny.hour == 9:
-        return now_ny.minute in {30, 35, 40, 50, 55}
+        return now_ny.minute in {30, 40, 50}
     if now_ny.hour == 15:
         return now_ny.minute in {0, 10, 20, 30, 40, 50}
     return 10 <= now_ny.hour <= 14 and now_ny.minute in {0, 10, 20, 30, 40, 50}
@@ -115,15 +106,12 @@ def build_market_ops_plan(now_ny: datetime) -> list[str]:
 
     actions: list[str] = []
     if should_run_market_scan(now_ny):
+        actions.append("sync")
         actions.append("scan")
     elif should_run_market_sync(now_ny):
         actions.append("sync")
     if should_run_periodic_health_probe(now_ny):
         actions.append("health")
-    if actions and actions[0] == "scan" and "sync" in actions:
-        actions = [action for action in actions if action != "sync"]
-    if actions and actions[0] == "sync" and "scan" in actions:
-        actions = [action for action in actions if action != "scan"]
     deduped_actions: list[str] = []
     for action in actions:
         if action not in deduped_actions:

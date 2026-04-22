@@ -475,6 +475,73 @@ class ScanServiceSizingTests(unittest.TestCase):
         self.assertTrue(result["symbol_allowlist"]["filter_applied"])
         self.assertEqual(result["symbol_allowlist"]["allowed_count"], 2)
 
+    def test_execute_full_scan_excludes_open_symbols_from_allowlist_before_run_scan(self):
+        captured_allowed_symbols = []
+
+        def fake_run_scan(
+            account_size,
+            mode,
+            current_open_positions=0,
+            current_open_exposure=0.0,
+            disable_strategy_gates=False,
+            allowed_symbols=None,
+        ):
+            captured_allowed_symbols.append(list(allowed_symbols or []))
+            return (
+                [],
+                [],
+                [],
+                [],
+                {"SP500": "NEUTRAL", "NASDAQ": "NEUTRAL"},
+                f"IBKR_{mode.upper()}",
+            )
+
+        with patch(
+            "services.scan_service._resolve_scan_symbol_allowlist",
+            return_value={
+                "filter_applied": True,
+                "mode": "core_one",
+                "requested_session_date": "2026-04-22",
+                "source_session_date": "2026-04-22",
+                "fallback_used": False,
+                "allowed_count": 3,
+                "excluded_count": 0,
+                "allowed_symbols": ["NVDA", "PLTR", "MSFT"],
+            },
+        ):
+            result = execute_full_scan(
+                {"mode": "core_one", "paper_trade": True, "scan_source": "SCHEDULED"},
+                market_time_check=lambda: (True, "Market timing OK."),
+                build_scan_id=lambda timestamp_utc, mode: f"{mode}-scan",
+                market_phase_from_timestamp=lambda timestamp_utc: "OPEN",
+                append_signal_log=lambda row: None,
+                safe_insert_paper_trade_attempt=lambda **kwargs: None,
+                safe_insert_scan_run=lambda **kwargs: None,
+                parse_iso_utc=lambda ts: ts,
+                run_scan=fake_run_scan,
+                trade_to_dict=lambda trade: trade,
+                debug_to_dict=lambda evaluation: evaluation,
+                paper_candidate_from_evaluation=lambda evaluation: None,
+                evaluate_symbol=lambda *args, **kwargs: None,
+                get_latest_open_paper_trade_for_symbol=lambda symbol: {"symbol": symbol, "status": "OPEN"} if symbol == "PLTR" else None,
+                is_symbol_in_paper_cooldown=lambda symbol, now_utc: (False, ""),
+                place_paper_orders_from_trade=lambda trade: [],
+                append_trade_log=lambda row: None,
+                safe_insert_trade_event=lambda **kwargs: None,
+                safe_insert_broker_order=lambda **kwargs: None,
+                upsert_trade_lifecycle=lambda **kwargs: None,
+                to_float_or_none=lambda value: float(value) if value not in (None, "") else None,
+                MIN_CONFIDENCE=75,
+                resolve_account_size=lambda payload: 1000.0,
+                active_broker="IBKR",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(captured_allowed_symbols[0], ["NVDA", "MSFT"])
+        self.assertEqual(result["symbol_allowlist"]["allowed_count"], 2)
+        self.assertEqual(result["symbol_allowlist"]["excluded_count"], 1)
+        self.assertEqual(result["symbol_allowlist"]["open_symbols_excluded"], ["PLTR"])
+
     def test_execute_full_scan_skips_open_symbol_before_deeper_candidate_work(self):
         inserted_attempts = []
         recent_trade_calls = []

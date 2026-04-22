@@ -130,6 +130,8 @@ _DEFAULT_INSTRUMENT_GROUPS: dict[str, dict[str, dict[str, object]]] = {
         "AMD": {"symbol": "AMD", "type": "stock", "priority": 9, "market": "NASDAQ"},
         "Palantir": {"symbol": "PLTR", "type": "stock", "priority": 9, "market": "NASDAQ"},
         "Microsoft": {"symbol": "MSFT", "type": "stock", "priority": 9, "market": "NASDAQ"},
+        "Costco": {"symbol": "COST", "type": "stock", "priority": 8, "market": "NASDAQ"},
+        "Intuit": {"symbol": "INTU", "type": "stock", "priority": 8, "market": "NASDAQ"},
     },
     "core_two": {
         "Meta": {"symbol": "META", "type": "stock", "priority": 9, "market": "NASDAQ"},
@@ -138,12 +140,16 @@ _DEFAULT_INSTRUMENT_GROUPS: dict[str, dict[str, dict[str, object]]] = {
         "Netflix": {"symbol": "NFLX", "type": "stock", "priority": 8, "market": "NASDAQ"},
         "Broadcom": {"symbol": "AVGO", "type": "stock", "priority": 8, "market": "NASDAQ"},
         "Micron": {"symbol": "MU", "type": "stock", "priority": 8, "market": "NASDAQ"},
+        "Comcast": {"symbol": "CMCSA", "type": "stock", "priority": 8, "market": "NASDAQ"},
+        "Amgen": {"symbol": "AMGN", "type": "stock", "priority": 7, "market": "NASDAQ"},
     },
     "core_three": {
         "Arm": {"symbol": "ARM", "type": "stock", "priority": 9, "market": "NASDAQ"},
         "Super Micro Computer": {"symbol": "SMCI", "type": "stock", "priority": 9, "market": "NASDAQ"},
         "Adobe": {"symbol": "ADBE", "type": "stock", "priority": 8, "market": "NASDAQ"},
         "Intel": {"symbol": "INTC", "type": "stock", "priority": 8, "market": "NASDAQ"},
+        "Analog Devices": {"symbol": "ADI", "type": "stock", "priority": 7, "market": "NASDAQ"},
+        "KLA": {"symbol": "KLAC", "type": "stock", "priority": 7, "market": "NASDAQ"},
     },
 }
 

@@ -859,7 +859,37 @@ def execute_full_scan(
     except Exception:
         supports_allowed_symbols = False
     if supports_allowed_symbols and bool(symbol_allowlist.get("filter_applied")):
-        run_scan_kwargs["allowed_symbols"] = list(allowed_symbols or [])
+        normalized_allowed_symbols: list[str] = []
+        seen_allowed_symbols: set[str] = set()
+        for symbol in list(allowed_symbols or []):
+            normalized_symbol = str(symbol or "").strip().upper()
+            if normalized_symbol and normalized_symbol not in seen_allowed_symbols:
+                normalized_allowed_symbols.append(normalized_symbol)
+                seen_allowed_symbols.add(normalized_symbol)
+        if paper_trade and normalized_allowed_symbols:
+            open_symbols_excluded: list[str] = []
+            effective_allowed_symbols: list[str] = []
+            for normalized_symbol in normalized_allowed_symbols:
+                if get_latest_open_paper_trade_for_symbol(normalized_symbol) is not None:
+                    open_symbols_excluded.append(normalized_symbol)
+                    continue
+                effective_allowed_symbols.append(normalized_symbol)
+            if open_symbols_excluded:
+                symbol_allowlist["open_symbols_excluded"] = open_symbols_excluded
+                symbol_allowlist["allowed_symbols"] = effective_allowed_symbols
+                symbol_allowlist["allowed_count"] = len(effective_allowed_symbols)
+                symbol_allowlist["excluded_count"] = _to_int(symbol_allowlist.get("excluded_count", 0), 0) + len(open_symbols_excluded)
+                log_info(
+                    "Excluded already-open symbols from scan allowlist before market-data fetch",
+                    component="scan_service",
+                    operation="execute_full_scan",
+                    mode=mode,
+                    scan_source=scan_source,
+                    open_symbols_excluded=open_symbols_excluded,
+                    remaining_allowed_count=len(effective_allowed_symbols),
+                )
+            normalized_allowed_symbols = effective_allowed_symbols
+        run_scan_kwargs["allowed_symbols"] = normalized_allowed_symbols
     elif supports_allowed_symbols and paper_trade:
         # Fail closed for paper trading when eligibility rows are unavailable.
         # This prevents scanning symbols that may violate whole-share notional caps.
@@ -971,6 +1001,7 @@ def execute_full_scan(
             "allowed_count": _to_int(symbol_allowlist.get("allowed_count", 0), 0),
             "excluded_count": _to_int(symbol_allowlist.get("excluded_count", 0), 0),
             "reason": symbol_allowlist.get("reason"),
+            "open_symbols_excluded": list(symbol_allowlist.get("open_symbols_excluded") or []),
         },
     }
 
