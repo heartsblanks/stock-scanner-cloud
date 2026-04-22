@@ -426,6 +426,15 @@ def execute_ibkr_login_alert(
         }
 
     state = str(status.get("state", "")).strip().upper() or "LOGIN_REQUIRED"
+    if state != "LOGIN_REQUIRED":
+        return {
+            "ok": True,
+            "scheduler": "ibkr-login-alert",
+            "current_new_york_time": now_ny.strftime("%Y-%m-%d %H:%M"),
+            "noop": True,
+            "reason": "state_not_login_required",
+            "ibkr_status": status,
+        }
     message = (
         f"IBKR login required. "
         f"State={state}. "

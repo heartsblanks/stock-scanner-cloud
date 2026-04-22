@@ -377,6 +377,19 @@ def _expected_ibkr_client_order_ids(
     }
 
 
+def _entry_price_from_ibkr_client_order_id(value: Any) -> float | None:
+    normalized = _normalize_ibkr_client_order_id(value)
+    if not normalized:
+        return None
+    parts = normalized.split("-")
+    if len(parts) < 5:
+        return None
+    try:
+        return int(parts[3]) / 10000.0
+    except Exception:
+        return None
+
+
 def _validate_ibkr_sync_identity(
     *,
     open_row: dict[str, Any],
@@ -640,6 +653,237 @@ def _read_broker_open_state(
     }
 
 
+def _resolve_sync_entry_timestamp(
+    sync_result: dict[str, Any],
+    parse_iso_utc: Callable[[str], Any],
+):
+    for key in ("entry_filled_at", "entry_time", "filled_at", "updated_at"):
+        raw_value = str(sync_result.get(key, "") or "").strip()
+        if not raw_value:
+            continue
+        try:
+            return parse_iso_utc(raw_value)
+        except Exception:
+            continue
+    return None
+
+
+def _recover_missing_ibkr_open_trades(
+    *,
+    open_rows: list[dict[str, Any]],
+    sync_order_by_id: Callable[[str], dict[str, Any]] | None,
+    sync_order_by_id_for_broker: Callable[[str, str], dict[str, Any]] | None,
+    safe_insert_trade_event: Callable[..., None],
+    safe_insert_broker_order: Callable[..., None],
+    upsert_trade_lifecycle: Callable[..., None],
+    parse_iso_utc: Callable[[str], Any],
+    to_float_or_none: Callable[[Any], float | None],
+    get_open_positions: Callable[[], list[dict[str, Any]]] | None,
+    get_open_positions_for_broker: Callable[[str], list[dict[str, Any]]] | None,
+    get_open_state_for_broker: Callable[[str], dict[str, Any]] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    try:
+        broker_open_state = _read_broker_open_state(
+            broker_name="IBKR",
+            get_open_positions=get_open_positions,
+            get_open_positions_for_broker=get_open_positions_for_broker,
+            get_open_state_for_broker=get_open_state_for_broker,
+        )
+    except Exception as exc:
+        log_exception(
+            "IBKR orphan-open recovery skipped because broker open state could not be read",
+            exc,
+            component="sync_service",
+            operation="recover_missing_ibkr_open_trades",
+        )
+        return [], []
+
+    existing_symbols = {
+        str(row.get("symbol", "")).strip().upper()
+        for row in open_rows
+        if (str(row.get("broker", "") or "IBKR").strip().upper() or "IBKR") == "IBKR"
+        and str(row.get("symbol", "")).strip()
+    }
+    existing_parent_order_ids = {
+        str(row.get("broker_parent_order_id", "") or row.get("parent_order_id", "") or "").strip()
+        for row in open_rows
+        if (str(row.get("broker", "") or "IBKR").strip().upper() or "IBKR") == "IBKR"
+    }
+
+    recovered_rows: list[dict[str, Any]] = []
+    recovery_results: list[dict[str, Any]] = []
+
+    for position in list(broker_open_state.get("positions") or []):
+        symbol = str(position.get("symbol", "")).strip().upper()
+        if not symbol or symbol in existing_symbols:
+            continue
+
+        related_orders = [
+            order for order in list(broker_open_state.get("orders") or [])
+            if str(order.get("symbol", "")).strip().upper() == symbol
+        ]
+        inferred_parent_order_id = next(
+            (
+                str(order.get("parent_id", "")).strip()
+                for order in related_orders
+                if str(order.get("parent_id", "")).strip()
+            ),
+            "",
+        )
+        if not inferred_parent_order_id:
+            inferred_parent_order_id = next(
+                (
+                    str(order.get("id", "")).strip()
+                    for order in related_orders
+                    if str(order.get("side", "")).strip().lower()
+                    == ("buy" if str(position.get("side", "")).strip().lower() != "short" else "sell")
+                ),
+                "",
+            )
+        if inferred_parent_order_id and inferred_parent_order_id in existing_parent_order_ids:
+            continue
+
+        sync_result: dict[str, Any] = {}
+        if inferred_parent_order_id:
+            try:
+                if sync_order_by_id_for_broker is not None:
+                    sync_result = sync_order_by_id_for_broker("IBKR", inferred_parent_order_id) or {}
+                elif sync_order_by_id is not None:
+                    sync_result = sync_order_by_id(inferred_parent_order_id) or {}
+            except Exception as exc:
+                log_exception(
+                    "IBKR orphan-open recovery sync lookup failed",
+                    exc,
+                    component="sync_service",
+                    operation="recover_missing_ibkr_open_trades",
+                    symbol=symbol,
+                    parent_order_id=inferred_parent_order_id,
+                )
+                sync_result = {}
+
+        side = "BUY" if str(position.get("side", "")).strip().lower() != "short" else "SELL"
+        direction = "LONG" if side == "BUY" else "SHORT"
+        shares_value = abs(to_float_or_none(position.get("qty", "")) or 0.0)
+        if shares_value <= 0:
+            continue
+
+        entry_timestamp = _resolve_sync_entry_timestamp(sync_result, parse_iso_utc) or datetime.now(timezone.utc)
+        entry_price = (
+            to_float_or_none(sync_result.get("entry_filled_avg_price", ""))
+            or to_float_or_none(sync_result.get("entry_price", ""))
+            or to_float_or_none(position.get("avg_entry_price", ""))
+        )
+        target_price = next(
+            (
+                to_float_or_none(order.get("limit_price", ""))
+                for order in related_orders
+                if str(order.get("type", "")).strip().lower() == "limit"
+                and to_float_or_none(order.get("limit_price", "")) is not None
+            ),
+            None,
+        )
+        stop_price = next(
+            (
+                to_float_or_none(order.get("stop_price", ""))
+                for order in related_orders
+                if str(order.get("type", "")).strip().lower() in {"stp", "stop", "trail", "trailing"}
+                and to_float_or_none(order.get("stop_price", "")) is not None
+            ),
+            None,
+        )
+        parent_order_id = inferred_parent_order_id or symbol
+        trade_key = normalize_trade_key(symbol, parent_order_id, parent_order_id, "IBKR")
+        timestamp_utc = entry_timestamp.astimezone(timezone.utc).isoformat()
+        parent_status = str(sync_result.get("parent_status", "") or "Filled").strip() or "Filled"
+        linked_signal_entry = (
+            to_float_or_none(sync_result.get("entry_price", ""))
+            or _entry_price_from_ibkr_client_order_id(sync_result.get("client_order_id"))
+            or entry_price
+        )
+
+        safe_insert_trade_event(
+            event_time=entry_timestamp,
+            event_type="OPEN",
+            symbol=symbol,
+            side=side,
+            shares=shares_value,
+            price=entry_price,
+            mode="orphan",
+            broker="IBKR",
+            order_id=parent_order_id,
+            parent_order_id=parent_order_id,
+            status="OPEN",
+        )
+        safe_insert_broker_order(
+            order_id=parent_order_id,
+            broker="IBKR",
+            symbol=symbol,
+            side=side,
+            order_type="bracket_entry",
+            status=parent_status,
+            qty=shares_value,
+            filled_qty=shares_value if parent_status.lower() == "filled" else None,
+            avg_fill_price=entry_price if parent_status.lower() == "filled" else None,
+            submitted_at=entry_timestamp,
+            filled_at=entry_timestamp if parent_status.lower() == "filled" else None,
+        )
+        upsert_trade_lifecycle(
+            trade_key=trade_key,
+            symbol=symbol,
+            mode="orphan",
+            side=side,
+            direction=direction,
+            status="OPEN",
+            entry_time=entry_timestamp,
+            entry_price=entry_price,
+            exit_time=None,
+            exit_price=None,
+            stop_price=stop_price,
+            target_price=target_price,
+            exit_reason=None,
+            shares=shares_value,
+            realized_pnl=None,
+            realized_pnl_percent=None,
+            duration_minutes=None,
+            signal_timestamp=entry_timestamp,
+            signal_entry=linked_signal_entry,
+            signal_stop=None,
+            signal_target=None,
+            signal_confidence=None,
+            broker="IBKR",
+            order_id=parent_order_id,
+            parent_order_id=parent_order_id,
+            exit_order_id=None,
+        )
+        recovered_rows.append({
+            "timestamp_utc": timestamp_utc,
+            "symbol": symbol,
+            "mode": "orphan",
+            "side": side,
+            "shares": shares_value,
+            "entry_price": entry_price,
+            "stop_price": stop_price,
+            "target_price": target_price,
+            "linked_signal_timestamp_utc": timestamp_utc,
+            "linked_signal_entry": linked_signal_entry,
+            "broker_order_id": parent_order_id,
+            "broker_parent_order_id": parent_order_id,
+            "broker": "IBKR",
+        })
+        recovery_results.append({
+            "symbol": symbol,
+            "broker": "IBKR",
+            "parent_order_id": parent_order_id,
+            "synced": False,
+            "reason": "orphan_open_recovered",
+        })
+        existing_symbols.add(symbol)
+        if parent_order_id:
+            existing_parent_order_ids.add(parent_order_id)
+
+    return recovered_rows, recovery_results
+
+
 def _build_ibkr_stale_reconciled_sync_result(
     *,
     open_row: dict[str, Any],
@@ -801,6 +1045,36 @@ def execute_sync_paper_trades(
         log_exception("Open paper trade read failed", e, component="sync_service", operation="execute_sync_paper_trades")
         return {"ok": False, "error": f"open paper trade read failed: {e}"}, 500
 
+    recovered_open_rows, orphan_open_results = _recover_missing_ibkr_open_trades(
+        open_rows=sorted_open_rows,
+        sync_order_by_id=sync_order_by_id,
+        sync_order_by_id_for_broker=sync_order_by_id_for_broker,
+        safe_insert_trade_event=safe_insert_trade_event,
+        safe_insert_broker_order=safe_insert_broker_order,
+        upsert_trade_lifecycle=upsert_trade_lifecycle,
+        parse_iso_utc=parse_iso_utc,
+        to_float_or_none=to_float_or_none,
+        get_open_positions=get_open_positions,
+        get_open_positions_for_broker=get_open_positions_for_broker,
+        get_open_state_for_broker=get_open_state_for_broker,
+    )
+    if recovered_open_rows:
+        sorted_open_rows = _sort_open_rows_for_sync_with_broker_state(
+            open_rows=sorted_open_rows + recovered_open_rows,
+            get_open_positions=get_open_positions,
+            get_open_positions_for_broker=get_open_positions_for_broker,
+            get_open_state_for_broker=get_open_state_for_broker,
+        )
+        log_info(
+            "Recovered orphan IBKR open trades from broker open state before sync",
+            component="sync_service",
+            operation="execute_sync_paper_trades",
+            recovered_count=len(recovered_open_rows),
+            recovered_symbols=",".join(
+                [str(row.get("symbol", "")).strip().upper() for row in recovered_open_rows if str(row.get("symbol", "")).strip()]
+            ),
+        )
+
     open_rows, deduped_duplicates = _dedupe_open_rows_by_parent_order(sorted_open_rows)
     if deduped_duplicates:
         log_info(
@@ -831,6 +1105,7 @@ def execute_sync_paper_trades(
             "reason": "duplicate_parent_order_deduped",
             "dropped_trade_id": duplicate.get("dropped_trade_id", ""),
         })
+    results.extend(orphan_open_results)
 
     cached_open_state_by_broker: dict[str, dict[str, Any]] = {}
     batch_started_at = time.monotonic()

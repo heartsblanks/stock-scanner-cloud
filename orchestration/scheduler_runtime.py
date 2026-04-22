@@ -10,6 +10,25 @@ def _truthy_env(name: str, default: bool = False) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _looks_like_ibkr_auth_issue(error_text: str) -> bool:
+    normalized = str(error_text or "").strip().lower()
+    if not normalized:
+        return False
+    markers = (
+        "not logged in",
+        "login required",
+        "log in",
+        "logged out",
+        "session is not ready",
+        "session not ready",
+        "authentication",
+        "auth",
+        "gateway login",
+        "please login",
+    )
+    return any(marker in normalized for marker in markers)
+
+
 def build_ibkr_operational_status(
     *,
     ibkr_bridge_enabled: Callable[[], bool],
@@ -93,6 +112,7 @@ def build_ibkr_operational_status(
         status["market_data_ok"] = bool(status["session_probe_ok"])
 
     session_ready = status["account_ok"] or status["session_probe_ok"]
+    auth_issue_detected = any(_looks_like_ibkr_auth_issue(item) for item in status["errors"])
 
     if status["bridge_health_ok"] and session_ready and status["market_data_ok"]:
         status["state"] = "READY"
@@ -102,10 +122,14 @@ def build_ibkr_operational_status(
             status["message"] = "IBKR bridge session and market data checks passed; account summary is slow or unavailable."
         return status
 
-    status["login_required"] = not status["session_probe_ok"]
+    status["login_required"] = bool(status["bridge_health_ok"]) and not bool(session_ready) and auth_issue_detected
     if status["bridge_health_ok"] and not session_ready:
-        status["state"] = "LOGIN_REQUIRED"
-        status["message"] = "IBKR bridge is up, but the account session is not ready."
+        if status["login_required"]:
+            status["state"] = "LOGIN_REQUIRED"
+            status["message"] = "IBKR bridge is up, but the account session is not ready."
+        else:
+            status["state"] = "DEGRADED"
+            status["message"] = "IBKR bridge is up, but the session probe was inconclusive."
     elif status["bridge_health_ok"] and session_ready and not status["market_data_ok"]:
         status["state"] = "MARKET_DATA_UNAVAILABLE"
         status["message"] = "IBKR account is up, but market data is not ready."

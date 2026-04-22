@@ -9,6 +9,7 @@ from services.scan_service import (
     _apply_low_price_notional_cap,
     _apply_confidence_loss_sizing,
     _apply_minimum_viable_position_sizing,
+    _maybe_send_high_quality_long_signal_alert,
     _cap_account_size,
     _requires_fractional_above_cap,
     evaluate_symbol_performance_gate,
@@ -18,6 +19,57 @@ from services.scan_service import (
 
 
 class ScanServiceSizingTests(unittest.TestCase):
+    def test_high_quality_long_alert_uses_compact_order_ready_format(self):
+        captured = {}
+
+        with patch("services.scan_service.telegram_alerts_enabled", return_value=True), patch(
+            "services.scan_service.send_telegram_alert",
+            side_effect=lambda **kwargs: captured.update(kwargs) or {"ok": True, "sent": True, "reason": "delivered"},
+        ):
+            result = _maybe_send_high_quality_long_signal_alert(
+                scan_id="scan-1",
+                scan_source="SCHEDULED",
+                mode="core_one",
+                top_trade=None,
+                trades=[
+                    {
+                        "metrics": {
+                            "symbol": "PLTR",
+                            "direction": "BUY",
+                            "entry": 151.89,
+                            "stop": 149.95,
+                            "target": 155.76,
+                            "shares": 1.0,
+                            "final_confidence": 99.0,
+                        }
+                    }
+                ],
+                paper_trade=True,
+                current_open_positions=0,
+                current_open_exposure=0.0,
+                source="IBKR_CORE_ONE",
+                benchmark_directions={"SP500": "NEUTRAL", "NASDAQ": "NEUTRAL"},
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(captured["alert_key"], "high-quality-long:scan-1:PLTR")
+        self.assertEqual(
+            captured["message"],
+            "\n".join(
+                [
+                    "IBKR Trade Setup",
+                    "PLTR BUY",
+                    "Entry: 151.89",
+                    "Stop: 149.95",
+                    "Target: 155.76",
+                    "Qty: 1",
+                    "Mode: core_one",
+                    "Confidence: 99",
+                ]
+            ),
+        )
+        self.assertNotIn("payload", captured)
+
     def test_symbol_performance_gate_blocks_consistently_losing_symbol(self):
         blocked, reason, details = evaluate_symbol_performance_gate(
             [
@@ -422,6 +474,96 @@ class ScanServiceSizingTests(unittest.TestCase):
         self.assertEqual(captured_allowed_symbols[0], ["QCOM", "CSCO"])
         self.assertTrue(result["symbol_allowlist"]["filter_applied"])
         self.assertEqual(result["symbol_allowlist"]["allowed_count"], 2)
+
+    def test_execute_full_scan_skips_open_symbol_before_deeper_candidate_work(self):
+        inserted_attempts = []
+        recent_trade_calls = []
+        refresh_calls = []
+        place_calls = []
+
+        candidate_metrics = {
+            "symbol": "PLTR",
+            "direction": "BUY",
+            "entry": 151.89,
+            "stop": 149.95,
+            "target": 155.76,
+            "shares": 1.0,
+            "per_trade_notional": 151.89,
+            "remaining_allocatable_capital": 1000.0,
+            "remaining_slots": 4,
+            "risk_per_share": 1.94,
+            "final_confidence": 99.0,
+        }
+
+        def fake_run_scan(
+            account_size,
+            mode,
+            current_open_positions=0,
+            current_open_exposure=0.0,
+            disable_strategy_gates=False,
+        ):
+            evaluation = {
+                "decision": "VALID",
+                "final_reason": "valid_signal",
+                "metrics": dict(candidate_metrics),
+            }
+            return (
+                [{"name": "PLTR", "final_reason": "valid_signal", "metrics": dict(candidate_metrics)}],
+                [evaluation],
+                True,
+                0,
+                {"SP500": "NEUTRAL", "NASDAQ": "NEUTRAL"},
+                f"IBKR_{mode.upper()}",
+            )
+
+        def fake_candidate_from_evaluation(evaluation):
+            return {
+                "name": "PLTR",
+                "decision": evaluation.get("decision", "VALID"),
+                "final_reason": evaluation.get("final_reason", "valid_signal"),
+                "metrics": dict(evaluation.get("metrics", {})),
+            }
+
+        with patch(
+            "services.scan_service.get_recent_closed_trades_for_symbol",
+            side_effect=lambda symbol, limit=5: recent_trade_calls.append((symbol, limit)) or [],
+        ):
+            result = execute_full_scan(
+                {"mode": "core_one", "paper_trade": True, "scan_source": "SCHEDULED"},
+                market_time_check=lambda: (True, "Market timing OK."),
+                build_scan_id=lambda timestamp_utc, mode: f"{mode}-scan",
+                market_phase_from_timestamp=lambda timestamp_utc: "MIDDAY",
+                append_signal_log=lambda row: None,
+                safe_insert_paper_trade_attempt=lambda **kwargs: inserted_attempts.append(kwargs),
+                safe_insert_scan_run=lambda **kwargs: None,
+                parse_iso_utc=lambda ts: ts,
+                run_scan=fake_run_scan,
+                trade_to_dict=lambda trade: trade,
+                debug_to_dict=lambda evaluation: evaluation,
+                paper_candidate_from_evaluation=fake_candidate_from_evaluation,
+                evaluate_symbol=lambda *args, **kwargs: refresh_calls.append((args, kwargs)) or None,
+                get_latest_open_paper_trade_for_symbol=lambda symbol: {"symbol": symbol, "status": "OPEN"},
+                is_symbol_in_paper_cooldown=lambda symbol, now_utc: (False, ""),
+                place_paper_orders_from_trade=lambda trade, max_notional=None: place_calls.append((trade, max_notional)) or [],
+                append_trade_log=lambda row: None,
+                safe_insert_trade_event=lambda **kwargs: None,
+                safe_insert_broker_order=lambda **kwargs: None,
+                upsert_trade_lifecycle=lambda **kwargs: None,
+                to_float_or_none=lambda value: float(value) if value not in (None, "") else None,
+                MIN_CONFIDENCE=75,
+                resolve_account_size=lambda payload: 1000.0,
+                active_broker="IBKR",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(recent_trade_calls, [])
+        self.assertEqual(refresh_calls, [])
+        self.assertEqual(place_calls, [])
+        paper_result = result.get("paper_trade_result", {})
+        self.assertTrue(paper_result.get("attempted"))
+        self.assertFalse(paper_result.get("placed"))
+        self.assertIn("PLTR:symbol_already_open", paper_result.get("skip_reasons", []))
+        self.assertTrue(any(row.get("final_reason") == "symbol_already_open" for row in inserted_attempts))
 
 
 if __name__ == "__main__":

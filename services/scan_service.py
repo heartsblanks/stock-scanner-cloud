@@ -360,32 +360,29 @@ def _maybe_send_high_quality_long_signal_alert(
         return None
 
     symbol = str(best_metrics.get("symbol", "")).strip().upper()
+    side = str(best_metrics.get("direction", "")).strip().upper() or "BUY"
+    entry = _to_float(best_metrics.get("entry", ""), 0.0)
+    stop = _to_float(best_metrics.get("stop", ""), 0.0)
+    target = _to_float(best_metrics.get("target", ""), 0.0)
+    shares = _to_float(best_metrics.get("shares", ""), 0.0)
+    message_lines = [
+        "IBKR Trade Setup",
+        f"{symbol} {side}",
+        f"Entry: {entry:.2f}",
+        f"Stop: {stop:.2f}",
+        f"Target: {target:.2f}",
+    ]
+    if shares > 0:
+        whole_shares = int(round(shares))
+        if abs(shares - whole_shares) < 1e-9:
+            message_lines.append(f"Qty: {whole_shares}")
+        else:
+            message_lines.append(f"Qty: {shares:.4f}")
+    message_lines.append(f"Mode: {mode}")
+    message_lines.append(f"Confidence: {confidence:.0f}")
     alert_result = send_telegram_alert(
         alert_key=f"high-quality-long:{scan_id}:{symbol}",
-        message=(
-            f"IBKR high-quality long: {symbol}\n"
-            f"Confidence: {confidence:.0f}\n"
-            f"Entry: {best_metrics.get('entry', '')}\n"
-            f"Stop: {best_metrics.get('stop', '')}\n"
-            f"Target: {best_metrics.get('target', '')}\n"
-            f"Mode: {mode}"
-        ),
-        payload={
-            "scan_id": scan_id,
-            "symbol": symbol,
-            "mode": mode,
-            "source": source,
-            "scan_source": scan_source,
-            "confidence": confidence,
-            "entry": best_metrics.get("entry", ""),
-            "stop": best_metrics.get("stop", ""),
-            "target": best_metrics.get("target", ""),
-            "paper_trade": paper_trade,
-            "current_open_positions": current_open_positions,
-            "current_open_exposure": current_open_exposure,
-            "benchmark_sp500": (benchmark_directions or {}).get("SP500", ""),
-            "benchmark_nasdaq": (benchmark_directions or {}).get("NASDAQ", ""),
-        },
+        message="\n".join(message_lines),
     )
     log_info(
         "High-quality long signal alert evaluated",
@@ -1065,6 +1062,25 @@ def execute_full_scan(
                 # --- Adaptive cooldown + sizing ---
                 candidate_symbol = str(paper_trade_candidate["metrics"].get("symbol", "")).strip().upper()
 
+                existing_open_trade = get_latest_open_paper_trade_for_symbol(candidate_symbol)
+                if existing_open_trade is not None:
+                    record_attempt(
+                        "PLACEMENT_SKIPPED",
+                        symbol=candidate_symbol,
+                        metrics=paper_trade_candidate["metrics"],
+                        final_reason="symbol_already_open",
+                        placed=False,
+                    )
+                    paper_results.append({
+                        "attempted": False,
+                        "placed": False,
+                        "reason": "symbol_already_open",
+                        "symbol": candidate_symbol,
+                    })
+                    skipped_symbols.append(candidate_symbol)
+                    skip_reasons.append(f"{candidate_symbol}:symbol_already_open")
+                    continue
+
                 try:
                     # Fetch recent closed trades for symbol (last 5)
                     recent_trades = get_recent_closed_trades_for_symbol(candidate_symbol, limit=PAPER_SYMBOL_GATING_LOOKBACK)
@@ -1283,25 +1299,6 @@ def execute_full_scan(
                     })
                     skipped_symbols.append(candidate_symbol)
                     skip_reasons.append(f"{candidate_symbol}:position_size_too_small_after_slot_compression")
-                    continue
-
-                existing_open_trade = get_latest_open_paper_trade_for_symbol(candidate_symbol)
-                if existing_open_trade is not None:
-                    record_attempt(
-                        "PLACEMENT_SKIPPED",
-                        symbol=candidate_symbol,
-                        metrics=paper_metrics,
-                        final_reason="symbol_already_open",
-                        placed=False,
-                    )
-                    paper_results.append({
-                        "attempted": False,
-                        "placed": False,
-                        "reason": "symbol_already_open",
-                        "symbol": candidate_symbol,
-                    })
-                    skipped_symbols.append(candidate_symbol)
-                    skip_reasons.append(f"{candidate_symbol}:symbol_already_open")
                     continue
 
                 in_cooldown, cooldown_reason = is_symbol_in_paper_cooldown(candidate_symbol, timestamp_utc)

@@ -6,6 +6,76 @@ from services.sync_service import execute_sync_paper_trades
 
 
 class SyncServiceTests(unittest.TestCase):
+    def test_sync_recovers_orphan_ibkr_open_trade_from_broker_open_state(self):
+        captured_events = []
+        captured_broker_orders = []
+        captured_lifecycles = []
+
+        result = execute_sync_paper_trades(
+            get_open_paper_trades=lambda: [],
+            sync_order_by_id_for_broker=lambda broker, parent_id: {
+                "symbol": "PLTR",
+                "parent_status": "Filled",
+                "entry_filled_avg_price": "151.05",
+                "entry_filled_at": "2026-04-22T14:45:51+00:00",
+                "entry_filled_qty": "1",
+                "client_order_id": "scanner-PLTR-BUY-1518900-1",
+            },
+            paper_trade_exit_already_logged=lambda parent_order_id, exit_event: False,
+            append_trade_log=lambda row: None,
+            safe_insert_trade_event=lambda **kwargs: captured_events.append(kwargs),
+            safe_insert_broker_order=lambda **kwargs: captured_broker_orders.append(kwargs),
+            upsert_trade_lifecycle=lambda **kwargs: captured_lifecycles.append(kwargs),
+            parse_iso_utc=parse_iso_utc,
+            to_float_or_none=to_float_or_none,
+            get_open_state_for_broker=lambda broker: {
+                "positions": [
+                    {
+                        "symbol": "PLTR",
+                        "qty": 1,
+                        "side": "long",
+                        "avg_entry_price": 152.05,
+                    }
+                ],
+                "orders": [
+                    {
+                        "id": "792",
+                        "symbol": "PLTR",
+                        "type": "limit",
+                        "limit_price": 155.76,
+                        "status": "Submitted",
+                        "parent_id": "791",
+                    },
+                    {
+                        "id": "793",
+                        "symbol": "PLTR",
+                        "type": "stp",
+                        "stop_price": 149.95,
+                        "status": "PreSubmitted",
+                        "parent_id": "791",
+                    },
+                ],
+            },
+            close_position_for_broker=lambda broker, symbol: {"ok": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(captured_events), 1)
+        self.assertEqual(captured_events[0]["symbol"], "PLTR")
+        self.assertEqual(captured_events[0]["event_type"], "OPEN")
+        self.assertEqual(captured_events[0]["mode"], "orphan")
+        self.assertEqual(captured_events[0]["order_id"], "791")
+        self.assertEqual(len(captured_broker_orders), 1)
+        self.assertEqual(captured_broker_orders[0]["order_id"], "791")
+        self.assertEqual(captured_broker_orders[0]["status"], "Filled")
+        self.assertGreaterEqual(len(captured_lifecycles), 1)
+        self.assertEqual(captured_lifecycles[0]["trade_key"], "IBKR:PLTR:791")
+        self.assertEqual(captured_lifecycles[0]["status"], "OPEN")
+        self.assertEqual(captured_lifecycles[0]["mode"], "orphan")
+        self.assertEqual(captured_lifecycles[0]["target_price"], 155.76)
+        self.assertEqual(captured_lifecycles[0]["stop_price"], 149.95)
+        self.assertIn("orphan_open_recovered", [row.get("reason") for row in result["results"]])
+
     def test_sync_close_falls_back_to_price_based_pnl_when_broker_reports_zero(self):
         captured_lifecycle = {}
 

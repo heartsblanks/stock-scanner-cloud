@@ -310,6 +310,19 @@ class SchedulerOpsTests(unittest.TestCase):
         self.assertTrue(result["noop"])
         self.assertEqual(result["reason"], "login_not_required")
 
+    def test_ibkr_login_alert_noops_when_state_is_not_login_required(self):
+        now_ny = datetime(2026, 4, 8, 10, 0, tzinfo=NY_TZ)
+        result = execute_ibkr_login_alert(
+            now_ny=now_ny,
+            get_ibkr_operational_status=lambda: {"enabled": True, "login_required": True, "state": "DEGRADED"},
+            telegram_alerts_enabled=True,
+            send_telegram_alert=lambda **kwargs: {"unexpected": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["noop"])
+        self.assertEqual(result["reason"], "state_not_login_required")
+
 
 if __name__ == "__main__":
     unittest.main()

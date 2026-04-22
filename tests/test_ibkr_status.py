@@ -78,6 +78,51 @@ class IbkrOperationalStatusTests(unittest.TestCase):
         self.assertTrue(result["market_data_ok"])
         self.assertFalse(result["login_required"])
 
+    @patch("app.ibkr_bridge_enabled", return_value=True)
+    @patch("app.ibkr_bridge_get")
+    def test_degraded_not_login_required_when_low_call_positions_probe_times_out(self, mock_bridge_get, _mock_enabled):
+        mock_bridge_get.side_effect = [
+            {"ok": True, "ibkr": {"configured": True}},
+            RuntimeError("positions timeout"),
+        ]
+
+        with patch.dict(
+            "os.environ",
+            {
+                "IBKR_LOW_CALL_MODE": "true",
+                "IBKR_STATUS_INCLUDE_ACCOUNT_PROBE": "false",
+                "IBKR_STATUS_INCLUDE_MARKET_DATA_PROBE": "false",
+            },
+            clear=False,
+        ):
+            result = app.get_ibkr_operational_status()
+
+        self.assertEqual(result["state"], "DEGRADED")
+        self.assertFalse(result["login_required"])
+        self.assertIn("positions:", result["errors"][0])
+
+    @patch("app.ibkr_bridge_enabled", return_value=True)
+    @patch("app.ibkr_bridge_get")
+    def test_login_required_when_low_call_positions_probe_reports_auth_failure(self, mock_bridge_get, _mock_enabled):
+        mock_bridge_get.side_effect = [
+            {"ok": True, "ibkr": {"configured": True}},
+            RuntimeError("not logged in"),
+        ]
+
+        with patch.dict(
+            "os.environ",
+            {
+                "IBKR_LOW_CALL_MODE": "true",
+                "IBKR_STATUS_INCLUDE_ACCOUNT_PROBE": "false",
+                "IBKR_STATUS_INCLUDE_MARKET_DATA_PROBE": "false",
+            },
+            clear=False,
+        ):
+            result = app.get_ibkr_operational_status()
+
+        self.assertEqual(result["state"], "LOGIN_REQUIRED")
+        self.assertTrue(result["login_required"])
+
 
 if __name__ == "__main__":
     unittest.main()
