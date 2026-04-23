@@ -266,6 +266,7 @@ class SyncServiceTests(unittest.TestCase):
             sync_order_by_id_for_broker=lambda broker, parent_id: {
                 "status": "unknown",
                 "parent_status": "",
+                "updated_at": "2026-04-09T14:25:00+00:00",
             },
             paper_trade_exit_already_logged=lambda parent_order_id, exit_event: False,
             append_trade_log=lambda row: None,
@@ -284,8 +285,9 @@ class SyncServiceTests(unittest.TestCase):
         self.assertTrue(result["results"][0]["stale_reconciled"])
         self.assertFalse(result["results"][0]["synced"])
         self.assertEqual(result["results"][0]["reason"], "pending_exit_recon")
-        self.assertEqual(captured_lifecycle["status"], "PENDING_EXIT_RECON")
+        self.assertEqual(captured_lifecycle["status"], "CLOSED")
         self.assertEqual(captured_lifecycle["exit_reason"], "BROKER_POSITION_FLAT_PENDING_FILL_SYNC")
+        self.assertEqual(captured_lifecycle["exit_time"], parse_iso_utc("2026-04-09T14:25:00+00:00"))
 
     def test_ibkr_sync_timeout_is_classified_explicitly(self):
         result = execute_sync_paper_trades(

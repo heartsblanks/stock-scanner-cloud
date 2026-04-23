@@ -262,16 +262,29 @@ def _mark_trade_pending_exit_reconciliation(
     lifecycle_side = resolve_lifecycle_side(open_row, direction)
     trade_key = normalize_trade_key(symbol, broker_parent_order_id, broker_order_id, broker_name)
 
+    pending_exit_time = None
+    for key in ("exit_filled_at", "exit_time", "filled_at", "updated_at"):
+        raw_value = str(sync_result.get(key, "") or "").strip()
+        if not raw_value:
+            continue
+        try:
+            pending_exit_time = parse_iso_utc(raw_value)
+            break
+        except Exception:
+            continue
+
     upsert_trade_lifecycle(
         trade_key=trade_key,
         symbol=symbol,
         mode=str(open_row.get("mode", "") or ""),
         side=lifecycle_side,
         direction=direction,
-        status="PENDING_EXIT_RECON",
+        # Production schema only supports OPEN/CLOSED. Keep broker-flat rows CLOSED
+        # and let the stale-close repair path enrich exit details later.
+        status="CLOSED",
         entry_time=entry_timestamp,
         entry_price=entry_price,
-        exit_time=None,
+        exit_time=pending_exit_time,
         exit_price=None,
         stop_price=stop_price,
         target_price=target_price,
