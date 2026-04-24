@@ -15,7 +15,6 @@ from core.db import healthcheck as db_healthcheck
 from storage import (
     get_latest_reconciliation_summary,
     get_recent_reconciliation_mismatches,
-    get_reconciliation_runs,
     get_ops_summary,
     get_open_trade_events,
     get_closed_trade_events,
@@ -39,7 +38,6 @@ from storage import (
 from routes.health import register_health_routes
 from routes.analysis import register_analysis_routes
 from routes.reconcile import register_reconcile_routes
-from routes.reconcile_legacy import register_legacy_reconcile_routes
 from routes.scheduler import register_scheduler_routes
 from routes.trades import register_trade_routes
 from routes.scans import register_scan_routes
@@ -57,8 +55,6 @@ from orchestration.scan_context import (
     trade_to_dict,
 )
 from orchestration.app_orchestration import (
-    build_reconcile_now_response,
-    build_reconciliation_runs_response,
     close_all_paper_positions as run_close_all_paper_positions,
     handle_scan_request as run_handle_scan_request,
     handle_sync_paper_trades as run_handle_sync_paper_trades,
@@ -707,17 +703,6 @@ register_scheduler_routes(
     execute_ibkr_stale_close_repair=run_ibkr_stale_close_repair,
     execute_ibkr_vm_journal_repair=run_ibkr_vm_journal_repair,
     execute_test_day_cycle=run_test_day_cycle_scheduler,
-)
-register_legacy_reconcile_routes(
-    app,
-    build_reconcile_now_response=build_reconcile_now_response,
-    build_reconciliation_runs_response=build_reconciliation_runs_response,
-    run_reconciliation=lambda: {"ok": True, "skipped": True, "reason": "reconciliation_disabled_in_ibkr_only_mode"},
-    upload_file_to_gcs=lambda *_args, **_kwargs: None,
-    reconciliation_bucket=RECONCILIATION_BUCKET,
-    reconciliation_object=RECONCILIATION_OBJECT,
-    safe_insert_reconciliation_run=safe_insert_reconciliation_run,
-    get_reconciliation_runs=get_reconciliation_runs,
 )
 
 if __name__ == "__main__":

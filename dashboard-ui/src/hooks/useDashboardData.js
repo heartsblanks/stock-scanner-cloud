@@ -5,7 +5,6 @@ import {
   fetchTradeLifecycle,
   fetchReconciliationSummary,
   fetchReconciliationDetails,
-  fetchReconciliationHistory,
   fetchRiskExposureSummary,
   fetchLatestScanSummary,
   fetchOpsSummary,
@@ -13,7 +12,6 @@ import {
   fetchPaperTradeAttemptHourlySummary,
   fetchPaperTradeAttemptRecent,
   fetchPaperTradeAttemptRejections,
-  runReconciliationNow,
   runSyncPaperTrades,
 } from "../api/dashboard";
 
@@ -247,15 +245,14 @@ export function useDashboardData(activeView = "overview") {
   const loadReconciliationSection = useCallback(async () => {
     try {
       setSectionLoading((prev) => ({ ...prev, reconciliation: true }));
-      const [reconRes, reconDetailsRes, reconHistoryRes] = await Promise.all([
+      const [reconRes, reconDetailsRes] = await Promise.all([
         fetchReconciliationSummary(),
         fetchReconciliationDetails(100),
-        fetchReconciliationHistory(20),
       ]);
 
       setReconciliationSummary(reconRes || null);
       setReconciliationDetails(Array.isArray(reconDetailsRes?.rows) ? reconDetailsRes.rows : []);
-      setReconciliationHistory(Array.isArray(reconHistoryRes?.rows) ? reconHistoryRes.rows : []);
+      setReconciliationHistory([]);
       setLastReconciliationStatus(reconRes?.severity || null);
       setLastReconciliationAt(new Date().toISOString());
       setSectionErrors((prev) => ({ ...prev, reconciliation: null }));
@@ -528,29 +525,10 @@ export function useDashboardData(activeView = "overview") {
   }
 
   async function rerunReconciliation() {
-    try {
-      setIsRefreshing(true);
-      const data = await runReconciliationNow();
-
-      if (data?.ok) {
-        const nextSeverity = data?.result?.severity || data?.severity || "OK";
-        setToast({ type: "success", message: "Reconciliation completed successfully" });
-        setLastReconciliationStatus(nextSeverity);
-        setLastReconciliationAt(new Date().toISOString());
-      } else {
-        setToast({
-          type: "error",
-          message: `Reconciliation failed: ${data?.error || "Unknown error"}`,
-        });
-        setLastReconciliationStatus("FAILED");
-        setLastReconciliationAt(new Date().toISOString());
-      }
-
-      await Promise.all([loadReconciliationSection(), loadOverviewSection(filtersRef.current), loadReconciliationOverviewSection()]);
-      setLastUpdated(new Date().toISOString());
-    } finally {
-      setIsRefreshing(false);
-    }
+    setToast({
+      type: "info",
+      message: "Legacy reconciliation runs are disabled in IBKR-only mode.",
+    });
   }
 
   async function syncPaperTrades() {

@@ -1040,16 +1040,10 @@ export default function DashboardPage() {
                   <div className="dashboard-panel-body dashboard-panel-body-tight dashboard-inline-actions">
                     <div className="dashboard-panel-heading">
                       <div>
-                        <h2 className="dashboard-panel-title">Reconciliation Actions</h2>
-                      </div>
-                      <div className="dashboard-toolbar">
-                        <button
-                          onClick={rerunReconciliation}
-                          disabled={isRefreshing}
-                          className="dashboard-button dashboard-button-secondary"
-                        >
-                          Re-run Reconciliation
-                        </button>
+                        <h2 className="dashboard-panel-title">Reconciliation</h2>
+                        <p className="dashboard-panel-subtitle">
+                          Read-only mismatch history. Manual reconciliation runs are disabled in IBKR-only mode.
+                        </p>
                       </div>
                     </div>
                   </div>
