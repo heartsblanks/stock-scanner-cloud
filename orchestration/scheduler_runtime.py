@@ -29,6 +29,21 @@ def _looks_like_ibkr_auth_issue(error_text: str) -> bool:
     return any(marker in normalized for marker in markers)
 
 
+def _looks_like_ibkr_session_unavailable(error_text: str) -> bool:
+    normalized = str(error_text or "").strip().lower()
+    if not normalized:
+        return False
+    if "503" not in normalized and "service unavailable" not in normalized:
+        return False
+    session_markers = (
+        "/positions",
+        "/account",
+        "positions:",
+        "account:",
+    )
+    return any(marker in normalized for marker in session_markers)
+
+
 def build_ibkr_operational_status(
     *,
     ibkr_bridge_enabled: Callable[[], bool],
@@ -113,6 +128,7 @@ def build_ibkr_operational_status(
 
     session_ready = status["account_ok"] or status["session_probe_ok"]
     auth_issue_detected = any(_looks_like_ibkr_auth_issue(item) for item in status["errors"])
+    session_unavailable_detected = any(_looks_like_ibkr_session_unavailable(item) for item in status["errors"])
 
     if status["bridge_health_ok"] and session_ready and status["market_data_ok"]:
         status["state"] = "READY"
@@ -122,7 +138,11 @@ def build_ibkr_operational_status(
             status["message"] = "IBKR bridge session and market data checks passed; account summary is slow or unavailable."
         return status
 
-    status["login_required"] = bool(status["bridge_health_ok"]) and not bool(session_ready) and auth_issue_detected
+    status["login_required"] = (
+        bool(status["bridge_health_ok"])
+        and not bool(session_ready)
+        and (auth_issue_detected or session_unavailable_detected)
+    )
     if status["bridge_health_ok"] and not session_ready:
         if status["login_required"]:
             status["state"] = "LOGIN_REQUIRED"

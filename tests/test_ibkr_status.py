@@ -123,6 +123,31 @@ class IbkrOperationalStatusTests(unittest.TestCase):
         self.assertEqual(result["state"], "LOGIN_REQUIRED")
         self.assertTrue(result["login_required"])
 
+    @patch("app.ibkr_bridge_enabled", return_value=True)
+    @patch("app.ibkr_bridge_get")
+    def test_login_required_when_low_call_positions_probe_returns_service_unavailable(self, mock_bridge_get, _mock_enabled):
+        mock_bridge_get.side_effect = [
+            {"ok": True, "ibkr": {"configured": True}},
+            RuntimeError(
+                "IBKR bridge request failed during GET /positions: "
+                "503 Server Error: SERVICE UNAVAILABLE for url: http://10.132.0.2:8090/positions"
+            ),
+        ]
+
+        with patch.dict(
+            "os.environ",
+            {
+                "IBKR_LOW_CALL_MODE": "true",
+                "IBKR_STATUS_INCLUDE_ACCOUNT_PROBE": "false",
+                "IBKR_STATUS_INCLUDE_MARKET_DATA_PROBE": "false",
+            },
+            clear=False,
+        ):
+            result = app.get_ibkr_operational_status()
+
+        self.assertEqual(result["state"], "LOGIN_REQUIRED")
+        self.assertTrue(result["login_required"])
+
 
 if __name__ == "__main__":
     unittest.main()
