@@ -331,6 +331,7 @@ def close_all_paper_positions_for_broker(
         cancel_open_orders_for_symbol=broker.cancel_open_orders_for_symbol,
         close_position=broker.close_position,
         get_order_by_id=broker.get_order_by_id,
+        sync_order_by_id=broker.sync_order_by_id,
         safe_insert_broker_order=safe_insert_broker_order,
         append_trade_log=append_trade_log,
         safe_insert_trade_event=safe_insert_trade_event,

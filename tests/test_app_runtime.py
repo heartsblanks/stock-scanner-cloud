@@ -2,10 +2,52 @@ import time
 import unittest
 from unittest.mock import patch
 
-from orchestration.app_runtime import handle_scan_request
+from orchestration.app_runtime import close_all_paper_positions_for_broker, handle_scan_request
+
+
+class FakeBroker:
+    def get_open_positions(self):
+        return []
+
+    def cancel_open_orders_for_symbol(self, symbol):
+        return []
+
+    def close_position(self, symbol):
+        return {}
+
+    def get_order_by_id(self, order_id, nested=False):
+        return {}
+
+    def sync_order_by_id(self, order_id):
+        return {"id": order_id, "status": "Filled"}
 
 
 class AppRuntimeTests(unittest.TestCase):
+    def test_close_all_paper_positions_for_broker_passes_sync_order_by_id(self):
+        captured = {}
+        broker = FakeBroker()
+
+        def run_close_all_paper_positions(**kwargs):
+            captured.update(kwargs)
+            return kwargs["sync_order_by_id"]("close-1")
+
+        result = close_all_paper_positions_for_broker(
+            broker,
+            run_close_all_paper_positions=run_close_all_paper_positions,
+            execute_close_all_paper_positions=lambda **kwargs: {},
+            get_managed_open_paper_trades_for_eod_close_for_broker=lambda broker: [],
+            safe_insert_broker_order=lambda **kwargs: None,
+            append_trade_log=lambda row: None,
+            safe_insert_trade_event=lambda **kwargs: None,
+            upsert_trade_lifecycle=lambda **kwargs: None,
+            to_float_or_none=lambda value: None,
+            parse_iso_utc=lambda value: value,
+        )
+
+        self.assertEqual(result["status"], "Filled")
+        self.assertIs(captured["sync_order_by_id"].__self__, broker)
+        self.assertIs(captured["sync_order_by_id"].__func__, FakeBroker.sync_order_by_id)
+
     def test_handle_scan_request_runs_ibkr_when_bridge_available(self):
         ibkr_calls = []
 
