@@ -66,6 +66,7 @@ def execute_close_all_paper_positions(
     cancel_open_orders_for_symbol: Callable[[str], list[str]],
     close_position: Callable[[str], dict[str, Any]],
     get_order_by_id: Callable[..., dict[str, Any]],
+    sync_order_by_id: Callable[[str], dict[str, Any]] | None = None,
     safe_insert_broker_order: Callable[..., None],
     append_trade_log: Callable[[dict[str, Any]], None],
     safe_insert_trade_event: Callable[..., None],
@@ -239,7 +240,10 @@ def execute_close_all_paper_positions(
 
         if close_order_id:
             try:
-                close_order = get_order_by_id(close_order_id, nested=False)
+                if broker_name == "IBKR" and sync_order_by_id is not None:
+                    close_order = sync_order_by_id(close_order_id)
+                else:
+                    close_order = get_order_by_id(close_order_id, nested=False)
                 close_order_status = str(close_order.get("status", close_order_status)).strip()
                 close_filled_qty = str(close_order.get("filled_qty", close_filled_qty)).strip()
                 close_filled = close_order_status.lower() == "filled"
@@ -272,7 +276,10 @@ def execute_close_all_paper_positions(
                 if poll_interval > 0:
                     time.sleep(poll_interval)
                 try:
-                    polled_order = get_order_by_id(close_order_id, nested=False)
+                    if sync_order_by_id is not None:
+                        polled_order = sync_order_by_id(close_order_id)
+                    else:
+                        polled_order = get_order_by_id(close_order_id, nested=False)
                 except Exception as poll_error:
                     log_exception(
                         "Paper EOD close follow-up poll failed",
