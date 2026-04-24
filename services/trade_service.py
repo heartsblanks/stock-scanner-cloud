@@ -369,6 +369,51 @@ def execute_close_all_paper_positions(
             filled_at=parse_iso_utc(timestamp_utc) if close_filled_avg_price else None,
         )
         if close_failed and not close_filled:
+            if open_row and close_order_id:
+                entry_timestamp_utc = str(open_row.get("timestamp_utc", "")).strip()
+                entry_timestamp = parse_iso_utc(entry_timestamp_utc) if entry_timestamp_utc else None
+                entry_price = open_row.get("entry_price", "")
+                stop_price = open_row.get("stop_price", "")
+                target_price = open_row.get("target_price", "")
+                shares_value = open_row.get("shares", qty)
+                mode = str(open_row.get("mode", "")).strip()
+                broker_order_id = str(open_row.get("broker_order_id", "")).strip()
+                broker_parent_order_id = str(open_row.get("broker_parent_order_id", "")).strip()
+                linked_signal_timestamp_utc = str(open_row.get("linked_signal_timestamp_utc", "")).strip()
+                linked_signal_entry = open_row.get("linked_signal_entry", "")
+                linked_signal_stop = open_row.get("linked_signal_stop", "")
+                linked_signal_target = open_row.get("linked_signal_target", "")
+                linked_signal_confidence = open_row.get("linked_signal_confidence", "")
+                direction = infer_direction(entry_price, "", stop_price, target_price, side)
+                trade_key = normalize_trade_key(symbol, broker_parent_order_id, broker_order_id, broker_name)
+                upsert_trade_lifecycle(
+                    trade_key=trade_key,
+                    symbol=symbol,
+                    mode=mode,
+                    side=to_upper_or_none(side),
+                    direction=direction,
+                    status="OPEN",
+                    entry_time=entry_timestamp,
+                    entry_price=to_float_or_none(entry_price),
+                    exit_time=None,
+                    exit_price=None,
+                    stop_price=to_float_or_none(stop_price),
+                    target_price=to_float_or_none(target_price),
+                    exit_reason=str(close_response.get("reason", "") or ""),
+                    shares=to_float_or_none(shares_value),
+                    realized_pnl=None,
+                    realized_pnl_percent=None,
+                    duration_minutes=None,
+                    signal_timestamp=parse_iso_utc(linked_signal_timestamp_utc) if linked_signal_timestamp_utc else None,
+                    signal_entry=to_float_or_none(linked_signal_entry),
+                    signal_stop=to_float_or_none(linked_signal_stop),
+                    signal_target=to_float_or_none(linked_signal_target),
+                    signal_confidence=to_float_or_none(linked_signal_confidence),
+                    broker=broker_name,
+                    order_id=broker_order_id,
+                    parent_order_id=broker_parent_order_id,
+                    exit_order_id=close_order_id,
+                )
             skipped_count += 1
             results.append({
                 "symbol": symbol,
@@ -391,8 +436,53 @@ def execute_close_all_paper_positions(
             )
             continue
         if not close_filled:
-            skipped_count += 1
             unresolved_reason = str(close_response.get("reason", "") or "broker_close_unresolved")
+            if open_row and close_order_id:
+                entry_timestamp_utc = str(open_row.get("timestamp_utc", "")).strip()
+                entry_timestamp = parse_iso_utc(entry_timestamp_utc) if entry_timestamp_utc else None
+                entry_price = open_row.get("entry_price", "")
+                stop_price = open_row.get("stop_price", "")
+                target_price = open_row.get("target_price", "")
+                shares_value = open_row.get("shares", qty)
+                mode = str(open_row.get("mode", "")).strip()
+                broker_order_id = str(open_row.get("broker_order_id", "")).strip()
+                broker_parent_order_id = str(open_row.get("broker_parent_order_id", "")).strip()
+                linked_signal_timestamp_utc = str(open_row.get("linked_signal_timestamp_utc", "")).strip()
+                linked_signal_entry = open_row.get("linked_signal_entry", "")
+                linked_signal_stop = open_row.get("linked_signal_stop", "")
+                linked_signal_target = open_row.get("linked_signal_target", "")
+                linked_signal_confidence = open_row.get("linked_signal_confidence", "")
+                direction = infer_direction(entry_price, "", stop_price, target_price, side)
+                trade_key = normalize_trade_key(symbol, broker_parent_order_id, broker_order_id, broker_name)
+                upsert_trade_lifecycle(
+                    trade_key=trade_key,
+                    symbol=symbol,
+                    mode=mode,
+                    side=to_upper_or_none(side),
+                    direction=direction,
+                    status="OPEN",
+                    entry_time=entry_timestamp,
+                    entry_price=to_float_or_none(entry_price),
+                    exit_time=None,
+                    exit_price=None,
+                    stop_price=to_float_or_none(stop_price),
+                    target_price=to_float_or_none(target_price),
+                    exit_reason=unresolved_reason,
+                    shares=to_float_or_none(shares_value),
+                    realized_pnl=None,
+                    realized_pnl_percent=None,
+                    duration_minutes=None,
+                    signal_timestamp=parse_iso_utc(linked_signal_timestamp_utc) if linked_signal_timestamp_utc else None,
+                    signal_entry=to_float_or_none(linked_signal_entry),
+                    signal_stop=to_float_or_none(linked_signal_stop),
+                    signal_target=to_float_or_none(linked_signal_target),
+                    signal_confidence=to_float_or_none(linked_signal_confidence),
+                    broker=broker_name,
+                    order_id=broker_order_id,
+                    parent_order_id=broker_parent_order_id,
+                    exit_order_id=close_order_id,
+                )
+            skipped_count += 1
             results.append({
                 "symbol": symbol,
                 "closed": False,

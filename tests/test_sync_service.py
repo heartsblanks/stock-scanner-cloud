@@ -289,6 +289,52 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(captured_lifecycle["exit_reason"], "BROKER_POSITION_FLAT_PENDING_FILL_SYNC")
         self.assertEqual(captured_lifecycle["exit_time"], parse_iso_utc("2026-04-09T14:25:00+00:00"))
 
+    def test_ibkr_unknown_parent_pending_recon_preserves_stored_exit_order_id(self):
+        captured_lifecycle = {}
+
+        def upsert_trade_lifecycle(**kwargs):
+            captured_lifecycle.update(kwargs)
+
+        result = execute_sync_paper_trades(
+            get_open_paper_trades=lambda: [
+                {
+                    "timestamp_utc": "2026-04-22T16:05:02+00:00",
+                    "symbol": "RIVN",
+                    "name": "Rivian",
+                    "mode": "core_two",
+                    "side": "BUY",
+                    "shares": "14",
+                    "entry_price": "18.04",
+                    "stop_price": "17.70",
+                    "target_price": "18.80",
+                    "broker_order_id": "809",
+                    "broker_parent_order_id": "809",
+                    "broker_exit_order_id": "822",
+                    "exit_order_id": "822",
+                    "broker": "IBKR",
+                }
+            ],
+            sync_order_by_id_for_broker=lambda broker, parent_id: {
+                "status": "unknown",
+                "parent_status": "",
+                "updated_at": "2026-04-23T16:18:31+00:00",
+            },
+            paper_trade_exit_already_logged=lambda parent_order_id, exit_event: False,
+            append_trade_log=lambda row: None,
+            safe_insert_trade_event=lambda **kwargs: None,
+            safe_insert_broker_order=lambda **kwargs: None,
+            upsert_trade_lifecycle=upsert_trade_lifecycle,
+            parse_iso_utc=parse_iso_utc,
+            to_float_or_none=to_float_or_none,
+            get_open_positions_for_broker=lambda broker: [],
+            close_position_for_broker=lambda broker, symbol: {"ok": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["results"][0]["reason"], "pending_exit_recon")
+        self.assertEqual(captured_lifecycle["status"], "CLOSED")
+        self.assertEqual(captured_lifecycle["exit_order_id"], "822")
+
     def test_ibkr_sync_timeout_is_classified_explicitly(self):
         result = execute_sync_paper_trades(
             get_open_paper_trades=lambda: [

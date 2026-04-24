@@ -72,6 +72,7 @@ class TradeServiceTests(unittest.TestCase):
         self.assertEqual(logged_events[0]["event_type"], "EOD_CLOSE")
 
     def test_ibkr_eod_close_reports_real_broker_failure_when_position_remains_open(self):
+        captured_lifecycle = {}
         result = execute_close_all_paper_positions(
             get_open_positions=lambda: [
                 {
@@ -115,7 +116,7 @@ class TradeServiceTests(unittest.TestCase):
             safe_insert_broker_order=lambda **kwargs: None,
             append_trade_log=lambda row: None,
             safe_insert_trade_event=lambda **kwargs: None,
-            upsert_trade_lifecycle=lambda **kwargs: None,
+            upsert_trade_lifecycle=lambda **kwargs: captured_lifecycle.update(kwargs),
             to_float_or_none=to_float_or_none,
             parse_iso_utc=parse_iso_utc,
         )
@@ -125,6 +126,8 @@ class TradeServiceTests(unittest.TestCase):
         self.assertFalse(result["results"][0]["closed"])
         self.assertEqual(result["results"][0]["reason"], "broker_close_failed")
         self.assertEqual(result["results"][0]["order_id"], "65")
+        self.assertEqual(captured_lifecycle["status"], "OPEN")
+        self.assertEqual(captured_lifecycle["exit_order_id"], "65")
 
     def test_ibkr_eod_close_uses_sync_lookup_when_open_order_read_would_fail(self):
         inserted_events = []
@@ -195,6 +198,7 @@ class TradeServiceTests(unittest.TestCase):
         self.assertEqual(inserted_events[0]["event_type"], "EOD_CLOSE")
 
     def test_ibkr_eod_close_does_not_count_unresolved_order_as_closed(self):
+        captured_lifecycle = {}
         result = execute_close_all_paper_positions(
             get_open_positions=lambda: [
                 {
@@ -238,7 +242,7 @@ class TradeServiceTests(unittest.TestCase):
             safe_insert_broker_order=lambda **kwargs: None,
             append_trade_log=lambda row: None,
             safe_insert_trade_event=lambda **kwargs: None,
-            upsert_trade_lifecycle=lambda **kwargs: None,
+            upsert_trade_lifecycle=lambda **kwargs: captured_lifecycle.update(kwargs),
             to_float_or_none=to_float_or_none,
             parse_iso_utc=parse_iso_utc,
         )
@@ -248,6 +252,8 @@ class TradeServiceTests(unittest.TestCase):
         self.assertFalse(result["results"][0]["closed"])
         self.assertEqual(result["results"][0]["reason"], "broker_close_unresolved")
         self.assertEqual(result["results"][0]["order_id"], "65")
+        self.assertEqual(captured_lifecycle["status"], "OPEN")
+        self.assertEqual(captured_lifecycle["exit_order_id"], "65")
 
     def test_ibkr_eod_close_timeout_is_classified_explicitly(self):
         result = execute_close_all_paper_positions(

@@ -138,6 +138,8 @@ def get_open_paper_trades() -> list[dict]:
                 "broker": str(row.get("broker", "") or "IBKR").strip().upper(),
                 "broker_order_id": order_id,
                 "broker_parent_order_id": parent_order_id,
+                "broker_exit_order_id": str(row.get("exit_order_id", "") or "").strip(),
+                "exit_order_id": str(row.get("exit_order_id", "") or "").strip(),
                 "linked_signal_timestamp_utc": row.get("signal_timestamp") or "",
                 "linked_signal_entry": row.get("signal_entry") or "",
                 "linked_signal_stop": row.get("signal_stop") or "",

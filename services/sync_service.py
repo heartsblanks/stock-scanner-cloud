@@ -150,6 +150,12 @@ def _refresh_open_lifecycle_from_sync_snapshot(
     order_id = str(open_row.get("broker_order_id", "") or open_row.get("order_id", "") or parent_order_id).strip()
     broker_order_id = order_id or parent_order_id
     broker_parent_order_id = parent_order_id or order_id
+    pending_exit_order_id = str(
+        sync_result.get("exit_order_id", "")
+        or open_row.get("exit_order_id", "")
+        or open_row.get("broker_exit_order_id", "")
+        or ""
+    ).strip()
 
     entry_price = (
         to_float_or_none(sync_result.get("entry_filled_avg_price", "") or sync_result.get("entry_price", ""))
@@ -234,6 +240,12 @@ def _mark_trade_pending_exit_reconciliation(
     order_id = str(open_row.get("broker_order_id", "") or open_row.get("order_id", "") or parent_order_id).strip()
     broker_order_id = order_id or parent_order_id
     broker_parent_order_id = parent_order_id or order_id
+    pending_exit_order_id = str(
+        sync_result.get("exit_order_id", "")
+        or open_row.get("exit_order_id", "")
+        or open_row.get("broker_exit_order_id", "")
+        or ""
+    ).strip()
 
     entry_price = (
         to_float_or_none(sync_result.get("entry_filled_avg_price", "") or sync_result.get("entry_price", ""))
@@ -301,7 +313,7 @@ def _mark_trade_pending_exit_reconciliation(
         broker=broker_name,
         order_id=broker_order_id,
         parent_order_id=broker_parent_order_id,
-        exit_order_id=str(sync_result.get("exit_order_id", "") or ""),
+        exit_order_id=pending_exit_order_id,
     )
 
 
@@ -904,6 +916,12 @@ def _build_ibkr_stale_reconciled_sync_result(
     sync_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     source = sync_result or {}
+    pending_exit_order_id = str(
+        source.get("exit_order_id", "")
+        or open_row.get("exit_order_id", "")
+        or open_row.get("broker_exit_order_id", "")
+        or parent_order_id
+    ).strip()
     exit_price = str(source.get("exit_price", "") or "").strip()
     exit_filled_avg_price = str(source.get("exit_filled_avg_price", "") or "").strip()
     has_fill_data = bool(exit_filled_avg_price or exit_price) and bool(
@@ -916,7 +934,7 @@ def _build_ibkr_stale_reconciled_sync_result(
         "exit_event": "MANUAL_CLOSE" if has_fill_data else "",
         "exit_reason": exit_reason,
         "exit_status": str(source.get("exit_status", "") or "reconciled_closed"),
-        "exit_order_id": str(source.get("exit_order_id", "") or parent_order_id),
+        "exit_order_id": pending_exit_order_id,
         "exit_filled_qty": str(source.get("exit_filled_qty", "") or open_row.get("shares", "")),
         "exit_price": exit_price,
         "exit_filled_avg_price": exit_filled_avg_price or exit_price,
