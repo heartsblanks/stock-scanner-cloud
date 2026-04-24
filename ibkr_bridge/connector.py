@@ -1633,27 +1633,45 @@ class IbkrGatewayClient:
                 "qualified_currency": qualified_currency,
             }
 
+        us_venues = {"NYSE", "NASDAQ", "ARCA", "AMEX", "BATS", "IEX", "NMS"}
+
         if requested_primary_exchange and qualified_primary_exchange and qualified_primary_exchange != requested_primary_exchange:
-            return {
-                "attempted": True,
-                "placed": False,
-                "broker": "IBKR",
-                "symbol": symbol,
-                "reason": "qualified_primary_exchange_mismatch",
-                "details": (
-                    f"Requested primary exchange {requested_primary_exchange}, "
-                    f"but qualified contract primary exchange is {qualified_primary_exchange}."
-                ),
-                "requested_exchange": requested_exchange,
-                "requested_primary_exchange": requested_primary_exchange,
-                "qualified_exchange": qualified_exchange,
-                "qualified_primary_exchange": qualified_primary_exchange,
-                "requested_currency": requested_currency,
-                "qualified_currency": qualified_currency,
-            }
+            us_equity_primary_exchange_override = (
+                requested_exchange == "SMART"
+                and requested_currency == "USD"
+                and requested_primary_exchange in us_venues
+                and qualified_primary_exchange in us_venues
+            )
+            if not us_equity_primary_exchange_override:
+                return {
+                    "attempted": True,
+                    "placed": False,
+                    "broker": "IBKR",
+                    "symbol": symbol,
+                    "reason": "qualified_primary_exchange_mismatch",
+                    "details": (
+                        f"Requested primary exchange {requested_primary_exchange}, "
+                        f"but qualified contract primary exchange is {qualified_primary_exchange}."
+                    ),
+                    "requested_exchange": requested_exchange,
+                    "requested_primary_exchange": requested_primary_exchange,
+                    "qualified_exchange": qualified_exchange,
+                    "qualified_primary_exchange": qualified_primary_exchange,
+                    "requested_currency": requested_currency,
+                    "qualified_currency": qualified_currency,
+                }
+            log_warning(
+                "IBKR bridge accepted qualified US primary exchange override",
+                component="ibkr_bridge",
+                operation="place_paper_bracket_order",
+                symbol=symbol,
+                requested_exchange=requested_exchange,
+                requested_primary_exchange=requested_primary_exchange,
+                qualified_exchange=qualified_exchange,
+                qualified_primary_exchange=qualified_primary_exchange,
+            )
 
         if requested_market == "EUROPE":
-            us_venues = {"NYSE", "NASDAQ", "ARCA", "AMEX", "BATS", "IEX", "NMS"}
             if qualified_exchange in us_venues or qualified_primary_exchange in us_venues:
                 return {
                     "attempted": True,

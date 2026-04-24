@@ -883,6 +883,52 @@ class IbkrConnectorTests(unittest.TestCase):
         self.assertEqual(result["existing_position_qty"], 146.0)
         self.assertEqual(result["existing_open_order_count"], 0)
 
+    def test_place_paper_bracket_order_accepts_us_primary_exchange_override(self):
+        client = IbkrGatewayClient.__new__(IbkrGatewayClient)
+        fake_ib = _FakeIbForBracketFlow(
+            symbol="HIMS",
+            parent_status="Submitted",
+            parent_perm_id=128001,
+        )
+
+        def qualify_contracts(contract):
+            contract.primaryExchange = "NYSE"
+            contract.exchange = "SMART"
+            contract.currency = "USD"
+            return [contract]
+
+        fake_ib.qualifyContracts = qualify_contracts
+        client._reset_connection = lambda: fake_ib
+        client._load_order_classes = lambda: (
+            _FakeLimitOrderForBracket,
+            _FakeMarketOrderForBracket,
+            _FakeStopOrderForBracket,
+            _FakeGenericOrderForBracket,
+            _FakeStockForBracket,
+        )
+        client._entry_poll_config = lambda: (1, 0.0)
+
+        result = client.place_paper_bracket_order(
+            {
+                "metrics": {
+                    "symbol": "HIMS",
+                    "market": "NASDAQ",
+                    "exchange": "SMART",
+                    "primary_exchange": "NASDAQ",
+                    "currency": "USD",
+                    "direction": "SELL",
+                    "entry": 28.16,
+                    "stop": 28.832,
+                    "target": 26.816,
+                    "shares": 8,
+                }
+            }
+        )
+
+        self.assertTrue(result["attempted"])
+        self.assertTrue(result["placed"])
+        self.assertEqual(result["symbol"], "HIMS")
+
     def test_place_paper_bracket_order_blocks_when_hard_cap_cannot_afford_one_share(self):
         client = IbkrGatewayClient.__new__(IbkrGatewayClient)
         fake_ib = _FakeIbForBracketFlow(
