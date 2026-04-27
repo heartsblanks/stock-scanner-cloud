@@ -59,6 +59,17 @@ def _ibkr_eod_poll_config() -> tuple[int, float]:
     return attempts, interval
 
 
+def _lifecycle_entry_side(side: Any) -> str | None:
+    normalized = str(side or "").strip().upper()
+    if normalized in {"BUY", "SELL"}:
+        return normalized
+    if normalized == "LONG":
+        return "BUY"
+    if normalized in {"SHORT", "SELL_SHORT"}:
+        return "SELL"
+    return to_upper_or_none(side)
+
+
 def execute_close_all_paper_positions(
     *,
     get_open_positions: Callable[[], list[dict[str, Any]]],
@@ -138,6 +149,7 @@ def execute_close_all_paper_positions(
         symbol = str(position.get("symbol", "")).strip().upper()
         qty = str(position.get("qty", "")).strip()
         side = str(position.get("side", "")).strip().lower()
+        lifecycle_side = _lifecycle_entry_side(side)
         current_price = position.get("current_price", "")
         broker_name = str(position.get("broker", "") or "").strip().upper() or "IBKR"
         time_budget_seconds = _close_time_budget_seconds(broker_name=broker_name)
@@ -390,7 +402,7 @@ def execute_close_all_paper_positions(
                     trade_key=trade_key,
                     symbol=symbol,
                     mode=mode,
-                    side=to_upper_or_none(side),
+                    side=lifecycle_side,
                     direction=direction,
                     status="OPEN",
                     entry_time=entry_timestamp,
@@ -458,7 +470,7 @@ def execute_close_all_paper_positions(
                     trade_key=trade_key,
                     symbol=symbol,
                     mode=mode,
-                    side=to_upper_or_none(side),
+                    side=lifecycle_side,
                     direction=direction,
                     status="OPEN",
                     entry_time=entry_timestamp,
@@ -566,7 +578,7 @@ def execute_close_all_paper_positions(
                 event_time=event_timestamp,
                 event_type="EOD_CLOSE",
                 symbol=symbol,
-                side=to_upper_or_none(side),
+                side=lifecycle_side,
                 shares=to_float_or_none(shares_value),
                 price=to_float_or_none(exit_price),
                 mode=mode,
@@ -580,7 +592,7 @@ def execute_close_all_paper_positions(
                 trade_key=trade_key,
                 symbol=symbol,
                 mode=mode,
-                side=to_upper_or_none(side),
+                side=lifecycle_side,
                 direction=direction,
                 status="CLOSED",
                 entry_time=entry_timestamp,
@@ -613,7 +625,7 @@ def execute_close_all_paper_positions(
                 event_time=event_timestamp,
                 event_type="EOD_CLOSE",
                 symbol=symbol,
-                side=to_upper_or_none(side),
+                side=lifecycle_side,
                 shares=to_float_or_none(close_filled_qty or qty),
                 price=to_float_or_none(close_filled_avg_price or current_price),
                 mode="orphan",
@@ -627,7 +639,7 @@ def execute_close_all_paper_positions(
                 trade_key=orphan_trade_key,
                 symbol=symbol,
                 mode="orphan",
-                side=to_upper_or_none(side),
+                side=lifecycle_side,
                 direction=None,
                 status="CLOSED",
                 entry_time=None,

@@ -67,6 +67,7 @@ class TradeServiceTests(unittest.TestCase):
         self.assertEqual(inserted_orders[0]["order_id"], "65")
         self.assertEqual(inserted_events[0]["event_type"], "EOD_CLOSE")
         self.assertEqual(captured_lifecycle["status"], "CLOSED")
+        self.assertEqual(captured_lifecycle["side"], "BUY")
         self.assertEqual(captured_lifecycle["broker"], "IBKR")
         self.assertEqual(captured_lifecycle["exit_order_id"], "65")
         self.assertEqual(logged_events[0]["event_type"], "EOD_CLOSE")
@@ -127,6 +128,7 @@ class TradeServiceTests(unittest.TestCase):
         self.assertEqual(result["results"][0]["reason"], "broker_close_failed")
         self.assertEqual(result["results"][0]["order_id"], "65")
         self.assertEqual(captured_lifecycle["status"], "OPEN")
+        self.assertEqual(captured_lifecycle["side"], "BUY")
         self.assertEqual(captured_lifecycle["exit_order_id"], "65")
 
     def test_ibkr_eod_close_uses_sync_lookup_when_open_order_read_would_fail(self):
