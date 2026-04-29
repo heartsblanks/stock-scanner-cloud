@@ -29,6 +29,50 @@ API_KEY = os.getenv("TWELVEDATA_API_KEY")
 BASE_URL = "https://api.twelvedata.com/time_series"
 
 
+def _parse_int_map_env(name: str, default: dict[str, int]) -> dict[str, int]:
+    raw_value = str(os.getenv(name, "")).strip()
+    if not raw_value:
+        return dict(default)
+
+    parsed = dict(default)
+    for item in raw_value.split(","):
+        if ":" not in item:
+            continue
+        key, value = item.split(":", 1)
+        key = key.strip().lower()
+        if not key:
+            continue
+        try:
+            parsed[key] = int(value.strip())
+        except Exception:
+            continue
+    return parsed
+
+
+def _mode_confidence_floor(mode: str | None) -> int | None:
+    floors = _parse_int_map_env(
+        "MODE_CONFIDENCE_FLOORS",
+        {
+            "primary": 95,
+            "secondary": 95,
+            "fourth": 96,
+            "fifth": 95,
+        },
+    )
+    normalized_mode = str(mode or "").strip().lower()
+    return floors.get(normalized_mode)
+
+
+def _confidence_quality_cap(priority: int) -> int | None:
+    if priority <= 6:
+        return 90
+    if priority == 7:
+        return 94
+    if priority == 8:
+        return 97
+    return None
+
+
 def _fractional_shares_enabled() -> bool:
     value = str(os.getenv("ENABLE_FRACTIONAL_SHARES", "false")).strip().lower()
     return value in {"1", "true", "yes", "y", "on"}
@@ -398,6 +442,7 @@ def evaluate_symbol(
         "symbol": info["symbol"],
         "type": info["type"],
         "priority": info["priority"],
+        "mode": info.get("mode"),
         "market": info["market"],
         "exchange": info.get("exchange"),
         "primary_exchange": info.get("primary_exchange"),
@@ -619,7 +664,13 @@ def evaluate_symbol(
         if minutes_after_open >= 270:
             late_long_confidence_boost += 2
     metrics["late_long_confidence_boost"] = late_long_confidence_boost
-    metrics["required_confidence"] = (MIN_SHORT_CONFIDENCE if direction == "SELL" else MIN_CONFIDENCE) + late_long_confidence_boost
+    base_required_confidence = (MIN_SHORT_CONFIDENCE if direction == "SELL" else MIN_CONFIDENCE) + late_long_confidence_boost
+    mode_confidence_floor = _mode_confidence_floor(info.get("mode"))
+    metrics["mode_confidence_floor"] = mode_confidence_floor
+    metrics["required_confidence"] = max(
+        base_required_confidence,
+        mode_confidence_floor or base_required_confidence,
+    )
 
     # Hard entry cutoff temporarily disabled.
     hard_entry_cutoff = False
@@ -778,13 +829,17 @@ def evaluate_symbol(
         if minutes_after_open >= 150:
             time_penalty += 6
 
-    final_confidence = base_confidence + priority - time_penalty
+    raw_final_confidence = base_confidence + priority - time_penalty
+    confidence_quality_cap = _confidence_quality_cap(priority)
+    final_confidence = min(raw_final_confidence, confidence_quality_cap) if confidence_quality_cap is not None else raw_final_confidence
     required_confidence = metrics["required_confidence"]
 
     metrics.update({
         "base_confidence": base_confidence,
         "priority_boost": priority,
         "time_penalty": time_penalty,
+        "raw_final_confidence": raw_final_confidence,
+        "confidence_quality_cap": confidence_quality_cap,
         "final_confidence": final_confidence,
         "required_confidence": required_confidence,
     })
@@ -1028,6 +1083,7 @@ def run_scan(
     evaluations = []
 
     for name, info in selected_instruments.items():
+        info = {**info, "mode": mode}
         candles = combined_cache.get(name)
         if not candles:
             evaluations.append({
@@ -1035,7 +1091,7 @@ def run_scan(
                 "decision": "REJECTED",
                 "final_reason": "No candles fetched.",
                 "checks": {"data_fetch": False},
-                "metrics": {"symbol": info["symbol"]},
+                "metrics": {"symbol": info["symbol"], "mode": mode},
             })
             continue
 

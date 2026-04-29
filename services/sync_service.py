@@ -83,6 +83,126 @@ def _bool_env(name: str, default: bool) -> bool:
     return raw_value in {"1", "true", "yes", "on"}
 
 
+def _float_env(name: str, default: float) -> float:
+    raw_value = str(os.getenv(name, "")).strip()
+    if not raw_value:
+        return default
+    try:
+        return float(raw_value)
+    except Exception:
+        return default
+
+
+def _time_stop_position_snapshot(open_state: dict[str, Any], symbol: str) -> dict[str, Any] | None:
+    normalized_symbol = str(symbol or "").strip().upper()
+    if not normalized_symbol:
+        return None
+    for position in list(open_state.get("positions") or []):
+        if str(position.get("symbol", "")).strip().upper() == normalized_symbol:
+            return position
+    return None
+
+
+def _time_stop_duration_minutes(
+    open_row: dict[str, Any],
+    *,
+    parse_iso_utc: Callable[[str], Any],
+) -> float | None:
+    entry_timestamp_raw = str(
+        open_row.get("timestamp_utc")
+        or open_row.get("entry_time")
+        or open_row.get("created_at")
+        or ""
+    ).strip()
+    if not entry_timestamp_raw:
+        return None
+    try:
+        entry_timestamp = parse_iso_utc(entry_timestamp_raw)
+        return (datetime.now(timezone.utc) - entry_timestamp.astimezone(timezone.utc)).total_seconds() / 60.0
+    except Exception:
+        return None
+
+
+def _time_stop_progress_to_target(
+    *,
+    open_row: dict[str, Any],
+    position: dict[str, Any] | None,
+    to_float_or_none: Callable[[Any], float | None],
+) -> tuple[float | None, float | None]:
+    entry_price = to_float_or_none(open_row.get("entry_price", ""))
+    target_price = to_float_or_none(open_row.get("target_price", ""))
+    current_price = None
+    if position is not None:
+        current_price = (
+            to_float_or_none(position.get("current_price", ""))
+            or to_float_or_none(position.get("market_price", ""))
+            or to_float_or_none(position.get("last_price", ""))
+        )
+    if current_price is None:
+        current_price = to_float_or_none(open_row.get("current_price", ""))
+
+    if entry_price is None or target_price is None or current_price is None:
+        return None, current_price
+
+    direction = infer_direction(
+        entry_price,
+        current_price,
+        open_row.get("stop_price", ""),
+        target_price,
+        open_row.get("side", ""),
+    )
+    if direction == "SHORT":
+        target_move = entry_price - target_price
+        favorable_move = entry_price - current_price
+    else:
+        target_move = target_price - entry_price
+        favorable_move = current_price - entry_price
+
+    if target_move <= 0:
+        return None, current_price
+
+    return favorable_move / target_move, current_price
+
+
+def _build_time_stop_sync_result(
+    *,
+    open_row: dict[str, Any],
+    close_response: dict[str, Any],
+    current_price: float,
+    parent_order_id: str,
+) -> dict[str, Any]:
+    exit_price = (
+        close_response.get("filled_avg_price")
+        or close_response.get("avg_fill_price")
+        or close_response.get("exit_price")
+        or current_price
+    )
+    exit_order_id = str(
+        close_response.get("order_id")
+        or close_response.get("close_order_id")
+        or close_response.get("id")
+        or open_row.get("exit_order_id", "")
+        or open_row.get("broker_exit_order_id", "")
+        or parent_order_id
+    ).strip()
+    timestamp_utc = datetime.now(timezone.utc).isoformat()
+    return {
+        "id": parent_order_id,
+        "symbol": str(open_row.get("symbol", "") or "").strip().upper(),
+        "status": str(close_response.get("status", "") or "filled"),
+        "parent_status": "filled",
+        "exit_event": "TIME_STOP",
+        "exit_reason": "TIME_STOP",
+        "exit_status": str(close_response.get("status", "") or "filled"),
+        "exit_order_id": exit_order_id,
+        "exit_filled_qty": str(close_response.get("filled_qty", "") or open_row.get("shares", "")),
+        "exit_filled_avg_price": str(exit_price),
+        "exit_price": str(exit_price),
+        "exit_filled_at": str(close_response.get("filled_at", "") or timestamp_utc),
+        "updated_at": timestamp_utc,
+    }
+
+
 def _resolved_exit_pnl_values(
     *,
     sync_result: dict[str, Any],
@@ -1555,57 +1675,177 @@ def execute_sync_paper_trades(
                         broker=broker_name,
                     )
 
-            if broker_name == "IBKR":
-                log_warning(
-                    "IBKR trade remains open on broker after sync",
-                    component="sync_service",
-                    operation="execute_sync_paper_trades",
-                    symbol=symbol,
-                    parent_order_id=parent_order_id,
-                    parent_status=sync_result.get("parent_status", ""),
-                    take_profit_status=sync_result.get("take_profit_status", ""),
-                    stop_loss_status=sync_result.get("stop_loss_status", ""),
-                )
-            results.append({
-                "symbol": symbol,
-                "broker": broker_name,
-                "parent_order_id": parent_order_id,
-                "synced": False,
-                "reason": "identity_conflict" if sync_result.get("identity_conflict") else "still_open",
-                "parent_status": sync_result.get("parent_status", ""),
-                "take_profit_status": sync_result.get("take_profit_status", ""),
-                "stop_loss_status": sync_result.get("stop_loss_status", ""),
-                "identity_conflict_reason": sync_result.get("identity_conflict_reason", ""),
-                "lifecycle_refreshed": lifecycle_refreshed,
-            })
-            skipped_count += 1
-            continue
+            time_stop_triggered = False
+            time_stop_pending_result: dict[str, Any] | None = None
+            if (
+                broker_name == "IBKR"
+                and _bool_env("PAPER_TIME_STOP_ENABLED", True)
+                and not bool(sync_result.get("identity_conflict"))
+                and (close_position_for_broker is not None or close_position is not None)
+            ):
+                duration_minutes = _time_stop_duration_minutes(open_row, parse_iso_utc=parse_iso_utc)
+                min_time_stop_minutes = max(_float_env("PAPER_TIME_STOP_MINUTES", 45.0), 1.0)
+                min_progress_to_target = _float_env("PAPER_TIME_STOP_MIN_PROGRESS_TO_TARGET", 0.25)
+                if duration_minutes is not None and duration_minutes >= min_time_stop_minutes:
+                    try:
+                        if broker_name not in cached_open_state_by_broker:
+                            cached_open_state_by_broker[broker_name] = _read_broker_open_state(
+                                broker_name=broker_name,
+                                get_open_positions=get_open_positions,
+                                get_open_positions_for_broker=get_open_positions_for_broker,
+                                get_open_state_for_broker=get_open_state_for_broker,
+                            )
+                        position_snapshot = _time_stop_position_snapshot(cached_open_state_by_broker[broker_name], symbol)
+                        progress_to_target, current_price = _time_stop_progress_to_target(
+                            open_row=open_row,
+                            position=position_snapshot,
+                            to_float_or_none=to_float_or_none,
+                        )
+                        if (
+                            position_snapshot is not None
+                            and current_price is not None
+                            and progress_to_target is not None
+                            and progress_to_target < min_progress_to_target
+                        ):
+                            time_stop_triggered = True
+                            close_response_raw = (
+                                close_position_for_broker(broker_name, symbol)
+                                if close_position_for_broker is not None
+                                else close_position(symbol)  # type: ignore[misc]
+                            )
+                            close_response = close_response_raw if isinstance(close_response_raw, dict) else {}
+                            close_failed = bool(close_response.get("ok") is False)
+                            close_status = str(close_response.get("status", "") or "").strip().lower()
+                            position_closed = bool(close_response.get("position_closed"))
+                            exit_price_available = (
+                                close_response.get("filled_avg_price") not in (None, "")
+                                or close_response.get("avg_fill_price") not in (None, "")
+                                or close_response.get("exit_price") not in (None, "")
+                                or current_price is not None
+                            )
+                            if not close_failed and close_status not in {"rejected", "cancelled", "canceled", "inactive"} and exit_price_available:
+                                sync_result = _build_time_stop_sync_result(
+                                    open_row=open_row,
+                                    close_response=close_response,
+                                    current_price=current_price,
+                                    parent_order_id=parent_order_id,
+                                )
+                                exit_event = "TIME_STOP"
+                                log_info(
+                                    "IBKR time stop closed stale open trade during sync",
+                                    component="sync_service",
+                                    operation="execute_sync_paper_trades",
+                                    symbol=symbol,
+                                    parent_order_id=parent_order_id,
+                                    broker=broker_name,
+                                    duration_minutes=round(duration_minutes, 3),
+                                    progress_to_target=round(progress_to_target, 4),
+                                    min_progress_to_target=min_progress_to_target,
+                                    close_status=close_status,
+                                    position_closed=position_closed,
+                                )
+                            else:
+                                pending_reason = "TIME_STOP_CLOSE_REQUESTED_PENDING_FILL_SYNC"
+                                pending_sync_result = {
+                                    **sync_result,
+                                    "exit_order_id": str(
+                                        close_response.get("order_id", "")
+                                        or close_response.get("close_order_id", "")
+                                        or close_response.get("id", "")
+                                    ),
+                                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                                }
+                                _mark_trade_pending_exit_reconciliation(
+                                    open_row=open_row,
+                                    sync_result=pending_sync_result,
+                                    broker_name=broker_name,
+                                    parse_iso_utc=parse_iso_utc,
+                                    to_float_or_none=to_float_or_none,
+                                    upsert_trade_lifecycle=upsert_trade_lifecycle,
+                                    pending_reason=pending_reason,
+                                )
+                                time_stop_pending_result = {
+                                    "symbol": symbol,
+                                    "broker": broker_name,
+                                    "parent_order_id": parent_order_id,
+                                    "synced": False,
+                                    "reason": "time_stop_close_requested",
+                                    "details": pending_reason,
+                                    "duration_minutes": round(duration_minutes, 3),
+                                    "progress_to_target": round(progress_to_target, 4),
+                                    "close_status": close_response.get("status", ""),
+                                }
+                    except Exception as time_stop_error:
+                        log_exception(
+                            "IBKR time stop evaluation failed during sync",
+                            time_stop_error,
+                            component="sync_service",
+                            operation="execute_sync_paper_trades",
+                            symbol=symbol,
+                            parent_order_id=parent_order_id,
+                            broker=broker_name,
+                        )
+
+            if exit_event:
+                pass
+            elif time_stop_pending_result is not None:
+                results.append(time_stop_pending_result)
+                skipped_count += 1
+                continue
+            elif time_stop_triggered:
+                results.append({
+                    "symbol": symbol,
+                    "broker": broker_name,
+                    "parent_order_id": parent_order_id,
+                    "synced": False,
+                    "reason": "time_stop_close_failed",
+                })
+                skipped_count += 1
+                continue
+            else:
+                if broker_name == "IBKR":
+                    log_warning(
+                        "IBKR trade remains open on broker after sync",
+                        component="sync_service",
+                        operation="execute_sync_paper_trades",
+                        symbol=symbol,
+                        parent_order_id=parent_order_id,
+                        parent_status=sync_result.get("parent_status", ""),
+                        take_profit_status=sync_result.get("take_profit_status", ""),
+                        stop_loss_status=sync_result.get("stop_loss_status", ""),
+                    )
+                results.append({
+                    "symbol": symbol,
+                    "broker": broker_name,
+                    "parent_order_id": parent_order_id,
+                    "synced": False,
+                    "reason": "identity_conflict" if sync_result.get("identity_conflict") else "still_open",
+                    "parent_status": sync_result.get("parent_status", ""),
+                    "take_profit_status": sync_result.get("take_profit_status", ""),
+                    "stop_loss_status": sync_result.get("stop_loss_status", ""),
+                    "identity_conflict_reason": sync_result.get("identity_conflict_reason", ""),
+                    "lifecycle_refreshed": lifecycle_refreshed,
+                })
+                skipped_count += 1
+                continue
 
         if broker_name == "IBKR":
             confirmed_exit_timestamp = _resolve_confirmed_exit_timestamp(sync_result, parse_iso_utc)
             confirmed_exit_price = to_float_or_none(
                 sync_result.get("exit_filled_avg_price", "") or sync_result.get("exit_price", "")
             )
-            sync_realized_pnl = to_float_or_none(sync_result.get("exit_realized_pnl", ""))
-            realized_pnl_confirmed = bool(sync_result.get("exit_realized_pnl_confirmed"))
             if (
                 confirmed_exit_timestamp is None
                 or confirmed_exit_price is None
-                or sync_realized_pnl is None
-                or not realized_pnl_confirmed
             ):
                 pending_reason = str(
-                    sync_result.get("exit_reason", "") or "PENDING_EXIT_RECON_COMMISSION_AWAITED"
+                    sync_result.get("exit_reason", "") or "PENDING_EXIT_RECON_FILL_EVIDENCE_AWAITED"
                 ).strip()
                 missing_parts: list[str] = []
                 if confirmed_exit_timestamp is None:
                     missing_parts.append("exit_timestamp")
                 if confirmed_exit_price is None:
                     missing_parts.append("exit_price")
-                if sync_realized_pnl is None:
-                    missing_parts.append("realized_pnl")
-                if not realized_pnl_confirmed:
-                    missing_parts.append("commission_confirmation")
 
                 _mark_trade_pending_exit_reconciliation(
                     open_row=open_row,
@@ -1617,7 +1857,7 @@ def execute_sync_paper_trades(
                     pending_reason=pending_reason,
                 )
                 log_warning(
-                    "IBKR close detected but awaiting confirmed execution/commission evidence; trade kept pending",
+                    "IBKR close detected but awaiting confirmed fill evidence; trade kept pending",
                     component="sync_service",
                     operation="execute_sync_paper_trades",
                     symbol=symbol,

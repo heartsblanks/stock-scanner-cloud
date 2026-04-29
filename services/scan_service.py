@@ -130,6 +130,53 @@ DEFAULT_PAPER_MAX_NOTIONAL = 250.0
 DEFAULT_PAPER_ACCOUNT_HARD_CAP = 1000.0
 
 
+def _parse_mode_int_map(raw_value: str, default: dict[str, int]) -> dict[str, int]:
+    parsed = dict(default)
+    for item in str(raw_value or "").split(","):
+        if ":" not in item:
+            continue
+        key, value = item.split(":", 1)
+        normalized_key = key.strip().lower()
+        if not normalized_key:
+            continue
+        try:
+            parsed[normalized_key] = int(value.strip())
+        except Exception:
+            continue
+    return parsed
+
+
+def _mode_placement_confidence_floor(mode: str) -> int | None:
+    floors = _parse_mode_int_map(
+        os.getenv("PAPER_MODE_PLACEMENT_CONFIDENCE_FLOORS", ""),
+        {
+            "primary": 95,
+            "secondary": 95,
+            "fourth": 96,
+            "fifth": 95,
+        },
+    )
+    return floors.get(str(mode or "").strip().lower())
+
+
+def _preferred_symbol_priority_floor_for_mode(mode: str) -> int | None:
+    floors = _parse_mode_int_map(
+        os.getenv("PAPER_PREFERRED_SYMBOL_MIN_PRIORITY_BY_MODE", ""),
+        {
+            "primary": 8,
+            "secondary": 7,
+            "fourth": 7,
+            "fifth": 8,
+        },
+    )
+    return floors.get(str(mode or "").strip().lower())
+
+
+def _preferred_symbol_filter_enabled() -> bool:
+    value = str(os.getenv("PAPER_PREFERRED_SYMBOL_MODE_FILTER_ENABLED", "true")).strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 def _paper_trade_broker_name(paper_trade_result: dict[str, Any]) -> str:
     broker = str(paper_trade_result.get("broker", "") or "").strip().upper()
     return broker or "IBKR"
@@ -1092,6 +1139,55 @@ def execute_full_scan(
             for paper_trade_candidate in paper_trade_candidates:
                 # --- Adaptive cooldown + sizing ---
                 candidate_symbol = str(paper_trade_candidate["metrics"].get("symbol", "")).strip().upper()
+                candidate_metrics = paper_trade_candidate["metrics"]
+                candidate_confidence = _to_float(candidate_metrics.get("final_confidence"), 0.0)
+                mode_confidence_floor = _mode_placement_confidence_floor(mode)
+                if mode_confidence_floor is not None and candidate_confidence < mode_confidence_floor and not disable_strategy_gates:
+                    record_attempt(
+                        "PLACEMENT_SKIPPED",
+                        symbol=candidate_symbol,
+                        metrics=candidate_metrics,
+                        final_reason="below_mode_placement_confidence_floor",
+                        placed=False,
+                    )
+                    paper_results.append({
+                        "attempted": False,
+                        "placed": False,
+                        "reason": "below_mode_placement_confidence_floor",
+                        "symbol": candidate_symbol,
+                        "confidence": candidate_confidence,
+                        "required_confidence": mode_confidence_floor,
+                    })
+                    skipped_symbols.append(candidate_symbol)
+                    skip_reasons.append(f"{candidate_symbol}:below_mode_placement_confidence_floor")
+                    continue
+
+                preferred_priority_floor = _preferred_symbol_priority_floor_for_mode(mode)
+                candidate_priority = _to_int(candidate_metrics.get("priority"), 0)
+                if (
+                    _preferred_symbol_filter_enabled()
+                    and preferred_priority_floor is not None
+                    and candidate_priority < preferred_priority_floor
+                    and not disable_strategy_gates
+                ):
+                    record_attempt(
+                        "PLACEMENT_SKIPPED",
+                        symbol=candidate_symbol,
+                        metrics=candidate_metrics,
+                        final_reason="below_preferred_symbol_priority_floor",
+                        placed=False,
+                    )
+                    paper_results.append({
+                        "attempted": False,
+                        "placed": False,
+                        "reason": "below_preferred_symbol_priority_floor",
+                        "symbol": candidate_symbol,
+                        "priority": candidate_priority,
+                        "required_priority": preferred_priority_floor,
+                    })
+                    skipped_symbols.append(candidate_symbol)
+                    skip_reasons.append(f"{candidate_symbol}:below_preferred_symbol_priority_floor")
+                    continue
 
                 existing_open_trade = get_latest_open_paper_trade_for_symbol(candidate_symbol)
                 if existing_open_trade is not None:
@@ -1252,6 +1348,53 @@ def execute_full_scan(
                     paper_metrics["current_open_positions"] = current_open_positions
                     paper_metrics["current_open_exposure"] = current_open_exposure
                     candidate_symbol = str(paper_metrics.get("symbol", "")).strip().upper()
+
+                    refreshed_confidence = _to_float(paper_metrics.get("final_confidence"), 0.0)
+                    if mode_confidence_floor is not None and refreshed_confidence < mode_confidence_floor and not disable_strategy_gates:
+                        record_attempt(
+                            "PLACEMENT_SKIPPED",
+                            symbol=candidate_symbol,
+                            metrics=paper_metrics,
+                            final_reason="below_mode_placement_confidence_floor_after_refresh",
+                            placed=False,
+                        )
+                        paper_results.append({
+                            "attempted": False,
+                            "placed": False,
+                            "reason": "below_mode_placement_confidence_floor_after_refresh",
+                            "symbol": candidate_symbol,
+                            "confidence": refreshed_confidence,
+                            "required_confidence": mode_confidence_floor,
+                        })
+                        skipped_symbols.append(candidate_symbol)
+                        skip_reasons.append(f"{candidate_symbol}:below_mode_placement_confidence_floor_after_refresh")
+                        continue
+
+                    refreshed_priority = _to_int(paper_metrics.get("priority"), 0)
+                    if (
+                        _preferred_symbol_filter_enabled()
+                        and preferred_priority_floor is not None
+                        and refreshed_priority < preferred_priority_floor
+                        and not disable_strategy_gates
+                    ):
+                        record_attempt(
+                            "PLACEMENT_SKIPPED",
+                            symbol=candidate_symbol,
+                            metrics=paper_metrics,
+                            final_reason="below_preferred_symbol_priority_floor_after_refresh",
+                            placed=False,
+                        )
+                        paper_results.append({
+                            "attempted": False,
+                            "placed": False,
+                            "reason": "below_preferred_symbol_priority_floor_after_refresh",
+                            "symbol": candidate_symbol,
+                            "priority": refreshed_priority,
+                            "required_priority": preferred_priority_floor,
+                        })
+                        skipped_symbols.append(candidate_symbol)
+                        skip_reasons.append(f"{candidate_symbol}:below_preferred_symbol_priority_floor_after_refresh")
+                        continue
 
                     _apply_confidence_loss_sizing(
                         paper_metrics,

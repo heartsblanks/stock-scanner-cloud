@@ -208,6 +208,37 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
         self.assertTrue(result["checks"]["atr_noise_filter"])
         self.assertGreater(result["metrics"]["stop_to_atr_ratio"], result["metrics"]["min_stop_to_atr_ratio"])
 
+    def test_primary_mode_uses_stricter_confidence_floor_and_priority_cap(self):
+        info = {"symbol": "RIVN", "type": "stock", "priority": 7, "market": "NASDAQ", "mode": "primary"}
+        candles = build_valid_breakout_candles()
+        candles.append(
+            {
+                "datetime": "2026-04-01 09:45:00",
+                "open": 100.20,
+                "high": 100.65,
+                "low": 98.50,
+                "close": 100.55,
+            }
+        )
+
+        with patch.dict(os.environ, {"ENABLE_LATE_SESSION_HARD_BLOCK": "false"}, clear=False):
+            with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 10, 15, tzinfo=NY_TZ)):
+                result = evaluate_symbol(
+                    name="Rivian",
+                    info=info,
+                    candles=candles,
+                    account_size=100000.0,
+                    benchmark_directions={"NASDAQ": "BUY"},
+                    current_open_positions=0,
+                    current_open_exposure=0.0,
+                )
+
+        self.assertEqual(result["decision"], "REJECTED")
+        self.assertEqual(result["final_reason"], "Final confidence below threshold.")
+        self.assertEqual(result["metrics"]["mode_confidence_floor"], 95)
+        self.assertEqual(result["metrics"]["required_confidence"], 95)
+        self.assertEqual(result["metrics"]["confidence_quality_cap"], 94)
+
     def test_rejects_trade_when_stop_is_too_tight_for_recent_atr(self):
         info = {"symbol": "PLUG", "type": "stock", "priority": 9, "market": "SP500"}
         candles = build_valid_breakout_candles()

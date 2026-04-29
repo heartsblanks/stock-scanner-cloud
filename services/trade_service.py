@@ -329,11 +329,12 @@ def execute_close_all_paper_positions(
 
         if close_position_closed and not close_filled:
             if broker_name == "IBKR":
-                filled_qty_value = to_float_or_none(close_filled_qty)
-                if filled_qty_value and filled_qty_value > 0 and current_price not in (None, "", "None"):
+                if current_price not in (None, "", "None"):
                     close_filled = True
                     if not close_filled_avg_price:
                         close_filled_avg_price = str(current_price).strip()
+                    if not str(close_filled_qty or "").strip():
+                        close_filled_qty = str(qty or "").strip()
                     log_warning(
                         "Paper EOD close inferred exit price after broker confirmed flat position",
                         component="trade_service",
