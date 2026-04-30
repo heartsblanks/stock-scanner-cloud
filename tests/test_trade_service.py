@@ -180,7 +180,7 @@ class TradeServiceTests(unittest.TestCase):
                 "id": order_id,
                 "status": "filled",
                 "filled_qty": 7,
-                "filled_avg_price": "34.02",
+                "avg_fill_price": "34.02",
                 "filled_at": "2026-04-23T19:55:58+00:00",
             },
             safe_insert_broker_order=lambda **kwargs: None,
@@ -197,7 +197,10 @@ class TradeServiceTests(unittest.TestCase):
         self.assertEqual(result["results"][0]["close_order_id"], "810")
         self.assertEqual(captured_lifecycle["status"], "CLOSED")
         self.assertEqual(captured_lifecycle["exit_order_id"], "810")
+        self.assertEqual(captured_lifecycle["exit_price"], 34.02)
+        self.assertEqual(captured_lifecycle["realized_pnl"], -2.03)
         self.assertEqual(inserted_events[0]["event_type"], "EOD_CLOSE")
+        self.assertEqual(inserted_events[0]["price"], 34.02)
 
     def test_ibkr_eod_close_does_not_count_unresolved_order_as_closed(self):
         captured_lifecycle = {}

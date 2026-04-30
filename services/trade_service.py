@@ -261,6 +261,8 @@ def execute_close_all_paper_positions(
                 close_filled = close_order_status.lower() == "filled"
 
                 close_filled_avg_price_raw = close_order.get("filled_avg_price", "")
+                if close_filled_avg_price_raw in (None, ""):
+                    close_filled_avg_price_raw = close_order.get("avg_fill_price", "")
                 if close_filled_avg_price_raw not in (None, ""):
                     close_filled_avg_price = str(close_filled_avg_price_raw).strip()
                     close_filled = True
@@ -307,7 +309,9 @@ def execute_close_all_paper_positions(
 
                 polled_status = str(polled_order.get("status", close_order_status)).strip()
                 polled_filled_qty = str(polled_order.get("filled_qty", close_filled_qty)).strip()
-                polled_avg_fill = polled_order.get("filled_avg_price", close_filled_avg_price)
+                polled_avg_fill = polled_order.get("filled_avg_price", "")
+                if polled_avg_fill in (None, ""):
+                    polled_avg_fill = polled_order.get("avg_fill_price", close_filled_avg_price)
                 if polled_avg_fill not in (None, ""):
                     close_filled_avg_price = str(polled_avg_fill).strip()
 
