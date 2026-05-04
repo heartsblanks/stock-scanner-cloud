@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import math
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -133,6 +134,9 @@ def _time_stop_progress_to_target(
     target_price = to_float_or_none(open_row.get("target_price", ""))
     current_price = None
     if position is not None:
+        current_price_source = str(position.get("current_price_source", "") or "").strip().lower()
+        if current_price_source == "avg_entry_fallback":
+            return None, None
         current_price = (
             to_float_or_none(position.get("current_price", ""))
             or to_float_or_none(position.get("market_price", ""))
@@ -164,19 +168,33 @@ def _time_stop_progress_to_target(
     return favorable_move / target_move, current_price
 
 
+def _positive_float_value(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed) or parsed <= 0:
+        return None
+    return parsed
+
+
+def _time_stop_close_fill_price(close_response: dict[str, Any]) -> float | None:
+    for key in ("filled_avg_price", "avg_fill_price", "exit_price", "last_fill_price"):
+        parsed = _positive_float_value(close_response.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
 def _build_time_stop_sync_result(
     *,
     open_row: dict[str, Any],
     close_response: dict[str, Any],
-    current_price: float,
     parent_order_id: str,
 ) -> dict[str, Any]:
-    exit_price = (
-        close_response.get("filled_avg_price")
-        or close_response.get("avg_fill_price")
-        or close_response.get("exit_price")
-        or current_price
-    )
+    exit_price = _time_stop_close_fill_price(close_response)
+    if exit_price is None:
+        raise RuntimeError("time stop close response did not include a confirmed fill price")
     exit_order_id = str(
         close_response.get("order_id")
         or close_response.get("close_order_id")
@@ -196,8 +214,8 @@ def _build_time_stop_sync_result(
         "exit_status": str(close_response.get("status", "") or "filled"),
         "exit_order_id": exit_order_id,
         "exit_filled_qty": str(close_response.get("filled_qty", "") or open_row.get("shares", "")),
-        "exit_filled_avg_price": str(exit_price),
-        "exit_price": str(exit_price),
+        "exit_filled_avg_price": str(round(exit_price, 6)),
+        "exit_price": str(round(exit_price, 6)),
         "exit_filled_at": str(close_response.get("filled_at", "") or timestamp_utc),
         "updated_at": timestamp_utc,
     }
@@ -1717,17 +1735,12 @@ def execute_sync_paper_trades(
                             close_failed = bool(close_response.get("ok") is False)
                             close_status = str(close_response.get("status", "") or "").strip().lower()
                             position_closed = bool(close_response.get("position_closed"))
-                            exit_price_available = (
-                                close_response.get("filled_avg_price") not in (None, "")
-                                or close_response.get("avg_fill_price") not in (None, "")
-                                or close_response.get("exit_price") not in (None, "")
-                                or current_price is not None
-                            )
+                            close_fill_price = _time_stop_close_fill_price(close_response)
+                            exit_price_available = close_fill_price is not None
                             if not close_failed and close_status not in {"rejected", "cancelled", "canceled", "inactive"} and exit_price_available:
                                 sync_result = _build_time_stop_sync_result(
                                     open_row=open_row,
                                     close_response=close_response,
-                                    current_price=current_price,
                                     parent_order_id=parent_order_id,
                                 )
                                 exit_event = "TIME_STOP"

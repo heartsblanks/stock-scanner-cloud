@@ -497,7 +497,7 @@ class IbkrConnectorTests(unittest.TestCase):
         self.assertEqual(result["exit_reason"], "BROKER_FILLED_EXIT")
         self.assertEqual(result["exit_realized_pnl"], -47.84)
 
-    def test_get_positions_skips_ticker_enrichment_by_default(self):
+    def test_get_positions_skips_ticker_enrichment_when_disabled(self):
         fake_ib = _FakeIbForPositions([
             _FakePositionRow(symbol="NVDA", qty=52, avg_cost=189.60923075, con_id=4815747),
         ])
@@ -506,12 +506,36 @@ class IbkrConnectorTests(unittest.TestCase):
         client._disconnect_ib = lambda ib: None
         client.config = type("Cfg", (), {"account_id": "", "host": "127.0.0.1", "port": 4002, "client_id": 101, "inspection_client_id": 1101, "readonly": False})()
 
-        with patch.dict(os.environ, {}, clear=False):
+        with patch.dict(os.environ, {"IBKR_ENRICH_POSITIONS_WITH_TICKERS": "false"}, clear=False):
             result = client.get_positions()
 
         self.assertEqual(fake_ib.req_tickers_calls, 0)
         self.assertEqual(result[0]["symbol"], "NVDA")
         self.assertEqual(result[0]["current_price"], 189.6092)
+        self.assertEqual(result[0]["current_price_source"], "avg_entry_fallback")
+
+    def test_order_status_snapshot_uses_execution_fill_when_status_avg_is_missing(self):
+        client = IbkrGatewayClient.__new__(IbkrGatewayClient)
+        trade = _FakeCloseTrade(symbol="NVDA", order_id=65, status="Submitted", filled=0.0, remaining=0.0)
+        trade.fills = [
+            _FakeFill(
+                symbol="NVDA",
+                execution=_FakeExecution(
+                    order_id=65,
+                    order_ref="scanner-close-NVDA",
+                    price=188.42,
+                    shares=52,
+                    avg_price=188.42,
+                    side="SLD",
+                ),
+            )
+        ]
+
+        snapshot = client._order_status_snapshot(trade)
+
+        self.assertEqual(snapshot["filled_qty"], 52)
+        self.assertEqual(snapshot["avg_fill_price"], 188.42)
+        self.assertEqual(snapshot["last_fill_price"], 188.42)
 
     def test_close_position_marks_unresolved_when_position_stays_open(self):
         client = IbkrGatewayClient.__new__(IbkrGatewayClient)

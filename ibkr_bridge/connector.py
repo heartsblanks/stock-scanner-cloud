@@ -291,6 +291,9 @@ class IbkrGatewayClient:
         fills = list(getattr(trade, "fills", []) or [])
         latest_fill = fills[-1] if fills else None
         execution = getattr(latest_fill, "execution", None)
+        execution_qty = _to_float(getattr(execution, "shares", 0.0))
+        execution_avg_price = _to_float(getattr(execution, "avgPrice", 0.0))
+        execution_price = _to_float(getattr(execution, "price", 0.0))
         execution_time = getattr(execution, "time", None)
         if hasattr(execution_time, "isoformat"):
             filled_at = execution_time.isoformat()
@@ -298,14 +301,19 @@ class IbkrGatewayClient:
             filled_at = str(execution_time)
         else:
             filled_at = ""
+        status_filled_qty = _to_float(getattr(order_status, "filled", 0.0))
+        status_avg_fill_price = _to_float(getattr(order_status, "avgFillPrice", 0.0))
+        status_last_fill_price = _to_float(getattr(order_status, "lastFillPrice", 0.0))
+        resolved_last_fill_price = status_last_fill_price or execution_price or execution_avg_price
+        resolved_avg_fill_price = status_avg_fill_price or execution_avg_price or execution_price or status_last_fill_price
         return {
             "order_id": str(getattr(order, "orderId", "")).strip(),
             "status": str(getattr(order_status, "status", "")).strip(),
             "perm_id": _to_float(getattr(order_status, "permId", 0.0)),
-            "filled_qty": _to_float(getattr(order_status, "filled", 0.0)),
+            "filled_qty": status_filled_qty or execution_qty,
             "remaining_qty": _to_float(getattr(order_status, "remaining", 0.0)),
-            "avg_fill_price": _to_float(getattr(order_status, "avgFillPrice", 0.0)),
-            "last_fill_price": _to_float(getattr(order_status, "lastFillPrice", 0.0)),
+            "avg_fill_price": resolved_avg_fill_price,
+            "last_fill_price": resolved_last_fill_price,
             "why_held": str(getattr(order_status, "whyHeld", "")).strip(),
             "filled_at": filled_at,
         }
@@ -369,7 +377,7 @@ class IbkrGatewayClient:
         return ib, account_id, summary
 
     def _position_market_data_enrichment_enabled(self) -> bool:
-        return _truthy_env("IBKR_ENRICH_POSITIONS_WITH_TICKERS", False)
+        return _truthy_env("IBKR_ENRICH_POSITIONS_WITH_TICKERS", True)
 
     def health_snapshot(self) -> dict[str, Any]:
         snapshot = {
@@ -452,7 +460,8 @@ class IbkrGatewayClient:
                     current_price = ticker.marketPrice()
                 except Exception:
                     current_price = None
-            current_price_value = _to_float(current_price, avg_entry_price)
+            current_price_from_market_data = _to_float_or_none(current_price)
+            current_price_value = current_price_from_market_data if current_price_from_market_data is not None else avg_entry_price
             market_value = qty * current_price_value
             unrealized_pl = (current_price_value - avg_entry_price) * qty
 
@@ -464,6 +473,7 @@ class IbkrGatewayClient:
                 "side": "long" if qty >= 0 else "short",
                 "avg_entry_price": round(avg_entry_price, 4),
                 "current_price": round(current_price_value, 4),
+                "current_price_source": "market_data" if current_price_from_market_data is not None else "avg_entry_fallback",
                 "market_value": round(market_value, 2),
                 "unrealized_pl": round(unrealized_pl, 2),
                 "account_id": str(getattr(row, "account", "")).strip(),

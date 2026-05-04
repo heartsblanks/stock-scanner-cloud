@@ -177,7 +177,7 @@ class SyncServiceTests(unittest.TestCase):
                 "status": "Submitted",
                 "position_closed": True,
                 "filled_qty": "",
-                "filled_avg_price": "",
+                "filled_avg_price": "100.10",
             },
         )
 
@@ -189,6 +189,59 @@ class SyncServiceTests(unittest.TestCase):
         self.assertEqual(captured_lifecycles[-1]["exit_reason"], "TIME_STOP")
         self.assertAlmostEqual(captured_lifecycles[-1]["exit_price"], 100.10, places=2)
         self.assertAlmostEqual(captured_lifecycles[-1]["realized_pnl"], 1.0, places=2)
+
+    def test_ibkr_time_stop_does_not_finalize_without_confirmed_fill_price(self):
+        captured_lifecycles = []
+
+        result = execute_sync_paper_trades(
+            get_open_paper_trades=lambda: [
+                {
+                    "timestamp_utc": "2026-04-21T14:35:03+00:00",
+                    "symbol": "RIVN",
+                    "mode": "primary",
+                    "side": "BUY",
+                    "shares": "10",
+                    "entry_price": "100.00",
+                    "stop_price": "99.00",
+                    "target_price": "102.00",
+                    "broker_order_id": "815",
+                    "broker_parent_order_id": "815",
+                    "broker": "IBKR",
+                }
+            ],
+            sync_order_by_id_for_broker=lambda broker, parent_id: {
+                "id": parent_id,
+                "status": "submitted",
+                "parent_status": "Submitted",
+            },
+            paper_trade_exit_already_logged=lambda parent_order_id, exit_event: False,
+            append_trade_log=lambda row: None,
+            safe_insert_trade_event=lambda **kwargs: None,
+            safe_insert_broker_order=lambda **kwargs: None,
+            upsert_trade_lifecycle=lambda **kwargs: captured_lifecycles.append(kwargs),
+            parse_iso_utc=parse_iso_utc,
+            to_float_or_none=to_float_or_none,
+            get_open_state_for_broker=lambda broker: {
+                "positions": [{"symbol": "RIVN", "qty": 10, "side": "long", "current_price": "100.10"}],
+                "orders": [],
+            },
+            close_position_for_broker=lambda broker, symbol: {
+                "ok": True,
+                "order_id": "900",
+                "status": "Submitted",
+                "position_closed": True,
+                "filled_qty": "",
+                "filled_avg_price": "",
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["synced_count"], 0)
+        self.assertEqual(result["results"][-1]["reason"], "time_stop_close_requested")
+        self.assertEqual(captured_lifecycles[-1]["status"], "CLOSED")
+        self.assertEqual(captured_lifecycles[-1]["exit_reason"], "TIME_STOP_CLOSE_REQUESTED_PENDING_FILL_SYNC")
+        self.assertIsNone(captured_lifecycles[-1]["exit_price"])
+        self.assertIsNone(captured_lifecycles[-1]["realized_pnl"])
 
     def test_sync_close_prefers_broker_entry_fill_price_for_pnl(self):
         captured_lifecycle = {}
