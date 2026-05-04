@@ -68,6 +68,49 @@ class IbkrStaleRepairTests(unittest.TestCase):
         self.assertEqual(candidates[0].exit_reason, "BROKER_FILLED_EXIT_REPAIRED")
         self.assertEqual(candidates[0].source, "execution_pair")
 
+    def test_build_repair_candidates_matches_scanner_close_exit_order_id(self):
+        lines = [
+            "May 04 17:58:00 ibkr-bridge-vm python[31564]: execDetails Execution(execId='entry-1', time=datetime.datetime(2026, 5, 4, 15, 6, 8, tzinfo=datetime.timezone.utc), acctNumber='DUP742133', exchange='BYX', side='BOT', shares=22.0, price=11.01, permId=576258107, clientId=101, orderId=835, liquidation=0, cumQty=22.0, avgPrice=11.01, orderRef='scanner-CRNC-BUY-109600-22', evRule='', evMultiplier=0.0, modelCode='', lastLiquidity=2)",
+            "May 04 17:58:00 ibkr-bridge-vm python[31564]: execDetails Execution(execId='exit-1', time=datetime.datetime(2026, 5, 4, 15, 55, 19, tzinfo=datetime.timezone.utc), acctNumber='DUP742133', exchange='BYX', side='SLD', shares=22.0, price=10.98, permId=576258109, clientId=101, orderId=845, liquidation=0, cumQty=22.0, avgPrice=10.98, orderRef='scanner-close-CRNC', evRule='', evMultiplier=0.0, modelCode='', lastLiquidity=2)",
+            "May 04 17:58:00 ibkr-bridge-vm python[31564]: commissionReport: CommissionReport(execId='exit-1', commission=1.0, currency='USD', realizedPNL=-0.66, yield_=0.0, yieldRedemptionDate=0)",
+        ]
+        executions, portfolios = parse_vm_journal(lines, year=2026)
+        row = LifecycleRow(
+            trade_key="IBKR:CRNC:835",
+            symbol="CRNC",
+            mode="sixth",
+            side="BUY",
+            direction="LONG",
+            status="CLOSED",
+            entry_time=datetime(2026, 5, 4, 15, 6, 8, tzinfo=UTC),
+            entry_price=11.01,
+            exit_time=datetime(2026, 5, 4, 15, 55, 19, tzinfo=UTC),
+            exit_price=11.0555,
+            stop_price=10.4595,
+            target_price=11.961,
+            exit_reason="TIME_STOP",
+            shares=22.0,
+            realized_pnl=1.001,
+            realized_pnl_percent=0.413261,
+            signal_timestamp=None,
+            signal_entry=None,
+            signal_stop=None,
+            signal_target=None,
+            signal_confidence=None,
+            broker="IBKR",
+            order_id="835",
+            parent_order_id="835",
+            exit_order_id="845",
+        )
+
+        candidates = build_repair_candidates([row], executions, portfolios)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].exit_order_id, "845")
+        self.assertEqual(candidates[0].exit_price, 10.98)
+        self.assertAlmostEqual(candidates[0].realized_pnl, -0.66, places=6)
+        self.assertEqual(candidates[0].source, "execution_pair")
+
     def test_build_repair_candidates_falls_back_to_portfolio_snapshot(self):
         lines = [
             "Apr 10 17:58:00 ibkr-bridge-vm python[31564]: updatePortfolio: PortfolioItem(contract=Stock(conId=332794741, symbol='NIO', right='0', primaryExchange='NYSE', currency='USD', localSymbol='NIO', tradingClass='NIO'), position=0.0, marketPrice=6.44000005, marketValue=0.0, averageCost=0.0, unrealizedPNL=0.0, realizedPNL=-97.24, account='DUP742133')",

@@ -42,6 +42,7 @@ EXEC_ORDER_ID_RE = re.compile(r"orderId=(?P<value>-?\d+)")
 EXEC_AVG_PRICE_RE = re.compile(r"avgPrice=(?P<value>-?\d+(?:\.\d+)?)")
 EXEC_ORDER_REF_RE = re.compile(r"orderRef='(?P<value>[^']*)'")
 ORDER_REF_SYMBOL_RE = re.compile(r"scanner-(?P<symbol>[A-Z.]+)-(BUY|SELL)-")
+SCANNER_CLOSE_ORDER_REF_SYMBOL_RE = re.compile(r"scanner-close-(?P<symbol>[A-Z.]+)")
 
 MONTHS = {
     "Jan": 1,
@@ -174,6 +175,7 @@ def _parse_execution_line(line: str) -> ExecutionRecord | None:
     order_ref_match = EXEC_ORDER_REF_RE.search(line)
     symbol_match = SYMBOL_RE.search(line)
     order_ref_symbol_match = ORDER_REF_SYMBOL_RE.search(line)
+    scanner_close_symbol_match = SCANNER_CLOSE_ORDER_REF_SYMBOL_RE.search(line)
     if not all(
         [
             exec_id_match,
@@ -193,6 +195,8 @@ def _parse_execution_line(line: str) -> ExecutionRecord | None:
         symbol = symbol_match.group("symbol").upper()
     elif order_ref_symbol_match is not None:
         symbol = order_ref_symbol_match.group("symbol").upper()
+    elif scanner_close_symbol_match is not None:
+        symbol = scanner_close_symbol_match.group("symbol").upper()
     if not symbol:
         return None
     timestamp = datetime(
@@ -278,7 +282,22 @@ def _fetch_stale_ibkr_rows(symbols: list[str] | None = None) -> list[LifecycleRo
     where = [
         "UPPER(COALESCE(broker, '')) = 'IBKR'",
         "UPPER(COALESCE(status, '')) = 'CLOSED'",
-        "COALESCE(exit_reason, '') = 'STALE_OPEN_RECONCILED'",
+        """(
+            COALESCE(exit_reason, '') = 'STALE_OPEN_RECONCILED'
+            OR (
+                UPPER(COALESCE(exit_reason, '')) = 'TIME_STOP'
+                AND realized_pnl IS NOT NULL
+                AND ABS(ABS(realized_pnl) - 1.0) <= 0.05
+                AND entry_price IS NOT NULL
+                AND exit_price IS NOT NULL
+                AND shares IS NOT NULL
+                AND shares > 0
+                AND ABS(
+                    ABS((COALESCE(exit_price, 0) - COALESCE(entry_price, 0)) * COALESCE(shares, 0))
+                    - ABS(realized_pnl)
+                ) <= 0.05
+            )
+        )""",
     ]
     params: dict[str, object] = {}
     if symbols:
@@ -342,12 +361,21 @@ def _execution_pair_candidate(row: LifecycleRow, executions: list[ExecutionRecor
         return None
 
     exit_side = _expected_exit_side(row)
+    expected_exit_order_id = _normalize_text(row.exit_order_id)
     related = [
         execution
         for execution in executions
         if execution.symbol == row.symbol
-        and execution.order_ref
-        and execution.order_ref == entry_execution.order_ref
+        and (
+            (
+                execution.order_ref
+                and execution.order_ref == entry_execution.order_ref
+            )
+            or (
+                expected_exit_order_id
+                and execution.order_id == expected_exit_order_id
+            )
+        )
         and execution.side == exit_side
         and execution.timestamp >= entry_execution.timestamp
         and execution.order_id != entry_execution.order_id
