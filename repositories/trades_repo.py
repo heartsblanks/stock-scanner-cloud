@@ -522,7 +522,7 @@ def get_stale_ibkr_closed_trade_lifecycles(*, target_date: Optional[str] = None,
     params: dict[str, Any] = {"limit": limit}
     date_clause = ""
     if target_date:
-        date_clause = "AND exit_time::date = %(target_date)s::date"
+        date_clause = "AND COALESCE(exit_time, entry_time, created_at, updated_at)::date = %(target_date)s::date"
         params["target_date"] = target_date
     return fetch_all(
         f"""
