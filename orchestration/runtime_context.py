@@ -1,6 +1,8 @@
 import os
 import time
+from datetime import datetime, time as datetime_time
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from brokers import get_paper_broker, get_paper_broker_config
 from brokers.ibkr_adapter import IbkrPaperBroker
@@ -22,6 +24,7 @@ IBKR_PAPER_TRADE_MIN_CONFIDENCE = int(
 )
 IBKR_MODE_RANKING_WINDOW_DAYS = max(1, int(os.getenv("IBKR_MODE_RANKING_WINDOW_DAYS", "5")))
 IBKR_MODE_RANKING_MIN_CLOSED_TRADES = max(1, int(os.getenv("IBKR_MODE_RANKING_MIN_CLOSED_TRADES", "2")))
+NY_TZ = ZoneInfo("America/New_York")
 
 PAPER_BROKER = get_paper_broker()
 PAPER_BROKER_CONFIG = get_paper_broker_config()
@@ -104,6 +107,80 @@ def get_open_positions_for_broker_name(broker_name: str) -> list[dict[str, Any]]
 def get_open_orders_for_broker_name(broker_name: str) -> list[dict[str, Any]]:
     broker = _broker_instance_by_name(broker_name)
     return broker.get_open_orders()
+
+
+def _truthy_env(name: str, default: bool = False) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return str(raw_value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _ibkr_intraday_max_staleness_minutes() -> float:
+    try:
+        return max(0.0, float(os.getenv("IBKR_INTRADAY_MAX_STALENESS_MINUTES", "25")))
+    except Exception:
+        return 25.0
+
+
+def _parse_ibkr_bar_datetime(value: Any) -> datetime | None:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y%m%d %H:%M:%S"):
+        try:
+            parsed = datetime.strptime(raw_value, fmt)
+            return parsed.replace(tzinfo=NY_TZ)
+        except Exception:
+            pass
+    try:
+        parsed = datetime.fromisoformat(raw_value)
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=NY_TZ)
+    return parsed.astimezone(NY_TZ)
+
+
+def _is_regular_market_hours_ny(now_ny: datetime) -> bool:
+    if now_ny.weekday() >= 5:
+        return False
+    current_time = now_ny.time()
+    return datetime_time(9, 30) <= current_time <= datetime_time(16, 0)
+
+
+def _validate_ibkr_intraday_freshness(
+    candles: list[dict],
+    *,
+    symbol: str,
+    interval: str,
+    now_ny: datetime | None = None,
+) -> list[dict]:
+    if not _truthy_env("IBKR_INTRADAY_FRESHNESS_CHECK_ENABLED", True):
+        return candles
+    if not candles:
+        return candles
+
+    now_ny = (now_ny or datetime.now(NY_TZ)).astimezone(NY_TZ)
+    if not _is_regular_market_hours_ny(now_ny):
+        return candles
+
+    last_bar_raw = candles[-1].get("datetime")
+    last_bar_ny = _parse_ibkr_bar_datetime(last_bar_raw)
+    if last_bar_ny is None:
+        raise RuntimeError(f"IBKR intraday candles for {symbol} have an unparseable last bar timestamp: {last_bar_raw}")
+
+    max_staleness_minutes = _ibkr_intraday_max_staleness_minutes()
+    staleness_minutes = (now_ny - last_bar_ny).total_seconds() / 60.0
+    if last_bar_ny.date() != now_ny.date() or staleness_minutes > max_staleness_minutes:
+        raise RuntimeError(
+            "IBKR intraday candles are stale: "
+            f"symbol={symbol}, interval={interval}, last_bar={last_bar_raw}, "
+            f"now_ny={now_ny.strftime('%Y-%m-%d %H:%M:%S')}, "
+            f"staleness_minutes={round(staleness_minutes, 2)}, "
+            f"max_staleness_minutes={max_staleness_minutes}"
+        )
+    return candles
 
 
 def get_open_state_for_broker_name(broker_name: str) -> dict[str, Any]:
@@ -422,6 +499,11 @@ def fetch_ibkr_intraday(
                 what_to_show="TRADES",
                 use_rth=True,
             )
+        candles = _validate_ibkr_intraday_freshness(
+            candles,
+            symbol=symbol,
+            interval=interval,
+        )
         log_info(
             "IBKR intraday fetch completed",
             component="runtime_context",
