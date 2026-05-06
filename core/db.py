@@ -144,8 +144,10 @@ def fetch_recent_closed_trades_for_symbol(symbol: str, limit: int = 5) -> list[d
     query = """
         SELECT
             symbol,
+            entry_time,
             exit_time,
-            realized_pnl
+            realized_pnl,
+            realized_pnl_percent
         FROM trade_lifecycles
         WHERE symbol = %s
           AND status = 'CLOSED'

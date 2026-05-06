@@ -87,10 +87,12 @@ def handle_scan_request(
             risk_summary = get_risk_exposure_summary()
             scan_payload.setdefault("daily_realized_pnl", risk_summary.get("daily_realized_pnl", 0.0))
             scan_payload.setdefault("daily_unrealized_pnl", risk_summary.get("daily_unrealized_pnl", 0.0))
+            scan_payload.setdefault("daily_closed_loss_count", risk_summary.get("daily_closed_loss_count", 0))
         except Exception as exc:
             log_exception("Failed to inject risk summary into scan payload", exc, component="app_orchestration", operation="handle_scan_request")
             scan_payload.setdefault("daily_realized_pnl", 0.0)
             scan_payload.setdefault("daily_unrealized_pnl", 0.0)
+            scan_payload.setdefault("daily_closed_loss_count", 0)
 
     return execute_full_scan(
         scan_payload,

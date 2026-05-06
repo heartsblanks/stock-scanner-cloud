@@ -150,10 +150,13 @@ def _mode_placement_confidence_floor(mode: str) -> int | None:
     floors = _parse_mode_int_map(
         os.getenv("PAPER_MODE_PLACEMENT_CONFIDENCE_FLOORS", ""),
         {
-            "primary": 95,
-            "secondary": 95,
-            "fourth": 96,
-            "fifth": 95,
+            "primary": 100,
+            "secondary": 101,
+            "fourth": 101,
+            "fifth": 101,
+            "core_one": 104,
+            "core_two": 103,
+            "core_three": 102,
         },
     )
     return floors.get(str(mode or "").strip().lower())
@@ -163,10 +166,13 @@ def _preferred_symbol_priority_floor_for_mode(mode: str) -> int | None:
     floors = _parse_mode_int_map(
         os.getenv("PAPER_PREFERRED_SYMBOL_MIN_PRIORITY_BY_MODE", ""),
         {
-            "primary": 8,
+            "primary": 9,
             "secondary": 7,
             "fourth": 7,
             "fifth": 8,
+            "core_one": 9,
+            "core_two": 8,
+            "core_three": 8,
         },
     )
     return floors.get(str(mode or "").strip().lower())
@@ -175,6 +181,88 @@ def _preferred_symbol_priority_floor_for_mode(mode: str) -> int | None:
 def _preferred_symbol_filter_enabled() -> bool:
     value = str(os.getenv("PAPER_PREFERRED_SYMBOL_MODE_FILTER_ENABLED", "true")).strip().lower()
     return value in {"1", "true", "yes", "on"}
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = str(os.getenv(name, str(default))).strip().lower()
+    return value in {"1", "true", "yes", "y", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    value = _to_float(os.getenv(name), default)
+    return value if value >= 0 else default
+
+
+def _env_int(name: str, default: int) -> int:
+    value = _to_int(os.getenv(name), default)
+    return value if value >= 0 else default
+
+
+def _parse_csv_set(raw_value: str, default: set[str]) -> set[str]:
+    raw_text = str(raw_value or "").strip()
+    if not raw_text:
+        return set(default)
+    return {
+        item.strip().lower()
+        for item in raw_text.split(",")
+        if item.strip()
+    }
+
+
+def _alert_only_modes() -> set[str]:
+    return _parse_csv_set(os.getenv("PAPER_ALERT_ONLY_MODES", ""), set())
+
+
+def _is_alert_only_mode(mode: str) -> bool:
+    return str(mode or "").strip().lower() in _alert_only_modes()
+
+
+def _estimated_round_trip_fee_dollars() -> float:
+    return _env_float("PAPER_ESTIMATED_ROUND_TRIP_FEE_DOLLARS", 2.25)
+
+
+def _min_gross_target_profit_dollars() -> float:
+    return _env_float("PAPER_MIN_GROSS_TARGET_PROFIT_DOLLARS", 8.0)
+
+
+def _min_net_target_profit_dollars() -> float:
+    return _env_float("PAPER_MIN_NET_TARGET_PROFIT_DOLLARS", 6.0)
+
+
+def _min_net_reward_risk() -> float:
+    return _env_float("PAPER_MIN_NET_REWARD_RISK", 1.8)
+
+
+def _low_price_alert_only_below() -> float:
+    return _env_float("PAPER_LOW_PRICE_ALERT_ONLY_BELOW", 5.0)
+
+
+def _low_price_strict_below() -> float:
+    return _env_float("PAPER_LOW_PRICE_STRICT_BELOW", 10.0)
+
+
+def _low_price_min_gross_target_profit_dollars() -> float:
+    return _env_float("PAPER_LOW_PRICE_MIN_GROSS_TARGET_PROFIT_DOLLARS", 10.0)
+
+
+def _low_price_min_confidence() -> float:
+    return _env_float("PAPER_LOW_PRICE_MIN_CONFIDENCE", 103.0)
+
+
+def _one_trade_per_symbol_per_day_enabled() -> bool:
+    return _env_bool("PAPER_ONE_TRADE_PER_SYMBOL_PER_DAY", True)
+
+
+def _loss_symbol_block_rest_of_day_enabled() -> bool:
+    return _env_bool("PAPER_LOSS_SYMBOL_BLOCK_REST_OF_DAY", True)
+
+
+def _max_closed_losses_per_day() -> int:
+    return _env_int("PAPER_MAX_CLOSED_LOSSES_PER_DAY", 3)
+
+
+def _max_daily_net_loss_dollars() -> float:
+    return _env_float("PAPER_MAX_DAILY_NET_LOSS_DOLLARS", 10.0)
 
 
 def _paper_trade_broker_name(paper_trade_result: dict[str, Any]) -> str:
@@ -589,6 +677,172 @@ def _requires_fractional_above_cap(metrics: dict[str, Any]) -> tuple[bool, str]:
     if entry_price > 0 and hard_cap > 0 and entry_price > hard_cap:
         return True, f"entry_price_above_whole_share_cap_{hard_cap:.2f}"
     return False, ""
+
+
+def _calculate_commission_adjusted_economics(metrics: dict[str, Any]) -> dict[str, float]:
+    entry = _to_float(metrics.get("entry"), 0.0)
+    stop = _to_float(metrics.get("stop"), 0.0)
+    target = _to_float(metrics.get("target"), 0.0)
+    shares = _to_float(metrics.get("shares"), 0.0)
+    fee_buffer = _estimated_round_trip_fee_dollars()
+
+    gross_target_profit = abs(target - entry) * shares if entry > 0 and target > 0 and shares > 0 else 0.0
+    gross_risk = abs(entry - stop) * shares if entry > 0 and stop > 0 and shares > 0 else 0.0
+    net_target_profit = gross_target_profit - fee_buffer
+    net_risk = gross_risk + fee_buffer
+    net_reward_risk = (net_target_profit / net_risk) if net_risk > 0 else 0.0
+
+    economics = {
+        "estimated_round_trip_fee": round(fee_buffer, 4),
+        "gross_target_profit": round(gross_target_profit, 4),
+        "gross_risk": round(gross_risk, 4),
+        "net_target_profit": round(net_target_profit, 4),
+        "net_risk": round(net_risk, 4),
+        "net_reward_risk": round(net_reward_risk, 4),
+    }
+    metrics.update(economics)
+    metrics["take_profit_dollars"] = economics["gross_target_profit"]
+    metrics["actual_risk"] = economics["gross_risk"]
+    return economics
+
+
+def _evaluate_low_price_quality(metrics: dict[str, Any]) -> tuple[bool, str, dict[str, float]]:
+    economics = _calculate_commission_adjusted_economics(metrics)
+    entry = _to_float(metrics.get("entry"), 0.0)
+    confidence = _to_float(metrics.get("final_confidence"), 0.0)
+    alert_only_below = _low_price_alert_only_below()
+    strict_below = _low_price_strict_below()
+    min_confidence = _low_price_min_confidence()
+    min_gross_target = _low_price_min_gross_target_profit_dollars()
+
+    details = {
+        **economics,
+        "entry": round(entry, 4),
+        "confidence": round(confidence, 4),
+        "low_price_alert_only_below": round(alert_only_below, 4),
+        "low_price_strict_below": round(strict_below, 4),
+        "low_price_min_confidence": round(min_confidence, 4),
+        "low_price_min_gross_target_profit": round(min_gross_target, 4),
+    }
+
+    if entry > 0 and alert_only_below > 0 and entry < alert_only_below:
+        return True, "low_price_alert_only", details
+
+    if entry > 0 and strict_below > 0 and entry < strict_below:
+        if confidence < min_confidence:
+            return True, "low_price_confidence_below_floor", details
+        if economics["gross_target_profit"] < min_gross_target:
+            return True, "low_price_target_profit_below_floor", details
+
+    return False, "", details
+
+
+def _evaluate_commission_adjusted_quality(metrics: dict[str, Any]) -> tuple[bool, str, dict[str, float]]:
+    economics = _calculate_commission_adjusted_economics(metrics)
+    min_gross_target = _min_gross_target_profit_dollars()
+    min_net_target = _min_net_target_profit_dollars()
+    min_net_rr = _min_net_reward_risk()
+    details = {
+        **economics,
+        "min_gross_target_profit": round(min_gross_target, 4),
+        "min_net_target_profit": round(min_net_target, 4),
+        "min_net_reward_risk": round(min_net_rr, 4),
+    }
+
+    if economics["gross_target_profit"] < min_gross_target:
+        return True, "target_profit_below_fee_adjusted_floor", details
+    if economics["net_target_profit"] < min_net_target:
+        return True, "net_target_profit_below_floor", details
+    if economics["net_reward_risk"] < min_net_rr:
+        return True, "net_reward_risk_below_floor", details
+    return False, "", details
+
+
+def _trade_timestamp_matches_today(trade: dict[str, Any], now_dt: Any, parse_iso_utc: Callable[[str], Any]) -> bool:
+    for key in ("exit_time", "entry_time", "timestamp_utc"):
+        raw_value = str(trade.get(key) or "").strip()
+        if not raw_value:
+            continue
+        try:
+            trade_dt = parse_iso_utc(raw_value)
+            if trade_dt.date() == now_dt.date():
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _evaluate_symbol_day_block(
+    recent_trades: list[dict[str, Any]],
+    *,
+    timestamp_utc: str,
+    parse_iso_utc: Callable[[str], Any],
+) -> tuple[bool, str, dict[str, Any]]:
+    if not (_one_trade_per_symbol_per_day_enabled() or _loss_symbol_block_rest_of_day_enabled()):
+        return False, "", {}
+
+    try:
+        now_dt = parse_iso_utc(timestamp_utc)
+    except Exception:
+        return False, "", {}
+
+    todays_trades = [
+        trade
+        for trade in (recent_trades or [])
+        if isinstance(trade, dict) and _trade_timestamp_matches_today(trade, now_dt, parse_iso_utc)
+    ]
+    if not todays_trades:
+        return False, "", {"todays_symbol_trade_count": 0}
+
+    losing_trades = [
+        trade
+        for trade in todays_trades
+        if _to_float(trade.get("realized_pnl"), 0.0) < 0
+    ]
+    details = {
+        "todays_symbol_trade_count": len(todays_trades),
+        "todays_symbol_loss_count": len(losing_trades),
+    }
+    if losing_trades and _loss_symbol_block_rest_of_day_enabled():
+        return True, "symbol_loss_blocked_rest_of_day", details
+    if _one_trade_per_symbol_per_day_enabled():
+        return True, "symbol_already_traded_today", details
+    return False, "", details
+
+
+def _daily_quality_guardrail_status(payload: dict[str, Any], account_size: float) -> dict[str, Any]:
+    daily_realized_pnl = _to_float(payload.get("daily_realized_pnl"), 0.0)
+    daily_unrealized_pnl = _to_float(payload.get("daily_unrealized_pnl"), 0.0)
+    combined_daily_pnl = daily_realized_pnl + daily_unrealized_pnl
+    daily_pnl_pct = (combined_daily_pnl / account_size) if account_size > 0 else 0.0
+    daily_closed_loss_count = _to_int(payload.get("daily_closed_loss_count"), 0)
+
+    max_daily_net_loss = _max_daily_net_loss_dollars()
+    max_closed_losses = _max_closed_losses_per_day()
+    blocked = False
+    reason = ""
+
+    if max_daily_net_loss > 0 and combined_daily_pnl <= -max_daily_net_loss:
+        blocked = True
+        reason = "daily_net_loss_guardrail_blocked"
+    elif max_closed_losses > 0 and daily_closed_loss_count >= max_closed_losses:
+        blocked = True
+        reason = "daily_closed_loss_guardrail_blocked"
+    elif daily_pnl_pct <= -0.02:
+        blocked = True
+        reason = "daily_loss_guardrail_blocked"
+
+    return {
+        "blocked": blocked,
+        "reason": reason,
+        "daily_realized_pnl": round(daily_realized_pnl, 4),
+        "daily_unrealized_pnl": round(daily_unrealized_pnl, 4),
+        "combined_daily_pnl": round(combined_daily_pnl, 4),
+        "daily_pnl_pct": daily_pnl_pct,
+        "daily_closed_loss_count": daily_closed_loss_count,
+        "max_daily_net_loss_dollars": max_daily_net_loss,
+        "max_closed_losses_per_day": max_closed_losses,
+    }
 
 
 def _apply_low_price_notional_cap(metrics: dict[str, Any]) -> None:
@@ -1052,24 +1306,14 @@ def execute_full_scan(
         },
     }
 
-    # --- Daily Risk Guardrail (block trading on drawdown) ---
-    # Expect optional payload fields from upstream (app layer):
-    # - daily_realized_pnl
-    # - daily_unrealized_pnl
-    # - account_size (already available)
-    try:
-        daily_realized_pnl = _to_float(payload.get("daily_realized_pnl"), 0.0)
-        daily_unrealized_pnl = _to_float(payload.get("daily_unrealized_pnl"), 0.0)
-        combined_daily_pnl = daily_realized_pnl + daily_unrealized_pnl
-        daily_pnl_pct = (combined_daily_pnl / account_size) if account_size > 0 else 0.0
-    except Exception:
-        combined_daily_pnl = 0.0
-        daily_pnl_pct = 0.0
-
-    # If drawdown exceeds -2%, block new placements
-    trading_blocked = daily_pnl_pct <= -0.02
-    response["daily_pnl_pct"] = round(daily_pnl_pct * 100.0, 2)
+    daily_guardrail = _daily_quality_guardrail_status(payload, account_size)
+    trading_blocked = bool(daily_guardrail["blocked"])
+    response["daily_realized_pnl"] = daily_guardrail["daily_realized_pnl"]
+    response["daily_unrealized_pnl"] = daily_guardrail["daily_unrealized_pnl"]
+    response["daily_closed_loss_count"] = daily_guardrail["daily_closed_loss_count"]
+    response["daily_pnl_pct"] = round(_to_float(daily_guardrail["daily_pnl_pct"], 0.0) * 100.0, 2)
     response["trading_blocked"] = trading_blocked
+    response["trading_block_reason"] = daily_guardrail["reason"]
 
     if debug:
         response["evaluations"] = [debug_to_dict(ev) for ev in evaluations]
@@ -1091,8 +1335,8 @@ def execute_full_scan(
         response["high_quality_long_signal_alert"] = high_quality_long_signal_alert
 
     if paper_trade:
-        # Enforce daily risk guardrail
         if trading_blocked:
+            guardrail_reason = str(daily_guardrail["reason"] or "daily_loss_guardrail_blocked")
             for candidate in paper_trade_candidates:
                 candidate_metrics = candidate.get("metrics") or {}
                 candidate_symbol = str(candidate_metrics.get("symbol", "")).strip().upper()
@@ -1101,14 +1345,15 @@ def execute_full_scan(
                         "PLACEMENT_SKIPPED",
                         symbol=candidate_symbol,
                         metrics=candidate_metrics,
-                        final_reason="daily_loss_guardrail_blocked",
+                        final_reason=guardrail_reason,
                         placed=False,
                     )
             response["paper_trade_result"] = {
                 "attempted": False,
                 "placed": False,
-                "reason": "daily_loss_guardrail_blocked",
+                "reason": guardrail_reason,
                 "daily_pnl_pct": response.get("daily_pnl_pct"),
+                "daily_closed_loss_count": daily_guardrail["daily_closed_loss_count"],
             }
             return response
         if not paper_trade_candidates:
@@ -1141,6 +1386,44 @@ def execute_full_scan(
                 candidate_symbol = str(paper_trade_candidate["metrics"].get("symbol", "")).strip().upper()
                 candidate_metrics = paper_trade_candidate["metrics"]
                 candidate_confidence = _to_float(candidate_metrics.get("final_confidence"), 0.0)
+                existing_open_trade = get_latest_open_paper_trade_for_symbol(candidate_symbol)
+                if existing_open_trade is not None:
+                    record_attempt(
+                        "PLACEMENT_SKIPPED",
+                        symbol=candidate_symbol,
+                        metrics=paper_trade_candidate["metrics"],
+                        final_reason="symbol_already_open",
+                        placed=False,
+                    )
+                    paper_results.append({
+                        "attempted": False,
+                        "placed": False,
+                        "reason": "symbol_already_open",
+                        "symbol": candidate_symbol,
+                    })
+                    skipped_symbols.append(candidate_symbol)
+                    skip_reasons.append(f"{candidate_symbol}:symbol_already_open")
+                    continue
+
+                if _is_alert_only_mode(mode) and not disable_strategy_gates:
+                    record_attempt(
+                        "PLACEMENT_SKIPPED",
+                        symbol=candidate_symbol,
+                        metrics=candidate_metrics,
+                        final_reason="alert_only_mode",
+                        placed=False,
+                    )
+                    paper_results.append({
+                        "attempted": False,
+                        "placed": False,
+                        "reason": "alert_only_mode",
+                        "symbol": candidate_symbol,
+                        "mode": mode,
+                    })
+                    skipped_symbols.append(candidate_symbol)
+                    skip_reasons.append(f"{candidate_symbol}:alert_only_mode")
+                    continue
+
                 mode_confidence_floor = _mode_placement_confidence_floor(mode)
                 if mode_confidence_floor is not None and candidate_confidence < mode_confidence_floor and not disable_strategy_gates:
                     record_attempt(
@@ -1189,30 +1472,35 @@ def execute_full_scan(
                     skip_reasons.append(f"{candidate_symbol}:below_preferred_symbol_priority_floor")
                     continue
 
-                existing_open_trade = get_latest_open_paper_trade_for_symbol(candidate_symbol)
-                if existing_open_trade is not None:
-                    record_attempt(
-                        "PLACEMENT_SKIPPED",
-                        symbol=candidate_symbol,
-                        metrics=paper_trade_candidate["metrics"],
-                        final_reason="symbol_already_open",
-                        placed=False,
-                    )
-                    paper_results.append({
-                        "attempted": False,
-                        "placed": False,
-                        "reason": "symbol_already_open",
-                        "symbol": candidate_symbol,
-                    })
-                    skipped_symbols.append(candidate_symbol)
-                    skip_reasons.append(f"{candidate_symbol}:symbol_already_open")
-                    continue
-
                 try:
                     # Fetch recent closed trades for symbol (last 5)
                     recent_trades = get_recent_closed_trades_for_symbol(candidate_symbol, limit=PAPER_SYMBOL_GATING_LOOKBACK)
                 except Exception:
                     recent_trades = []
+
+                day_blocked, day_block_reason, day_block_details = _evaluate_symbol_day_block(
+                    recent_trades,
+                    timestamp_utc=timestamp_utc,
+                    parse_iso_utc=parse_iso_utc,
+                )
+                if day_blocked and not disable_strategy_gates:
+                    record_attempt(
+                        "PLACEMENT_SKIPPED",
+                        symbol=candidate_symbol,
+                        metrics=paper_trade_candidate["metrics"],
+                        final_reason=day_block_reason,
+                        placed=False,
+                    )
+                    paper_results.append({
+                        "attempted": False,
+                        "placed": False,
+                        "symbol": candidate_symbol,
+                        "reason": day_block_reason,
+                        "details": day_block_details,
+                    })
+                    skipped_symbols.append(candidate_symbol)
+                    skip_reasons.append(f"{candidate_symbol}:{day_block_reason}")
+                    continue
 
                 should_block_symbol, symbol_block_reason, symbol_gate_details = evaluate_symbol_performance_gate(recent_trades)
                 if should_block_symbol:
@@ -1473,6 +1761,46 @@ def execute_full_scan(
                     })
                     skipped_symbols.append(candidate_symbol)
                     skip_reasons.append(f"{candidate_symbol}:position_size_too_small_after_slot_compression")
+                    continue
+
+                low_price_blocked, low_price_reason, low_price_details = _evaluate_low_price_quality(paper_metrics)
+                if low_price_blocked and not disable_strategy_gates:
+                    record_attempt(
+                        "PLACEMENT_SKIPPED",
+                        symbol=candidate_symbol,
+                        metrics=paper_metrics,
+                        final_reason=low_price_reason,
+                        placed=False,
+                    )
+                    paper_results.append({
+                        "attempted": False,
+                        "placed": False,
+                        "reason": low_price_reason,
+                        "symbol": candidate_symbol,
+                        "details": low_price_details,
+                    })
+                    skipped_symbols.append(candidate_symbol)
+                    skip_reasons.append(f"{candidate_symbol}:{low_price_reason}")
+                    continue
+
+                economics_blocked, economics_reason, economics_details = _evaluate_commission_adjusted_quality(paper_metrics)
+                if economics_blocked and not disable_strategy_gates:
+                    record_attempt(
+                        "PLACEMENT_SKIPPED",
+                        symbol=candidate_symbol,
+                        metrics=paper_metrics,
+                        final_reason=economics_reason,
+                        placed=False,
+                    )
+                    paper_results.append({
+                        "attempted": False,
+                        "placed": False,
+                        "reason": economics_reason,
+                        "symbol": candidate_symbol,
+                        "details": economics_details,
+                    })
+                    skipped_symbols.append(candidate_symbol)
+                    skip_reasons.append(f"{candidate_symbol}:{economics_reason}")
                     continue
 
                 in_cooldown, cooldown_reason = is_symbol_in_paper_cooldown(candidate_symbol, timestamp_utc)

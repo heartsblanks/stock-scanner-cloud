@@ -3,8 +3,6 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
 
-import requests
-
 from brokers import get_paper_broker
 from core.logging_utils import log_exception
 from core.logging_utils import log_warning
@@ -17,6 +15,7 @@ from storage import (
     get_recent_trade_event_rows,
     get_signal_log_rows,
     get_trade_event_rows_for_date,
+    get_trade_lifecycle_summary_for_date,
     get_trade_lifecycles,
 )
 
@@ -24,11 +23,27 @@ from storage import (
 PAPER_STOP_COOLDOWN_MINUTES = int(os.getenv("PAPER_STOP_COOLDOWN_MINUTES", "30"))
 PAPER_TARGET_COOLDOWN_MINUTES = int(os.getenv("PAPER_TARGET_COOLDOWN_MINUTES", "0"))
 PAPER_MANUAL_CLOSE_COOLDOWN_MINUTES = int(os.getenv("PAPER_MANUAL_CLOSE_COOLDOWN_MINUTES", "0"))
-TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY")
-TWELVEDATA_BASE_URL = "https://api.twelvedata.com/time_series"
+PAPER_LOSS_SYMBOL_BLOCK_REST_OF_DAY = str(os.getenv("PAPER_LOSS_SYMBOL_BLOCK_REST_OF_DAY", "true")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 PAPER_BROKER = get_paper_broker()
 get_open_orders = PAPER_BROKER.get_open_orders
 get_open_positions = PAPER_BROKER.get_open_positions
+
+
+def _daily_losing_trade_count(target_date: str, broker: str | None = None) -> int:
+    try:
+        summary = get_trade_lifecycle_summary_for_date(target_date=target_date, broker=broker)
+    except Exception as exc:
+        log_exception("Failed to read daily lifecycle summary", exc, component="paper_trade_context", operation="_daily_losing_trade_count")
+        return 0
+    try:
+        return int(summary.get("losing_trade_count", 0) or 0)
+    except Exception:
+        return 0
 
 
 def read_trade_rows_for_date(target_date: str) -> list[dict]:
@@ -264,6 +279,7 @@ def get_risk_exposure_summary() -> dict:
         except Exception as exc:
             log_exception("Failed to read daily realized PnL", exc, component="paper_trade_context", operation="get_risk_exposure_summary")
             daily_realized_pnl = 0.0
+        daily_closed_loss_count = _daily_losing_trade_count(today_utc)
 
         limits = get_paper_trade_limits()
         max_positions = int(limits["max_positions"])
@@ -283,6 +299,7 @@ def get_risk_exposure_summary() -> dict:
             "open_position_count": int(current_open_positions),
             "daily_realized_pnl": round(daily_realized_pnl, 2),
             "daily_unrealized_pnl": 0.0,
+            "daily_closed_loss_count": daily_closed_loss_count,
             "allocation_used_pct": round(allocation_used_pct, 2),
             "max_positions": max_positions,
             "position_limit_enforced": position_limit_enforced,
@@ -305,6 +322,7 @@ def get_risk_exposure_summary() -> dict:
     except Exception as exc:
         log_exception("Failed to read daily realized PnL", exc, component="paper_trade_context", operation="get_risk_exposure_summary")
         daily_realized_pnl = 0.0
+    daily_closed_loss_count = _daily_losing_trade_count(today_utc)
 
     daily_unrealized_pnl = 0.0
     for position in positions:
@@ -332,6 +350,7 @@ def get_risk_exposure_summary() -> dict:
         "open_position_count": int(current_open_positions),
         "daily_realized_pnl": round(daily_realized_pnl, 2),
         "daily_unrealized_pnl": round(daily_unrealized_pnl, 2),
+        "daily_closed_loss_count": daily_closed_loss_count,
         "allocation_used_pct": round(allocation_used_pct, 2),
         "max_positions": max_positions,
         "position_limit_enforced": position_limit_enforced,
@@ -421,6 +440,7 @@ def get_latest_paper_close_event_for_symbol(symbol: str) -> dict | None:
         "symbol": row.get("symbol", ""),
         "status": row.get("status", ""),
         "exit_reason": row.get("exit_reason", ""),
+        "realized_pnl": row.get("realized_pnl", ""),
         "order_id": row.get("order_id", ""),
         "parent_order_id": row.get("parent_order_id", ""),
     }
@@ -432,9 +452,13 @@ def is_symbol_in_paper_cooldown(symbol: str, now_utc: str) -> tuple[bool, str]:
         return False, ""
 
     exit_reason = str(latest_close.get("exit_reason", "")).strip().upper()
+    realized_pnl = to_float_or_none(latest_close.get("realized_pnl"))
     cooldown_minutes = 0
     cooldown_label = ""
-    if exit_reason == "STOP_HIT":
+    loss_rest_of_day = PAPER_LOSS_SYMBOL_BLOCK_REST_OF_DAY and realized_pnl is not None and realized_pnl < 0
+    if loss_rest_of_day:
+        cooldown_label = "loss_rest_of_day"
+    elif exit_reason == "STOP_HIT":
         cooldown_minutes = PAPER_STOP_COOLDOWN_MINUTES
         cooldown_label = "stop"
     elif exit_reason == "TARGET_HIT":
@@ -446,7 +470,7 @@ def is_symbol_in_paper_cooldown(symbol: str, now_utc: str) -> tuple[bool, str]:
     else:
         return False, ""
 
-    if cooldown_minutes <= 0:
+    if cooldown_minutes <= 0 and not loss_rest_of_day:
         return False, ""
 
     latest_ts = str(latest_close.get("timestamp_utc", "")).strip()
@@ -457,6 +481,11 @@ def is_symbol_in_paper_cooldown(symbol: str, now_utc: str) -> tuple[bool, str]:
         now_dt = parse_iso_utc(now_utc)
         latest_dt = parse_iso_utc(latest_ts)
     except Exception:
+        return False, ""
+
+    if loss_rest_of_day:
+        if now_dt.date() == latest_dt.date():
+            return True, f"{cooldown_label}_until_{now_dt.date().isoformat()}"
         return False, ""
 
     cooldown_until = latest_dt + timedelta(minutes=cooldown_minutes)
@@ -543,45 +572,7 @@ def find_latest_open_trade(symbol: str, trade_source: str | None = None, broker_
 
 
 def fetch_candles_between(symbol: str, start_utc: str, end_utc: str, interval: str = "5min") -> list[dict]:
-    if not TWELVEDATA_API_KEY:
-        raise RuntimeError("Missing TWELVEDATA_API_KEY in environment.")
-
-    start_dt_ny = parse_iso_utc(start_utc).astimezone(NY_TZ)
-    end_dt_ny = parse_iso_utc(end_utc).astimezone(NY_TZ)
-    elapsed_minutes = max(1, int((end_dt_ny - start_dt_ny).total_seconds() / 60))
-    outputsize = min(5000, max(100, (elapsed_minutes // 5) + 20)) if interval == "5min" else min(5000, max(200, elapsed_minutes + 30))
-
-    params = {
-        "symbol": symbol,
-        "interval": interval,
-        "start_date": start_dt_ny.strftime("%Y-%m-%d %H:%M:%S"),
-        "end_date": end_dt_ny.strftime("%Y-%m-%d %H:%M:%S"),
-        "outputsize": outputsize,
-        "apikey": TWELVEDATA_API_KEY,
-        "format": "JSON",
-        "order": "asc",
-    }
-
-    response = requests.get(TWELVEDATA_BASE_URL, params=params, timeout=20)
-    response.raise_for_status()
-    data = response.json()
-    if data.get("status") == "error":
-        raise ValueError(data.get("message", "Unknown Twelve Data error"))
-
-    candles = []
-    for row in data.get("values") or []:
-        try:
-            candles.append({
-                "datetime": row["datetime"],
-                "open": float(row["open"]),
-                "high": float(row["high"]),
-                "low": float(row["low"]),
-                "close": float(row["close"]),
-            })
-        except Exception:
-            continue
-
-    return candles
+    raise RuntimeError("Historical candle inference is disabled in IBKR-only mode.")
 
 
 def infer_first_level_hit(open_row: dict, close_timestamp_utc: str) -> dict:
@@ -601,7 +592,16 @@ def infer_first_level_hit(open_row: dict, close_timestamp_utc: str) -> dict:
 
     stop_price = float(stop_raw)
     target_price = float(target_raw)
-    candles = fetch_candles_between(symbol, open_ts, close_timestamp_utc, interval="5min")
+    try:
+        candles = fetch_candles_between(symbol, open_ts, close_timestamp_utc, interval="5min")
+    except Exception:
+        return {
+            "inferred_stop_hit": "",
+            "inferred_target_hit": "",
+            "inferred_first_level_hit": "UNAVAILABLE",
+            "inferred_analysis_start_utc": open_ts,
+            "inferred_analysis_end_utc": close_timestamp_utc,
+        }
 
     stop_index = None
     target_index = None

@@ -113,7 +113,6 @@ Core backend variables:
 - `APCA_API_KEY_ID`
 - `APCA_API_SECRET_KEY`
 - `APCA_BASE_URL` for IBKR paper/live selection
-- `TWELVEDATA_API_KEY`
 - `ADMIN_API_TOKEN` for protected operational endpoints such as `/admin/test-alert`
 
 Paper-trading and scan controls:

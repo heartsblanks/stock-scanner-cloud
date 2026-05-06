@@ -1,16 +1,22 @@
 import os
 import unittest
+import sys
 from datetime import datetime
-from unittest import SkipTest
+from types import ModuleType
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
-try:
-    from analytics.trade_scan import calculate_position_sizing, evaluate_symbol
-except ModuleNotFoundError as exc:
-    if exc.name == "requests":
-        raise SkipTest("requests dependency is not available in this local unittest environment")
-    raise
+if "pandas_market_calendars" not in sys.modules:
+    sys.modules["pandas_market_calendars"] = ModuleType("pandas_market_calendars")
+if "psycopg" not in sys.modules:
+    fake_psycopg = ModuleType("psycopg")
+    fake_psycopg_rows = ModuleType("psycopg.rows")
+    fake_psycopg_rows.dict_row = object()
+    fake_psycopg.rows = fake_psycopg_rows
+    sys.modules["psycopg"] = fake_psycopg
+    sys.modules["psycopg.rows"] = fake_psycopg_rows
+
+from analytics.trade_scan import calculate_position_sizing, evaluate_symbol
 
 
 NY_TZ = ZoneInfo("America/New_York")
@@ -45,9 +51,20 @@ def build_valid_breakout_candles() -> list[dict]:
                 "high": close_price - 0.05 if minute_offset < 14 else 100.40,
                 "low": close_price - 0.25,
                 "close": close_price,
+                "volume": 2500 if minute_offset == len(base_prices) - 1 else 1000,
             }
         )
     return candles
+
+
+def benchmark(direction: str, market: str) -> dict:
+    return {
+        market: direction,
+        f"{market}_TREND_QUALITY": True,
+        f"{market}_TREND_AVAILABLE": True,
+        f"{market}_PRICE_VWAP_ALIGNED": True,
+        f"{market}_SLOPE_ALIGNED": True,
+    }
 
 
 class TradeScanLateSessionTests(unittest.TestCase):
@@ -62,7 +79,7 @@ class TradeScanLateSessionTests(unittest.TestCase):
                     info=info,
                     candles=candles,
                     account_size=100000.0,
-                    benchmark_directions={"NASDAQ": "BUY"},
+                    benchmark_directions=benchmark("BUY", "NASDAQ"),
                     current_open_positions=0,
                     current_open_exposure=0.0,
                 )
@@ -81,7 +98,7 @@ class TradeScanLateSessionTests(unittest.TestCase):
                     info=info,
                     candles=candles,
                     account_size=100000.0,
-                    benchmark_directions={"NASDAQ": "BUY"},
+                    benchmark_directions=benchmark("BUY", "NASDAQ"),
                     current_open_positions=0,
                     current_open_exposure=0.0,
                 )
@@ -101,7 +118,7 @@ class TradeScanLateSessionTests(unittest.TestCase):
                     info=info,
                     candles=candles,
                     account_size=100000.0,
-                    benchmark_directions={"NASDAQ": "BUY"},
+                    benchmark_directions=benchmark("BUY", "NASDAQ"),
                     current_open_positions=0,
                     current_open_exposure=0.0,
                 )
@@ -121,7 +138,7 @@ class TradeScanLateSessionTests(unittest.TestCase):
                     info=info,
                     candles=candles,
                     account_size=100000.0,
-                    benchmark_directions={"NASDAQ": "BUY"},
+                    benchmark_directions=benchmark("BUY", "NASDAQ"),
                     current_open_positions=0,
                     current_open_exposure=0.0,
                 )
@@ -190,6 +207,7 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
                 "high": 100.65,
                 "low": 98.50,
                 "close": 100.55,
+                "volume": 2500,
             }
         )
 
@@ -200,7 +218,7 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
                     info=info,
                     candles=candles,
                     account_size=100000.0,
-                    benchmark_directions={"NASDAQ": "BUY"},
+                    benchmark_directions=benchmark("BUY", "NASDAQ"),
                     current_open_positions=0,
                     current_open_exposure=0.0,
                 )
@@ -218,6 +236,7 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
                 "high": 100.65,
                 "low": 98.50,
                 "close": 100.55,
+                "volume": 2500,
             }
         )
 
@@ -228,7 +247,7 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
                     info=info,
                     candles=candles,
                     account_size=100000.0,
-                    benchmark_directions={"NASDAQ": "BUY"},
+                    benchmark_directions=benchmark("BUY", "NASDAQ"),
                     current_open_positions=0,
                     current_open_exposure=0.0,
                 )
@@ -250,6 +269,7 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
                     "high": 101.50,
                     "low": 99.35,
                     "close": 100.12,
+                    "volume": 1000,
                 },
                 {
                     "datetime": "2026-04-01 09:46:00",
@@ -257,6 +277,7 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
                     "high": 101.35,
                     "low": 99.20,
                     "close": 100.08,
+                    "volume": 1000,
                 },
                 {
                     "datetime": "2026-04-01 09:47:00",
@@ -264,6 +285,7 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
                     "high": 101.40,
                     "low": 99.15,
                     "close": 100.16,
+                    "volume": 1000,
                 },
                 {
                     "datetime": "2026-04-01 09:48:00",
@@ -271,6 +293,7 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
                     "high": 101.45,
                     "low": 99.10,
                     "close": 100.18,
+                    "volume": 1000,
                 },
                 {
                     "datetime": "2026-04-01 09:49:00",
@@ -278,6 +301,7 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
                     "high": 101.48,
                     "low": 99.05,
                     "close": 100.55,
+                    "volume": 2500,
                 },
             ]
         )
@@ -288,7 +312,7 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
                 info=info,
                 candles=candles,
                 account_size=100000.0,
-                benchmark_directions={"SP500": "BUY"},
+                benchmark_directions=benchmark("BUY", "SP500"),
                 current_open_positions=0,
                 current_open_exposure=0.0,
             )
@@ -308,6 +332,7 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
                 "high": 100.65,
                 "low": 98.50,
                 "close": 100.55,
+                "volume": 2500,
             }
         )
 
@@ -318,7 +343,7 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
                     info=info,
                     candles=candles,
                     account_size=100000.0,
-                    benchmark_directions={"NASDAQ": "BUY"},
+                    benchmark_directions=benchmark("BUY", "NASDAQ"),
                     current_open_positions=0,
                     current_open_exposure=0.0,
                 )
@@ -337,7 +362,7 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
                     info=info,
                     candles=candles,
                     account_size=100000.0,
-                    benchmark_directions={"NASDAQ": "BUY"},
+                    benchmark_directions=benchmark("BUY", "NASDAQ"),
                     current_open_positions=0,
                     current_open_exposure=0.0,
                 )
@@ -354,6 +379,7 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
                 "high": price + 0.20,
                 "low": price + 0.05,
                 "close": price,
+                "volume": 2500 if minute_offset == 14 else 1000,
             }
             for minute_offset, price in enumerate([
                 100.60,
@@ -380,6 +406,7 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
                 "high": 99.65,
                 "low": 98.50,
                 "close": 99.55,
+                "volume": 2500,
             }
         )
 
@@ -389,7 +416,7 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
                 info=info,
                 candles=candles,
                 account_size=100000.0,
-                benchmark_directions={"SP500": "SELL"},
+                benchmark_directions=benchmark("SELL", "SP500"),
                 current_open_positions=0,
                 current_open_exposure=0.0,
             )
@@ -407,6 +434,7 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
                 "high": price + 0.20,
                 "low": price + 0.05,
                 "close": price,
+                "volume": 2500 if minute_offset == 14 else 1000,
             }
             for minute_offset, price in enumerate([
                 100.60,
@@ -433,6 +461,7 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
                 "high": 99.65,
                 "low": 99.20,
                 "close": 99.55,
+                "volume": 2500,
             }
         )
 
@@ -442,7 +471,7 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
                 info=info,
                 candles=candles,
                 account_size=100000.0,
-                benchmark_directions={"SP500": "SELL"},
+                benchmark_directions=benchmark("SELL", "SP500"),
                 current_open_positions=0,
                 current_open_exposure=0.0,
             )
@@ -452,6 +481,75 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
         self.assertTrue(result["checks"]["confidence_threshold"])
         self.assertEqual(result["decision"], "VALID")
         self.assertEqual(result["final_reason"], "Price is below OR low and below VWAP.")
+
+    def test_breakout_requires_volume_confirmation(self):
+        info = {"symbol": "GOOGL", "type": "stock", "priority": 9, "market": "NASDAQ"}
+        candles = build_valid_breakout_candles()
+        candles[-1]["volume"] = 500
+
+        with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 10, 0, tzinfo=NY_TZ)):
+            result = evaluate_symbol(
+                name="Alphabet",
+                info=info,
+                candles=candles,
+                account_size=100000.0,
+                benchmark_directions=benchmark("BUY", "NASDAQ"),
+                current_open_positions=0,
+                current_open_exposure=0.0,
+            )
+
+        self.assertEqual(result["decision"], "REJECTED")
+        self.assertEqual(result["final_reason"], "Breakout volume confirmation failed.")
+        self.assertFalse(result["checks"]["volume_confirmation"])
+
+    def test_anti_chase_rejects_extended_breakout_from_opening_range(self):
+        info = {"symbol": "GOOGL", "type": "stock", "priority": 9, "market": "NASDAQ"}
+        candles = build_valid_breakout_candles()
+        candles.append(
+            {
+                "datetime": "2026-04-01 09:45:00",
+                "open": 101.80,
+                "high": 102.10,
+                "low": 101.70,
+                "close": 102.00,
+                "volume": 3000,
+            }
+        )
+
+        with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 10, 0, tzinfo=NY_TZ)):
+            result = evaluate_symbol(
+                name="Alphabet",
+                info=info,
+                candles=candles,
+                account_size=100000.0,
+                benchmark_directions=benchmark("BUY", "NASDAQ"),
+                current_open_positions=0,
+                current_open_exposure=0.0,
+            )
+
+        self.assertEqual(result["decision"], "REJECTED")
+        self.assertEqual(result["final_reason"], "Move already too extended from opening range.")
+        self.assertFalse(result["checks"]["anti_chase_filter"])
+
+    def test_benchmark_trend_quality_must_be_confirmed(self):
+        info = {"symbol": "GOOGL", "type": "stock", "priority": 9, "market": "NASDAQ"}
+        weak_benchmark = benchmark("BUY", "NASDAQ")
+        weak_benchmark["NASDAQ_TREND_QUALITY"] = False
+
+        with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 10, 0, tzinfo=NY_TZ)):
+            result = evaluate_symbol(
+                name="Alphabet",
+                info=info,
+                candles=build_valid_breakout_candles(),
+                account_size=100000.0,
+                benchmark_directions=weak_benchmark,
+                current_open_positions=0,
+                current_open_exposure=0.0,
+            )
+
+        self.assertEqual(result["decision"], "REJECTED")
+        self.assertEqual(result["final_reason"], "Benchmark trend quality failed.")
+        self.assertFalse(result["checks"]["benchmark_trend_quality"])
 
 
 if __name__ == "__main__":

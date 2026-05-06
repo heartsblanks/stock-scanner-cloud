@@ -3,8 +3,6 @@ import sys
 from types import ModuleType
 from unittest.mock import patch
 
-if "requests" not in sys.modules:
-    sys.modules["requests"] = ModuleType("requests")
 if "psycopg" not in sys.modules:
     fake_psycopg = ModuleType("psycopg")
     fake_psycopg_rows = ModuleType("psycopg.rows")
@@ -13,7 +11,7 @@ if "psycopg" not in sys.modules:
     sys.modules["psycopg"] = fake_psycopg
     sys.modules["psycopg.rows"] = fake_psycopg_rows
 
-from orchestration.paper_trade_context import get_managed_open_paper_trades_for_eod_close
+from orchestration.paper_trade_context import get_managed_open_paper_trades_for_eod_close, is_symbol_in_paper_cooldown
 
 
 class _StubBroker:
@@ -60,6 +58,22 @@ class PaperTradeContextTests(unittest.TestCase):
 
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["symbol"], "AAPL")
+
+    def test_broker_filled_losing_exit_blocks_symbol_for_rest_of_day(self):
+        with patch(
+            "orchestration.paper_trade_context.get_recent_closed_trade_lifecycle_for_symbol",
+            return_value={
+                "symbol": "RIVN",
+                "status": "CLOSED",
+                "exit_reason": "BROKER_FILLED_EXIT",
+                "exit_time": "2026-05-06T14:30:00+00:00",
+                "realized_pnl": -3.55,
+            },
+        ):
+            blocked, reason = is_symbol_in_paper_cooldown("RIVN", "2026-05-06T15:30:00+00:00")
+
+        self.assertTrue(blocked)
+        self.assertIn("loss_rest_of_day", reason)
 
 
 if __name__ == "__main__":

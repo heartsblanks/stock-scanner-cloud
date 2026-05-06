@@ -159,17 +159,11 @@ Current strategy status:
 - pending observation: review whether the `Price is above OR high and above VWAP.` breakout rule is too blunt after a few more live sessions
 - pending observation: monitor whether `No meaningful allocatable capital remains.` mostly disappears now that the oversized-order sizing bug is fixed
 
-Market data migration strategy:
-- current recommendation: stay on Twelve Data for now while strategy quality and symbol-universe quality continue to improve
-- why: live comparisons against recent real trades showed that Twelve Data and IBKR were close on actual entry-minute prices, so provider mismatch did not look like the main driver of recent losing trades
-- why not IBKR free `IEX`: live comparisons also showed that IBKR free `IEX` bars are often sparser in the opening-range window, especially on thinner symbols, which can make opening-range and VWAP logic less reliable than the current setup
-- future implementation 1: migrate trading/account/order integration to `ibkr-py` first, without changing the scanner's market-data source
-- future implementation 2: only evaluate IBKR as the primary market-data source through a side-by-side validation phase, ideally on paid `SIP` rather than free `IEX`
-- upgrade triggers for paid market data: repeated evidence that entry timing is meaningfully late despite otherwise stable strategy behavior, repeated chart-review cases where missed/late entries trace back to candle timing, or enough strategy stability that data quality becomes the next obvious bottleneck
-- if migration happens later, the intended order is:
-- `1.` keep Twelve Data live while adding IBKR market-data adapters in parallel
-- `2.` compare OR completeness, VWAP, benchmark direction, and entry timing side by side for multiple sessions
-- `3.` cut over only after the higher-quality feed clearly improves scan quality
+Market data strategy:
+- current implementation: scans use IBKR bridge intraday candles only; legacy external market-data fallback is disabled
+- why: live trading and scan execution should share the same broker data source so entries, opening range, VWAP, volume, and benchmark checks are evaluated from the feed used for execution
+- operational expectation: Cloud Run injects `fetch_ibkr_intraday` into the scan path; direct scan calls without an injected IBKR fetch fail closed
+- future improvement: if IBKR historical candles are needed for manual-close inference, add that through the IBKR bridge rather than reintroducing an external market-data provider
 
 Parallel IBKR evaluation strategy:
 - implementation approach: keep the current IBKR paper-trading path stable while building IBKR support in parallel for comparison only
@@ -187,16 +181,16 @@ Parallel IBKR evaluation strategy:
 - current implementation status: holiday-aware VM control is now implemented in the main Cloud Run app through `POST /scheduler/ibkr-vm-control`, which reuses the NYSE calendar before starting the VM on trading days
 - current implementation status: IBKR login-required alerting now exists through `POST /scheduler/ibkr-login-alert`, which sends Telegram bot alerts during the configured alert window
 - current implementation status: the persistence model is being extended to tag paper-trading rows by broker so IBKR and IBKR orders, trade events, lifecycles, and attempts can be compared cleanly from the database
-- current implementation status: the scan flow is now being split into two true parallel tracks instead of one shared candidate set, so IBKR continues to evaluate from Twelve Data while IBKR evaluates from IBKR market data before placing to its own paper account
+- current implementation status: the scan flow is IBKR-only for both market data and paper placement
 - target architecture:
 - `1.` Cloud Run remains the main app, dashboard, scheduler, and Neon-backed API
 - `2.` a GCP VM runs IB Gateway plus a small authenticated IBKR bridge service
 - `3.` Cloud Run reaches the VM over an internal path using a Serverless VPC Access connector plus the VM internal IP, rather than a public bridge URL
 - `4.` the main app talks to the bridge service rather than directly to IB Gateway
-- scan-path split:
-- `1.` IBKR paper flow uses Twelve Data candles plus IBKR paper placement
-- `2.` IBKR paper flow uses IBKR market data plus IBKR paper placement
-- `3.` both flows run from the same scheduler invocation and persist separately with broker-tagged records for later comparison
+- scan path:
+- `1.` IBKR paper flow uses IBKR market data plus IBKR paper placement
+- `2.` Cloud Run reaches the IBKR bridge through the configured VPC/internal path
+- `3.` broker-tagged records remain in the database for clean operational analysis
 - VM operating window:
 - `1.` start the VM at `9:15 AM ET`
 - `2.` keep it available through the close and immediate post-close comparison window
@@ -267,7 +261,7 @@ Current paper-trading config defaults:
 - `PAPER_TRADE_MAX_CAPITAL_ALLOCATION_PCT=1.0`
 - `PAPER_TRADE_ENFORCE_MAX_POSITIONS=false`
 - `PAPER_TRADE_MAX_POSITIONS=10` as the dormant future cap when the flag is re-enabled
-- instrument watchlists are intentionally split across multiple categories to stay below the per-category Twelve Data symbol ceiling
+- instrument watchlists are intentionally split across multiple categories to keep scans lightweight and scheduler rotation manageable
 - these values are now carried through deployment config in `cloudbuild.yaml`, so future changes can be made at deploy-time without editing strategy logic
 - placement sizing is additionally clamped by `PAPER_MAX_NOTIONAL`, so confidence-based sizing cannot expand a paper trade above the broker-side per-trade hard cap
 - IBKR HTTP audit logging is now opt-in for successful requests via `ENABLE_BROKER_HTTP_AUDIT`; failures are always persisted

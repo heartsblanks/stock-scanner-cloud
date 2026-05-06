@@ -2,7 +2,6 @@
 import os
 import sys
 import math
-import requests
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -25,8 +24,6 @@ MIN_SHORT_CONFIDENCE = 82
 MIN_REMAINING_ALLOCATABLE_CAPITAL = 50.0
 MIN_STOP_TO_ATR_RATIO_STOCK = 0.35
 MIN_STOP_TO_ATR_RATIO_ETF = 0.30
-API_KEY = os.getenv("TWELVEDATA_API_KEY")
-BASE_URL = "https://api.twelvedata.com/time_series"
 
 
 def _parse_int_map_env(name: str, default: dict[str, int]) -> dict[str, int]:
@@ -100,13 +97,60 @@ def late_session_hard_block_enabled() -> bool:
     value = str(os.getenv("ENABLE_LATE_SESSION_HARD_BLOCK", "false")).strip().lower()
     return value in {"1", "true", "yes", "y", "on"}
 
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = str(os.getenv(name, str(default))).strip().lower()
+    return value in {"1", "true", "yes", "y", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        value = float(os.getenv(name, default))
+    except Exception:
+        return default
+    return value if value >= 0 else default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, default))
+    except Exception:
+        return default
+    return value if value >= 0 else default
+
+
+def volume_confirmation_enabled() -> bool:
+    return _env_bool("PAPER_VOLUME_CONFIRMATION_ENABLED", True)
+
+
+def benchmark_trend_quality_enabled() -> bool:
+    return _env_bool("PAPER_BENCHMARK_TREND_QUALITY_ENABLED", True)
+
+
+def _is_core_mode(mode: str | None) -> bool:
+    return str(mode or "").strip().lower().startswith("core_")
+
+
+def _volume_confirmation_threshold(mode: str | None) -> float:
+    if _is_core_mode(mode):
+        return _env_float("PAPER_CORE_MIN_RELATIVE_VOLUME", 1.1)
+    return _env_float("PAPER_MIN_RELATIVE_VOLUME", 1.2)
+
+
+def _max_breakout_opening_range_multiple(mode: str | None, instrument_type: str) -> float:
+    if _is_core_mode(mode):
+        return _env_float("PAPER_MAX_BREAKOUT_OR_MULTIPLE_CORE", 0.75)
+    default = 0.5 if instrument_type == "stock" else 0.6
+    return _env_float("PAPER_MAX_BREAKOUT_OR_MULTIPLE_NON_CORE", default)
+
+
+def _max_vwap_extension_pct(mode: str | None) -> float:
+    if _is_core_mode(mode):
+        return _env_float("PAPER_MAX_VWAP_EXTENSION_PCT_CORE", 0.015)
+    return _env_float("PAPER_MAX_VWAP_EXTENSION_PCT_NON_CORE", 0.01)
+
 def fmt(x: float) -> str:
     return f"{x:.2f}"
-
-
-def require_api_key():
-    if not API_KEY:
-        raise RuntimeError("Missing TWELVEDATA_API_KEY in environment.")
 
 
 def get_ny_now():
@@ -215,79 +259,8 @@ def market_time_check():
     )
 
 
-def get_required_outputsize(interval: str = "1min") -> int:
-    """
-    Make sure we always fetch enough bars to include 09:30–09:45 NY,
-    even late in the session.
-    """
-    now_ny = get_ny_now()
-    (
-        is_trading_day,
-        _is_early_close,
-        market_open_ny,
-        _market_close_ny,
-        _day_msg,
-    ) = holiday_and_early_close_status(now_ny)
-
-    if not is_trading_day:
-        return 600
-
-    minutes_since_open = max(0, int((now_ny - market_open_ny).total_seconds() / 60))
-
-    if interval == "1min":
-        # full session so far + buffer
-        return max(240, minutes_since_open + 90)
-
-    if interval == "5min":
-        bars = math.ceil(minutes_since_open / 5)
-        return max(100, bars + 20)
-
-    return 600
-
-
 def fetch_intraday(symbol: str, interval: str = "1min", outputsize: int | None = None) -> list[dict]:
-    require_api_key()
-
-    if outputsize is None:
-        outputsize = get_required_outputsize(interval)
-
-    params = {
-        "symbol": symbol,
-        "interval": interval,
-        "outputsize": outputsize,
-        "apikey": API_KEY,
-        "format": "JSON",
-        "order": "asc",
-    }
-
-    response = requests.get(BASE_URL, params=params, timeout=15)
-    response.raise_for_status()
-    data = response.json()
-
-    if "status" in data and data["status"] == "error":
-        raise ValueError(data.get("message", "Unknown Twelve Data error"))
-
-    values = data.get("values")
-    if not values:
-        raise ValueError("No values returned")
-
-    candles = []
-    for row in values:
-        try:
-            candles.append({
-                "datetime": row["datetime"],
-                "open": float(row["open"]),
-                "high": float(row["high"]),
-                "low": float(row["low"]),
-                "close": float(row["close"]),
-            })
-        except (KeyError, ValueError, TypeError):
-            continue
-
-    if not candles:
-        raise ValueError("No valid candles parsed")
-
-    return candles
+    raise RuntimeError("IBKR intraday fetch must be injected; legacy external market-data fetch is disabled.")
 
 
 def build_opening_range(candles: list[dict]):
@@ -297,7 +270,7 @@ def build_opening_range(candles: list[dict]):
     opening_candles = []
 
     for c in candles:
-        # Twelve Data intraday datetimes for US stocks are effectively in exchange-local time.
+        # Intraday datetimes for US stocks are expected in exchange-local time.
         dt = datetime.fromisoformat(c["datetime"])
 
         if dt.hour == 9 and 30 <= dt.minute < 45:
@@ -354,6 +327,75 @@ def calculate_recent_atr(candles: list[dict], lookback: int = 5):
         return None
 
     return sum(true_ranges) / len(true_ranges)
+
+
+def calculate_relative_volume(candles: list[dict], lookback: int = 20) -> dict:
+    latest_volume = None
+    try:
+        latest_volume = float(candles[-1].get("volume"))
+    except Exception:
+        latest_volume = None
+
+    prior_volumes = []
+    for candle in candles[:-1][-max(1, lookback):]:
+        try:
+            volume = float(candle.get("volume"))
+        except Exception:
+            continue
+        if volume > 0:
+            prior_volumes.append(volume)
+
+    average_volume = (sum(prior_volumes) / len(prior_volumes)) if prior_volumes else None
+    relative_volume = (latest_volume / average_volume) if latest_volume and average_volume and average_volume > 0 else None
+
+    return {
+        "latest_volume": latest_volume,
+        "average_volume": average_volume,
+        "relative_volume": relative_volume,
+        "sample_count": len(prior_volumes),
+    }
+
+
+def calculate_benchmark_trend_quality(candles: list[dict], direction: str | None) -> dict:
+    normalized_direction = str(direction or "").strip().upper()
+    vwap = calculate_vwap(candles)
+    price = None
+    prior_close = None
+    try:
+        price = float(candles[-1]["close"])
+    except Exception:
+        price = None
+    if len(candles) >= 6:
+        try:
+            prior_close = float(candles[-6]["close"])
+        except Exception:
+            prior_close = None
+
+    if price is None or vwap is None or prior_close is None or normalized_direction not in {"BUY", "SELL"}:
+        return {
+            "available": False,
+            "trend_quality": False,
+            "price": price,
+            "vwap": vwap,
+            "prior_close": prior_close,
+        }
+
+    if normalized_direction == "BUY":
+        vwap_aligned = price > vwap
+        slope_aligned = price > prior_close
+    else:
+        vwap_aligned = price < vwap
+        slope_aligned = price < prior_close
+
+    return {
+        "available": True,
+        "trend_quality": bool(vwap_aligned and slope_aligned),
+        "price": price,
+        "vwap": vwap,
+        "prior_close": prior_close,
+        "vwap_aligned": vwap_aligned,
+        "slope_aligned": slope_aligned,
+    }
 
 
 def get_market_direction(candles: list[dict]):
@@ -554,6 +596,28 @@ def evaluate_symbol(
             "metrics": metrics,
         }
 
+    volume_stats = calculate_relative_volume(candles, lookback=_env_int("PAPER_RELATIVE_VOLUME_LOOKBACK", 20))
+    min_relative_volume = _volume_confirmation_threshold(info.get("mode"))
+    metrics.update({
+        "latest_volume": volume_stats.get("latest_volume"),
+        "average_volume": volume_stats.get("average_volume"),
+        "relative_volume": volume_stats.get("relative_volume"),
+        "relative_volume_sample_count": volume_stats.get("sample_count"),
+        "min_relative_volume": min_relative_volume,
+    })
+    checks["volume_confirmation"] = (
+        volume_stats.get("relative_volume") is not None
+        and float(volume_stats["relative_volume"]) >= min_relative_volume
+    )
+    if volume_confirmation_enabled() and not checks["volume_confirmation"] and not disable_strategy_gates:
+        return {
+            "name": name,
+            "decision": "REJECTED",
+            "final_reason": "Breakout volume confirmation failed.",
+            "checks": checks,
+            "metrics": metrics,
+        }
+
     if info["type"] == "stock":
         stop_distance = max(opening_range * 0.35, price * 0.003)
     else:
@@ -604,16 +668,31 @@ def evaluate_symbol(
             "metrics": metrics,
         }
 
-    if info["type"] == "stock":
-        checks["anti_chase_filter"] = breakout <= opening_range * 1.0
-    else:
-        checks["anti_chase_filter"] = breakout <= opening_range * 0.8
+    max_breakout_or_multiple = _max_breakout_opening_range_multiple(info.get("mode"), info["type"])
+    max_breakout_from_or = opening_range * max_breakout_or_multiple
+    metrics["max_breakout_opening_range_multiple"] = max_breakout_or_multiple
+    metrics["max_breakout_from_opening_range"] = max_breakout_from_or
+    checks["anti_chase_filter"] = breakout <= max_breakout_from_or
 
     if not checks["anti_chase_filter"] and not disable_strategy_gates:
         return {
             "name": name,
             "decision": "REJECTED",
             "final_reason": "Move already too extended from opening range.",
+            "checks": checks,
+            "metrics": metrics,
+        }
+
+    max_vwap_extension_pct = _max_vwap_extension_pct(info.get("mode"))
+    vwap_extension_pct = (abs(price - vwap) / price) if price > 0 and vwap is not None else 0.0
+    metrics["vwap_extension_pct"] = vwap_extension_pct
+    metrics["max_vwap_extension_pct"] = max_vwap_extension_pct
+    checks["vwap_extension_filter"] = vwap_extension_pct <= max_vwap_extension_pct
+    if not checks["vwap_extension_filter"] and not disable_strategy_gates:
+        return {
+            "name": name,
+            "decision": "REJECTED",
+            "final_reason": "Move already too extended from VWAP.",
             "checks": checks,
             "metrics": metrics,
         }
@@ -650,6 +729,22 @@ def evaluate_symbol(
                 "name": name,
                 "decision": "REJECTED",
                 "final_reason": "Benchmark direction does not match symbol direction.",
+                "checks": checks,
+                "metrics": metrics,
+            }
+
+        benchmark_quality = benchmark_directions.get(f"{market_key}_TREND_QUALITY")
+        benchmark_quality_available = benchmark_directions.get(f"{market_key}_TREND_AVAILABLE")
+        metrics["benchmark_trend_quality"] = benchmark_quality
+        metrics["benchmark_trend_quality_available"] = benchmark_quality_available
+        metrics["benchmark_price_vwap_aligned"] = benchmark_directions.get(f"{market_key}_PRICE_VWAP_ALIGNED")
+        metrics["benchmark_slope_aligned"] = benchmark_directions.get(f"{market_key}_SLOPE_ALIGNED")
+        checks["benchmark_trend_quality"] = bool(benchmark_quality)
+        if benchmark_trend_quality_enabled() and not checks["benchmark_trend_quality"] and not disable_strategy_gates:
+            return {
+                "name": name,
+                "decision": "REJECTED",
+                "final_reason": "Benchmark trend quality failed.",
                 "checks": checks,
                 "metrics": metrics,
             }
@@ -1019,11 +1114,21 @@ def get_benchmark_directions_from_cache(cache: dict):
 
     if "S&P 500 ETF" in cache:
         directions["SP500"] = get_market_direction(cache["S&P 500 ETF"])
+        spy_quality = calculate_benchmark_trend_quality(cache["S&P 500 ETF"], directions["SP500"])
+        directions["SP500_TREND_QUALITY"] = spy_quality.get("trend_quality")
+        directions["SP500_TREND_AVAILABLE"] = spy_quality.get("available")
+        directions["SP500_PRICE_VWAP_ALIGNED"] = spy_quality.get("vwap_aligned")
+        directions["SP500_SLOPE_ALIGNED"] = spy_quality.get("slope_aligned")
     else:
         failures["SP500"] = "Missing cached candles for S&P 500 ETF"
 
     if "Nasdaq-100 ETF" in cache:
         directions["NASDAQ"] = get_market_direction(cache["Nasdaq-100 ETF"])
+        qqq_quality = calculate_benchmark_trend_quality(cache["Nasdaq-100 ETF"], directions["NASDAQ"])
+        directions["NASDAQ_TREND_QUALITY"] = qqq_quality.get("trend_quality")
+        directions["NASDAQ_TREND_AVAILABLE"] = qqq_quality.get("available")
+        directions["NASDAQ_PRICE_VWAP_ALIGNED"] = qqq_quality.get("vwap_aligned")
+        directions["NASDAQ_SLOPE_ALIGNED"] = qqq_quality.get("slope_aligned")
     else:
         failures["NASDAQ"] = "Missing cached candles for Nasdaq-100 ETF"
 

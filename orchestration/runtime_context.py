@@ -15,7 +15,7 @@ from orchestration.scan_context import (
     IBKR_SCHEDULED_MODE_ORDER,
     to_float_or_none,
 )
-from storage import get_latest_mode_ranking_order, refresh_mode_rankings
+from storage import get_daily_realized_pnl, get_latest_mode_ranking_order, get_trade_lifecycle_summary_for_date, refresh_mode_rankings
 
 
 PAPER_TRADE_MIN_CONFIDENCE = int(os.getenv("PAPER_TRADE_MIN_CONFIDENCE", "70"))
@@ -344,12 +344,36 @@ def get_risk_exposure_summary_for_broker(broker) -> dict[str, Any]:
                 operation="get_risk_exposure_summary_for_broker",
             )
     open_count, open_exposure = get_current_open_position_state_for_broker(broker)
+    today_utc = datetime.now(NY_TZ).astimezone(ZoneInfo("UTC")).date().isoformat()
+    normalized_broker = str(getattr(broker, "name", "") or "").strip().upper() or None
+    try:
+        daily_realized_pnl = float(get_daily_realized_pnl(today_utc))
+    except Exception as exc:
+        log_exception(
+            "Failed to read daily realized PnL for broker risk summary",
+            exc,
+            component="runtime_context",
+            operation="get_risk_exposure_summary_for_broker",
+        )
+        daily_realized_pnl = 0.0
+    try:
+        daily_summary = get_trade_lifecycle_summary_for_date(today_utc, broker=normalized_broker)
+        daily_closed_loss_count = int(daily_summary.get("losing_trade_count", 0) or 0)
+    except Exception as exc:
+        log_exception(
+            "Failed to read daily closed loss count for broker risk summary",
+            exc,
+            component="runtime_context",
+            operation="get_risk_exposure_summary_for_broker",
+        )
+        daily_closed_loss_count = 0
     return {
         "account_size": account_size,
         "open_position_count": open_count,
         "total_open_exposure": open_exposure,
-        "daily_realized_pnl": 0.0,
+        "daily_realized_pnl": daily_realized_pnl,
         "daily_unrealized_pnl": 0.0,
+        "daily_closed_loss_count": daily_closed_loss_count,
     }
 
 
@@ -361,6 +385,7 @@ def get_ibkr_shadow_risk_exposure_summary(payload: dict[str, Any]) -> dict[str, 
         "total_open_exposure": open_exposure,
         "daily_realized_pnl": 0.0,
         "daily_unrealized_pnl": 0.0,
+        "daily_closed_loss_count": 0,
     }
 
 
