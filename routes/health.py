@@ -18,8 +18,10 @@ def register_health_routes(
     get_ibkr_operational_status,
     telegram_alerts_enabled,
     send_telegram_alert,
+    get_symbol_rankings=None,
     purge_all_test_data=None,
     purge_legacy_broker_data=None,
+    run_instrument_catalog_sync=None,
     run_symbol_eligibility_refresh=None,
 ) -> None:
     cache: dict[tuple[str, str], tuple[float, dict]] = {}
@@ -65,6 +67,7 @@ def register_health_routes(
                 "/paper-trade-attempts/rejections",
                 "/paper-trade-attempts/daily-summary",
                 "/paper-trade-attempts/hourly-summary",
+                "/symbol-rankings",
                 "/ibkr-status",
                 "/scheduler/market-ops",
                 "/scheduler/daily-post-close",
@@ -76,6 +79,7 @@ def register_health_routes(
                 "/admin/test-alert",
                 "/admin/purge-test-data",
                 "/admin/purge-legacy-broker-data",
+                "/admin/sync-instrument-catalog",
                 "/admin/refresh-symbol-eligibility",
             ],
         })
@@ -202,6 +206,34 @@ def register_health_routes(
             }), status_code
         except Exception as e:
             log_exception("symbol eligibility refresh failed", e, route="/admin/refresh-symbol-eligibility")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.post("/admin/sync-instrument-catalog")
+    def admin_sync_instrument_catalog():
+        admin_token = str(os.getenv("ADMIN_API_TOKEN", "")).strip()
+        request_token = str(request.headers.get("X-Admin-Token", "")).strip()
+        if not run_instrument_catalog_sync:
+            return jsonify({"ok": False, "error": "instrument_catalog_sync_not_implemented"}), 501
+        if not admin_token:
+            return jsonify({"ok": False, "error": "admin_sync_disabled"}), 503
+        if request_token != admin_token:
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+        try:
+            result = run_instrument_catalog_sync()
+            if not isinstance(result, dict):
+                return jsonify({
+                    "ok": True,
+                    "route": "/admin/sync-instrument-catalog",
+                    "result": result,
+                })
+            status_code = 200 if bool(result.get("ok", True)) else 500
+            return jsonify({
+                "route": "/admin/sync-instrument-catalog",
+                **result,
+            }), status_code
+        except Exception as e:
+            log_exception("instrument catalog sync failed", e, route="/admin/sync-instrument-catalog")
             return jsonify({"ok": False, "error": str(e)}), 500
 
     @app.get("/db-health")
@@ -364,4 +396,35 @@ def register_health_routes(
             })
         except Exception as e:
             log_exception("paper-trade-attempts/hourly-summary failed", e, route="/paper-trade-attempts/hourly-summary")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.get("/symbol-rankings")
+    def symbol_rankings():
+        try:
+            if not get_symbol_rankings:
+                return jsonify({"ok": False, "error": "symbol_rankings_not_implemented"}), 501
+
+            broker = request.args.get("broker") or "IBKR"
+            mode = request.args.get("mode")
+            window_days_raw = request.args.get("window_days", "5")
+            try:
+                window_days = max(1, min(90, int(window_days_raw)))
+            except Exception:
+                return jsonify({"ok": False, "error": "window_days must be an integer"}), 400
+
+            rows = get_symbol_rankings(
+                broker=broker,
+                window_days=window_days,
+                mode=mode,
+            )
+            return jsonify({
+                "ok": True,
+                "broker": broker,
+                "mode": mode,
+                "window_days": window_days,
+                "count": len(rows),
+                "rows": rows,
+            })
+        except Exception as e:
+            log_exception("symbol-rankings failed", e, route="/symbol-rankings")
             return jsonify({"ok": False, "error": str(e)}), 500

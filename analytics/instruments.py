@@ -21,6 +21,8 @@ REQUIRED_MODES = (
     "core_two",
     "core_three",
 )
+OPTIONAL_MODES = {"us_test"}
+MANDATORY_MODES = tuple(mode for mode in REQUIRED_MODES if mode not in OPTIONAL_MODES)
 
 _DEFAULT_INSTRUMENT_GROUPS: dict[str, dict[str, dict[str, object]]] = {
     "primary": {
@@ -152,6 +154,141 @@ _DEFAULT_INSTRUMENT_GROUPS: dict[str, dict[str, dict[str, object]]] = {
         "KLA": {"symbol": "KLAC", "type": "stock", "priority": 7, "market": "NASDAQ"},
     },
 }
+
+QUALITY_CANDIDATE_INSTRUMENTS: tuple[dict[str, object], ...] = (
+    {
+        "mode": "core_three",
+        "display_name": "Qualcomm",
+        "symbol": "QCOM",
+        "instrument_type": "stock",
+        "priority": 9,
+        "market": "NASDAQ",
+        "exchange": "SMART",
+        "primary_exchange": "NASDAQ",
+        "currency": "USD",
+    },
+    {
+        "mode": "core_two",
+        "display_name": "Cisco",
+        "symbol": "CSCO",
+        "instrument_type": "stock",
+        "priority": 8,
+        "market": "NASDAQ",
+        "exchange": "SMART",
+        "primary_exchange": "NASDAQ",
+        "currency": "USD",
+    },
+    {
+        "mode": "core_three",
+        "display_name": "Applied Materials",
+        "symbol": "AMAT",
+        "instrument_type": "stock",
+        "priority": 9,
+        "market": "NASDAQ",
+        "exchange": "SMART",
+        "primary_exchange": "NASDAQ",
+        "currency": "USD",
+    },
+    {
+        "mode": "core_three",
+        "display_name": "Texas Instruments",
+        "symbol": "TXN",
+        "instrument_type": "stock",
+        "priority": 8,
+        "market": "NASDAQ",
+        "exchange": "SMART",
+        "primary_exchange": "NASDAQ",
+        "currency": "USD",
+    },
+    {
+        "mode": "core_two",
+        "display_name": "Automatic Data Processing",
+        "symbol": "ADP",
+        "instrument_type": "stock",
+        "priority": 8,
+        "market": "NASDAQ",
+        "exchange": "SMART",
+        "primary_exchange": "NASDAQ",
+        "currency": "USD",
+    },
+    {
+        "mode": "core_two",
+        "display_name": "Palo Alto Networks",
+        "symbol": "PANW",
+        "instrument_type": "stock",
+        "priority": 8,
+        "market": "NASDAQ",
+        "exchange": "SMART",
+        "primary_exchange": "NASDAQ",
+        "currency": "USD",
+    },
+    {
+        "mode": "core_three",
+        "display_name": "Lam Research",
+        "symbol": "LRCX",
+        "instrument_type": "stock",
+        "priority": 9,
+        "market": "NASDAQ",
+        "exchange": "SMART",
+        "primary_exchange": "NASDAQ",
+        "currency": "USD",
+    },
+    {
+        "mode": "core_three",
+        "display_name": "Marvell Technology",
+        "symbol": "MRVL",
+        "instrument_type": "stock",
+        "priority": 8,
+        "market": "NASDAQ",
+        "exchange": "SMART",
+        "primary_exchange": "NASDAQ",
+        "currency": "USD",
+    },
+    {
+        "mode": "core_two",
+        "display_name": "T-Mobile US",
+        "symbol": "TMUS",
+        "instrument_type": "stock",
+        "priority": 8,
+        "market": "NASDAQ",
+        "exchange": "SMART",
+        "primary_exchange": "NASDAQ",
+        "currency": "USD",
+    },
+    {
+        "mode": "core_two",
+        "display_name": "PepsiCo",
+        "symbol": "PEP",
+        "instrument_type": "stock",
+        "priority": 8,
+        "market": "NASDAQ",
+        "exchange": "SMART",
+        "primary_exchange": "NASDAQ",
+        "currency": "USD",
+    },
+    {
+        "mode": "core_two",
+        "display_name": "PayPal",
+        "symbol": "PYPL",
+        "instrument_type": "stock",
+        "priority": 7,
+        "market": "NASDAQ",
+        "exchange": "SMART",
+        "primary_exchange": "NASDAQ",
+        "currency": "USD",
+    },
+    {
+        "mode": "core_two",
+        "display_name": "Datadog",
+        "symbol": "DDOG",
+        "instrument_type": "stock",
+        "priority": 7,
+        "market": "NASDAQ",
+        "exchange": "SMART",
+        "primary_exchange": "NASDAQ",
+        "currency": "USD",
+    },
+)
 
 _SCHEMA_READY = False
 _CACHE_LOCK = threading.Lock()
@@ -322,11 +459,94 @@ def _rows_to_groups(rows: list[dict[str, object]]) -> dict[str, dict[str, dict[s
             "currency": currency,
         }
 
-    for mode in REQUIRED_MODES:
+    for mode in MANDATORY_MODES:
         if not groups[mode]:
             raise ValueError(f"Missing instrument group: {mode}")
 
     return groups
+
+
+def sync_quality_candidate_instruments() -> dict[str, object]:
+    """
+    Upsert the stronger candidate pool into the DB source-of-truth catalog.
+
+    Existing symbols, including rows that used to live in us_test, are moved into
+    their scheduled scan mode via the symbol-level unique key instead of being
+    duplicated.
+    """
+    global _CACHE_DATA, _CACHE_LOADED_AT
+
+    ensure_instrument_catalog_schema()
+    rows: list[dict[str, object]] = []
+    for raw_row in QUALITY_CANDIDATE_INSTRUMENTS:
+        rows.append(
+            {
+                "mode": _normalize_text(raw_row.get("mode")).lower(),
+                "display_name": _normalize_text(raw_row.get("display_name")),
+                "symbol": _normalize_text(raw_row.get("symbol")).upper(),
+                "instrument_type": _normalize_text(raw_row.get("instrument_type")).lower() or "stock",
+                "priority": int(raw_row.get("priority") or 0),
+                "market": _normalize_text(raw_row.get("market")).upper() or "NASDAQ",
+                "exchange": _normalize_optional_market_field(raw_row.get("exchange")),
+                "primary_exchange": _normalize_primary_exchange(raw_row.get("primary_exchange")),
+                "currency": _normalize_optional_market_field(raw_row.get("currency")) or "USD",
+                "active": True,
+            }
+        )
+
+    with get_db_cursor(commit=True) as cur:
+        cur.executemany(
+            """
+            INSERT INTO instrument_catalog (
+                mode,
+                display_name,
+                symbol,
+                instrument_type,
+                priority,
+                market,
+                exchange,
+                primary_exchange,
+                currency,
+                active
+            )
+            VALUES (
+                %(mode)s,
+                %(display_name)s,
+                %(symbol)s,
+                %(instrument_type)s,
+                %(priority)s,
+                %(market)s,
+                %(exchange)s,
+                %(primary_exchange)s,
+                %(currency)s,
+                %(active)s
+            )
+            ON CONFLICT (symbol)
+            DO UPDATE SET
+                mode = EXCLUDED.mode,
+                display_name = EXCLUDED.display_name,
+                instrument_type = EXCLUDED.instrument_type,
+                priority = EXCLUDED.priority,
+                market = EXCLUDED.market,
+                exchange = EXCLUDED.exchange,
+                primary_exchange = EXCLUDED.primary_exchange,
+                currency = EXCLUDED.currency,
+                active = TRUE,
+                updated_at = NOW()
+            """,
+            rows,
+        )
+
+    with _CACHE_LOCK:
+        _CACHE_DATA = None
+        _CACHE_LOADED_AT = 0.0
+
+    return {
+        "ok": True,
+        "synced_count": len(rows),
+        "symbols": [str(row["symbol"]) for row in rows],
+        "modes": sorted({str(row["mode"]) for row in rows}),
+    }
 
 
 def _load_groups_from_db() -> dict[str, dict[str, dict[str, object]]]:

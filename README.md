@@ -136,6 +136,11 @@ Paper-trading and scan controls:
 - `LOW_PRICE_NOTIONAL_CAP_ENABLED`
 - `LOW_PRICE_THRESHOLD`
 - `LOW_PRICE_MAX_NOTIONAL`
+- `SYMBOL_ELIGIBILITY_MAX_SYMBOLS_PER_MODE`
+- `SYMBOL_RANKING_WINDOW_DAYS`
+- `SYMBOL_RANKING_BROKER`
+- `IBKR_SYMBOL_RANKING_WINDOW_DAYS`
+- `IBKR_SYMBOL_RANKING_MIN_CLOSED_TRADES`
 - `ENABLE_LATE_SESSION_HARD_BLOCK`
 
 IBKR / VM orchestration variables:
@@ -187,7 +192,7 @@ Recommended consolidated scheduler setup:
 - `daily-post-close`
   - `30 16 * * 1-5 (America/New_York)`
   - Calls `POST /scheduler/daily-post-close`
-  - Internally runs sync first, then reconciliation, trade analysis, signal analysis, and mode ranking refresh
+  - Internally runs sync first, repairs stale IBKR closes, refreshes symbol rankings, refreshes next-session symbol eligibility, then runs reconciliation, trade analysis, signal analysis, and mode ranking refresh
 - `maintenance`
   - `0 18 * * * (America/New_York)`
   - Calls `POST /scheduler/maintenance`
@@ -299,11 +304,16 @@ Main tables:
 - `reconciliation_runs`
 - `reconciliation_details`
 - `broker_api_logs`
+- `instrument_catalog`
+- `symbol_session_eligibility`
+- `symbol_rankings`
 
 Schema defined in:
 ```
 schema.sql
 ```
+
+Production symbols are loaded from the DB-backed `instrument_catalog`. The code-level defaults are only a seed/sync helper; live scheduled scans use `symbol_session_eligibility`, capped by price eligibility and `symbol_rankings`.
 
 ---
 

@@ -183,6 +183,7 @@ def execute_post_close_ops(
     now_ny: datetime,
     run_sync: Callable[[], Any],
     run_symbol_eligibility_refresh: Callable[[], Any] | None = None,
+    run_symbol_ranking_refresh: Callable[[], Any] | None = None,
     run_ibkr_stale_close_repair: Callable[[], Any] | None,
     run_reconcile: Callable[[], Any],
     run_trade_analysis: Callable[[], Any],
@@ -192,15 +193,20 @@ def execute_post_close_ops(
     results = {
         "sync": _run_action_safely("sync", run_sync),
     }
-    if run_symbol_eligibility_refresh is not None:
-        results["refresh_symbol_eligibility"] = _run_action_safely(
-            "refresh_symbol_eligibility",
-            run_symbol_eligibility_refresh,
-        )
     if run_ibkr_stale_close_repair is not None:
         results["repair_ibkr_stale_closes"] = _run_action_safely(
             "repair_ibkr_stale_closes",
             run_ibkr_stale_close_repair,
+        )
+    if run_symbol_ranking_refresh is not None:
+        results["refresh_symbol_rankings"] = _run_action_safely(
+            "refresh_symbol_rankings",
+            run_symbol_ranking_refresh,
+        )
+    if run_symbol_eligibility_refresh is not None:
+        results["refresh_symbol_eligibility"] = _run_action_safely(
+            "refresh_symbol_eligibility",
+            run_symbol_eligibility_refresh,
         )
     results["reconcile"] = _run_action_safely("reconcile", run_reconcile)
     results["analyze_paper_trades"] = _run_action_safely("analyze_paper_trades", run_trade_analysis)
@@ -234,6 +240,7 @@ def execute_maintenance_ops(
                 "broker_orders": 120,
                 "reconciliation_details": 120,
                 "reconciliation_runs": 120,
+                "symbol_rankings": 120,
             }
         )
         if prune_operational_data is not None

@@ -24,6 +24,7 @@ from storage import (
     get_recent_paper_trade_rejections,
     get_paper_trade_attempt_daily_summary,
     get_paper_trade_attempt_hourly_summary,
+    get_latest_symbol_ranking_rows,
     get_trade_lifecycles,
     get_trade_lifecycles_page,
     get_trade_lifecycle_summary_from_table,
@@ -126,6 +127,7 @@ from orchestration.runtime_context import (
     get_ibkr_shadow_risk_exposure_summary,
     place_ibkr_paper_orders_from_trade,
     refresh_ibkr_mode_rankings,
+    refresh_ibkr_symbol_rankings,
     resolve_ibkr_account_size,
     resolve_ibkr_scheduled_mode_order,
     resolve_ibkr_shadow_account_size,
@@ -153,7 +155,7 @@ from analytics.trade_scan import (
     market_time_check,
     MIN_CONFIDENCE,
 )
-from analytics.instruments import get_instrument_groups
+from analytics.instruments import get_instrument_groups, sync_quality_candidate_instruments
 
 
 app = Flask(__name__)
@@ -444,6 +446,7 @@ def run_daily_post_close_scheduler(*, now_ny: datetime):
             now_ny=now_ny,
             fetch_intraday_fn=fetch_ibkr_intraday,
         ),
+        run_symbol_ranking_refresh=lambda: refresh_ibkr_symbol_rankings(ranking_date=now_ny.date().isoformat()),
         run_ibkr_stale_close_repair=lambda: repair_ibkr_stale_closes(
             target_date=now_ny.date().isoformat(),
             get_stale_ibkr_closed_trade_lifecycles=get_stale_ibkr_closed_trade_lifecycles,
@@ -617,11 +620,13 @@ register_health_routes(
     get_recent_paper_trade_rejections=get_recent_paper_trade_rejections,
     get_paper_trade_attempt_daily_summary=get_paper_trade_attempt_daily_summary,
     get_paper_trade_attempt_hourly_summary=get_paper_trade_attempt_hourly_summary,
+    get_symbol_rankings=get_latest_symbol_ranking_rows,
     get_ibkr_operational_status=get_ibkr_operational_status,
     telegram_alerts_enabled=telegram_alerts_enabled,
     send_telegram_alert=send_telegram_alert,
     purge_all_test_data=purge_all_test_data,
     purge_legacy_broker_data=purge_legacy_broker_data,
+    run_instrument_catalog_sync=sync_quality_candidate_instruments,
     run_symbol_eligibility_refresh=run_symbol_eligibility_refresh,
 )
 register_analysis_routes(

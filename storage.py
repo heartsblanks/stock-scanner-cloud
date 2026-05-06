@@ -50,10 +50,12 @@ from repositories.trades_repo import (
     get_recent_closed_trade_lifecycle_for_symbol,
     get_latest_mode_ranking_order,
     get_latest_mode_ranking_rows,
+    get_latest_symbol_ranking_rows,
     get_latest_exit_trade_event_for_parent_order_id,
     get_recent_trade_event_rows,
     get_recent_trade_events,
     get_rolling_mode_performance,
+    get_rolling_symbol_performance,
     get_symbol_performance,
     get_stale_ibkr_closed_trade_lifecycles,
     get_trade_event_by_order_id,
@@ -66,6 +68,7 @@ from repositories.trades_repo import (
     get_trade_lifecycles_for_date,
     insert_trade_event,
     refresh_mode_rankings,
+    refresh_symbol_rankings,
     upsert_trade_lifecycle,
 )
 

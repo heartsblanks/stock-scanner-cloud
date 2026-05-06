@@ -5,8 +5,9 @@ from datetime import date, datetime, timedelta
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
-from analytics.instruments import get_instrument_groups
+from analytics.instruments import get_instrument_groups, sync_quality_candidate_instruments
 from core.logging_utils import log_exception, log_info, log_warning
+from repositories.trades_repo import get_latest_symbol_ranking_rows
 from repositories.symbol_eligibility_repo import (
     get_current_symbol_session_eligibility_rows,
     get_latest_symbol_session_eligibility_rows,
@@ -37,6 +38,26 @@ def _allow_non_usd_symbols() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _symbol_eligibility_max_symbols_per_mode() -> int:
+    try:
+        value = int(os.getenv("SYMBOL_ELIGIBILITY_MAX_SYMBOLS_PER_MODE", "6"))
+    except Exception:
+        value = 6
+    return max(1, value)
+
+
+def _symbol_ranking_window_days() -> int:
+    try:
+        value = int(os.getenv("SYMBOL_RANKING_WINDOW_DAYS", "5"))
+    except Exception:
+        value = 5
+    return max(1, value)
+
+
+def _symbol_ranking_broker() -> str:
+    return str(os.getenv("SYMBOL_RANKING_BROKER", "IBKR")).strip().upper() or "IBKR"
+
+
 def _next_nyse_trading_day(reference_date: date) -> date:
     import pandas_market_calendars as mcal
 
@@ -61,6 +82,126 @@ def _extract_last_close(candles: list[dict[str, Any]]) -> float | None:
     return None
 
 
+def _priority_by_symbol(instruments: dict[str, dict[str, Any]]) -> dict[str, int]:
+    priority_map: dict[str, int] = {}
+    for info in instruments.values():
+        symbol = str(info.get("symbol", "")).strip().upper()
+        if symbol:
+            try:
+                priority_map[symbol] = int(info.get("priority") or 0)
+            except Exception:
+                priority_map[symbol] = 0
+    return priority_map
+
+
+def _apply_ranking_filter_to_mode_rows(
+    *,
+    mode: str,
+    rows: list[dict[str, Any]],
+    instruments: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    max_symbols = _symbol_eligibility_max_symbols_per_mode()
+    priority_map = _priority_by_symbol(instruments)
+    ranking_rows: list[dict[str, Any]] = []
+    ranking_by_symbol: dict[str, dict[str, Any]] = {}
+    ranking_available = False
+
+    try:
+        ranking_rows = get_latest_symbol_ranking_rows(
+            broker=_symbol_ranking_broker(),
+            window_days=_symbol_ranking_window_days(),
+            mode=mode,
+        )
+        ranking_by_symbol = {
+            str(row.get("symbol", "")).strip().upper(): row
+            for row in ranking_rows
+            if str(row.get("symbol", "")).strip()
+        }
+        ranking_available = bool(ranking_by_symbol)
+    except Exception as exc:
+        log_warning(
+            "Symbol ranking unavailable; falling back to priority ordering",
+            component="symbol_eligibility_service",
+            operation="refresh_symbol_eligibility_for_date",
+            mode=mode,
+            error=str(exc),
+        )
+
+    demoted_count = 0
+    ranked_below_count = 0
+    candidates: list[dict[str, Any]] = []
+
+    for row in rows:
+        symbol = str(row.get("symbol", "")).strip().upper()
+        if not symbol or not bool(row.get("eligible")):
+            continue
+
+        ranking = ranking_by_symbol.get(symbol)
+        if ranking and bool(ranking.get("demoted")):
+            row["eligible"] = False
+            row["ineligible_reason"] = "symbol_rank_demoted"
+            demoted_count += 1
+            continue
+
+        if ranking:
+            try:
+                rank_value = int(ranking.get("rank") or 999999)
+            except Exception:
+                rank_value = 999999
+            score = _to_float(ranking.get("score"), 0.0)
+            candidates.append(
+                {
+                    "symbol": symbol,
+                    "rank": rank_value,
+                    "score": score,
+                    "priority": priority_map.get(symbol, 0),
+                    "ranking_available": True,
+                }
+            )
+        else:
+            candidates.append(
+                {
+                    "symbol": symbol,
+                    "rank": 999999,
+                    "score": 0.0,
+                    "priority": priority_map.get(symbol, 0),
+                    "ranking_available": False,
+                }
+            )
+
+    candidates.sort(
+        key=lambda item: (
+            int(item["rank"]),
+            -float(item["score"]),
+            -int(item["priority"]),
+            str(item["symbol"]),
+        )
+        if ranking_available
+        else (
+            -int(item["priority"]),
+            str(item["symbol"]),
+        )
+    )
+    allowed_symbols = {str(item["symbol"]) for item in candidates[:max_symbols]}
+
+    for row in rows:
+        symbol = str(row.get("symbol", "")).strip().upper()
+        if symbol and bool(row.get("eligible")) and symbol not in allowed_symbols:
+            row["eligible"] = False
+            row["ineligible_reason"] = "ranked_below_live_allowlist"
+            ranked_below_count += 1
+
+    return {
+        "mode": mode,
+        "max_symbols": max_symbols,
+        "ranking_available": ranking_available,
+        "ranking_row_count": len(ranking_rows),
+        "allowed_symbols": sorted(allowed_symbols),
+        "demoted_count": demoted_count,
+        "ranked_below_count": ranked_below_count,
+    }
+
+
 def refresh_symbol_eligibility_for_date(
     *,
     target_session_date: str,
@@ -70,7 +211,18 @@ def refresh_symbol_eligibility_for_date(
 ) -> dict[str, Any]:
     notional_cap = _configured_notional_cap()
     allow_non_usd = _allow_non_usd_symbols()
-    instrument_groups = get_instrument_groups()
+    catalog_sync_result: dict[str, Any] | None = None
+    try:
+        catalog_sync_result = sync_quality_candidate_instruments()
+    except Exception as exc:
+        log_warning(
+            "Quality candidate catalog sync failed; continuing with current DB catalog",
+            component="symbol_eligibility_service",
+            operation="refresh_symbol_eligibility_for_date",
+            error=str(exc),
+        )
+
+    instrument_groups = get_instrument_groups(force_refresh=True)
     selected_modes = [str(mode).strip().lower() for mode in (modes or list(instrument_groups.keys())) if str(mode).strip()]
 
     mode_summaries: list[dict[str, Any]] = []
@@ -155,6 +307,14 @@ def refresh_symbol_eligibility_for_date(
                 }
             )
 
+        ranking_filter = _apply_ranking_filter_to_mode_rows(
+            mode=mode,
+            rows=rows,
+            instruments=instruments,
+        )
+        mode_eligible = sum(1 for row in rows if bool(row.get("eligible")))
+        mode_ineligible = mode_total - mode_eligible
+
         replace_symbol_session_eligibility_rows(
             session_date=target_session_date,
             mode=mode,
@@ -173,6 +333,7 @@ def refresh_symbol_eligibility_for_date(
                 "above_cap_count": mode_above_cap,
                 "non_usd_excluded_count": mode_non_usd,
                 "price_error_count": mode_errors,
+                "ranking_filter": ranking_filter,
             }
         )
 
@@ -186,6 +347,7 @@ def refresh_symbol_eligibility_for_date(
         "eligible_count": total_eligible,
         "ineligible_count": total_ineligible,
         "modes": mode_summaries,
+        "catalog_sync": catalog_sync_result,
     }
     log_info(
         "Refreshed symbol session eligibility",

@@ -7,8 +7,68 @@ from core.db import execute, fetch_all, fetch_one
 from repositories.common import normalize_text, to_optional_float
 
 
+_SYMBOL_RANKINGS_SCHEMA_READY = False
+
+
 def _broker_filter_sql(normalized_broker: str) -> str:
     return "UPPER(COALESCE(NULLIF(broker, ''), 'IBKR')) = %(broker)s"
+
+
+def ensure_symbol_rankings_schema() -> None:
+    global _SYMBOL_RANKINGS_SCHEMA_READY
+    if _SYMBOL_RANKINGS_SCHEMA_READY:
+        return
+
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS symbol_rankings (
+            id SERIAL PRIMARY KEY,
+            ranking_date DATE NOT NULL,
+            broker TEXT NOT NULL,
+            window_days INT NOT NULL,
+            mode TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            rank INT NOT NULL,
+            score NUMERIC,
+            priority INT NOT NULL DEFAULT 0,
+            trade_count INT NOT NULL DEFAULT 0,
+            closed_trade_count INT NOT NULL DEFAULT 0,
+            winning_trade_count INT NOT NULL DEFAULT 0,
+            losing_trade_count INT NOT NULL DEFAULT 0,
+            realized_pnl_total NUMERIC NOT NULL DEFAULT 0,
+            average_realized_pnl NUMERIC,
+            win_rate_percent NUMERIC,
+            candidate_count INT NOT NULL DEFAULT 0,
+            placed_count INT NOT NULL DEFAULT 0,
+            skipped_count INT NOT NULL DEFAULT 0,
+            rejected_count INT NOT NULL DEFAULT 0,
+            demoted BOOLEAN NOT NULL DEFAULT FALSE,
+            demotion_reason TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+        """
+    )
+    execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_symbol_rankings_broker_date
+        ON symbol_rankings(broker, ranking_date DESC)
+        """
+    )
+    execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_symbol_rankings_mode_rank
+        ON symbol_rankings(mode, rank)
+        """
+    )
+    execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_symbol_rankings_day_broker_window_mode_symbol
+        ON symbol_rankings(ranking_date, broker, window_days, mode, symbol)
+        """
+    )
+
+    _SYMBOL_RANKINGS_SCHEMA_READY = True
 
 
 def insert_trade_event(
@@ -987,6 +1047,359 @@ def get_dashboard_summary(target_date: Optional[str] = None, broker: Optional[st
     }
 
 
+def _symbol_ranking_score(row: dict[str, Any]) -> float:
+    priority = int(row.get("priority") or 0)
+    realized_pnl_total = to_optional_float(row.get("realized_pnl_total")) or 0.0
+    average_realized_pnl = to_optional_float(row.get("average_realized_pnl")) or 0.0
+    win_rate_percent = to_optional_float(row.get("win_rate_percent")) or 0.0
+    losing_trade_count = int(row.get("losing_trade_count") or 0)
+    candidate_count = int(row.get("candidate_count") or 0)
+    placed_count = int(row.get("placed_count") or 0)
+    skipped_count = int(row.get("skipped_count") or 0)
+    rejected_count = int(row.get("rejected_count") or 0)
+
+    return round(
+        (priority * 10.0)
+        + (realized_pnl_total * 4.0)
+        + (average_realized_pnl * 2.0)
+        + (win_rate_percent * 0.15)
+        + (placed_count * 1.5)
+        + (candidate_count * 0.25)
+        - (losing_trade_count * 4.0)
+        - ((skipped_count + rejected_count) * 0.5),
+        6,
+    )
+
+
+def _symbol_ranking_demoted(row: dict[str, Any], *, min_closed_trade_count: int) -> tuple[bool, str | None]:
+    closed_trade_count = int(row.get("closed_trade_count") or 0)
+    realized_pnl_total = to_optional_float(row.get("realized_pnl_total")) or 0.0
+    win_rate_percent = to_optional_float(row.get("win_rate_percent"))
+    if (
+        closed_trade_count >= max(1, int(min_closed_trade_count))
+        and realized_pnl_total < 0
+        and (win_rate_percent is None or win_rate_percent < 50.0)
+    ):
+        return True, "negative_pnl_low_win_rate"
+    return False, None
+
+
+def get_rolling_symbol_performance(
+    *,
+    broker: str,
+    expected_modes: Optional[list[str]] = None,
+    window_days: int = 5,
+    as_of_date: Optional[str] = None,
+) -> list[dict]:
+    normalized_broker = normalize_text(broker).upper()
+    if not normalized_broker:
+        raise ValueError("broker is required")
+
+    normalized_modes = [normalize_text(mode).lower() for mode in (expected_modes or []) if normalize_text(mode)]
+    mode_filter = ""
+    params: dict[str, Any] = {
+        "broker": normalized_broker,
+        "window_days": max(1, int(window_days)),
+        "calendar_lookback_days": max(1, int(window_days)) * 2 + 2,
+        "as_of_date": as_of_date or datetime.utcnow().date().isoformat(),
+    }
+    if normalized_modes:
+        mode_filter = "AND c.mode = ANY(%(expected_modes)s)"
+        params["expected_modes"] = normalized_modes
+
+    broker_filter_sql = _broker_filter_sql(normalized_broker)
+    complete_pnl_filter = """
+      AND realized_pnl IS NOT NULL
+      AND NOT (
+          COALESCE(realized_pnl, 0) = 0
+          AND UPPER(COALESCE(exit_reason, '')) IN (
+              'TIME_STOP_CLOSE_REQUESTED_PENDING_FILL_SYNC',
+              'BROKER_POSITION_FLAT_PENDING_FILL_SYNC',
+              'BROKER_CLOSE_UNVERIFIED_NO_FILL_DATA'
+          )
+      )
+    """
+    return fetch_all(
+        f"""
+        WITH active_catalog AS (
+            SELECT
+                LOWER(mode) AS mode,
+                UPPER(symbol) AS symbol,
+                display_name,
+                priority
+            FROM instrument_catalog c
+            WHERE active = TRUE
+              {mode_filter}
+        ),
+        lifecycle_stats AS (
+            SELECT
+                UPPER(symbol) AS symbol,
+                LOWER(COALESCE(mode, '')) AS mode,
+                COUNT(*)::INT AS closed_trade_count,
+                COUNT(*) FILTER (WHERE COALESCE(realized_pnl, 0) > 0)::INT AS winning_trade_count,
+                COUNT(*) FILTER (WHERE COALESCE(realized_pnl, 0) < 0)::INT AS losing_trade_count,
+                ROUND(COALESCE(SUM(realized_pnl), 0)::numeric, 6) AS realized_pnl_total,
+                ROUND(AVG(realized_pnl)::numeric, 6) AS average_realized_pnl,
+                CASE
+                    WHEN COUNT(*) > 0
+                    THEN ROUND(
+                        (
+                            COUNT(*) FILTER (WHERE COALESCE(realized_pnl, 0) > 0)::NUMERIC
+                            / COUNT(*)::NUMERIC
+                        ) * 100,
+                        6
+                    )
+                    ELSE NULL
+                END AS win_rate_percent
+            FROM trade_lifecycles
+            WHERE UPPER(COALESCE(status, '')) = 'CLOSED'
+              AND {broker_filter_sql}
+              AND exit_time IS NOT NULL
+              AND exit_time::date <= %(as_of_date)s::date
+              AND exit_time::date >= (%(as_of_date)s::date - (%(calendar_lookback_days)s::text || ' days')::interval)
+              {complete_pnl_filter}
+            GROUP BY UPPER(symbol), LOWER(COALESCE(mode, ''))
+        ),
+        attempt_stats AS (
+            SELECT
+                UPPER(symbol) AS symbol,
+                LOWER(COALESCE(mode, '')) AS mode,
+                COUNT(*) FILTER (WHERE UPPER(COALESCE(decision_stage, '')) = 'PAPER_CANDIDATE')::INT AS candidate_count,
+                COUNT(*) FILTER (WHERE UPPER(COALESCE(decision_stage, '')) = 'PLACED')::INT AS placed_count,
+                COUNT(*) FILTER (WHERE UPPER(COALESCE(decision_stage, '')) = 'PLACEMENT_SKIPPED')::INT AS skipped_count,
+                COUNT(*) FILTER (WHERE UPPER(COALESCE(decision_stage, '')) IN ('SCAN_REJECTED', 'REFRESH_REJECTED', 'PLACEMENT_REJECTED'))::INT AS rejected_count
+            FROM paper_trade_attempts
+            WHERE {broker_filter_sql}
+              AND timestamp_utc::date <= %(as_of_date)s::date
+              AND timestamp_utc::date >= (%(as_of_date)s::date - (%(calendar_lookback_days)s::text || ' days')::interval)
+            GROUP BY UPPER(symbol), LOWER(COALESCE(mode, ''))
+        )
+        SELECT
+            c.mode,
+            c.symbol,
+            c.display_name,
+            c.priority,
+            COALESCE(l.closed_trade_count, 0)::INT AS closed_trade_count,
+            COALESCE(l.closed_trade_count, 0)::INT AS trade_count,
+            COALESCE(l.winning_trade_count, 0)::INT AS winning_trade_count,
+            COALESCE(l.losing_trade_count, 0)::INT AS losing_trade_count,
+            COALESCE(l.realized_pnl_total, 0) AS realized_pnl_total,
+            l.average_realized_pnl,
+            l.win_rate_percent,
+            COALESCE(a.candidate_count, 0)::INT AS candidate_count,
+            COALESCE(a.placed_count, 0)::INT AS placed_count,
+            COALESCE(a.skipped_count, 0)::INT AS skipped_count,
+            COALESCE(a.rejected_count, 0)::INT AS rejected_count
+        FROM active_catalog c
+        LEFT JOIN lifecycle_stats l
+          ON l.symbol = c.symbol
+         AND (l.mode = c.mode OR l.mode = '')
+        LEFT JOIN attempt_stats a
+          ON a.symbol = c.symbol
+         AND (a.mode = c.mode OR a.mode = '')
+        ORDER BY c.mode ASC, c.priority DESC, c.symbol ASC
+        """,
+        params,
+    )
+
+
+def refresh_symbol_rankings(
+    *,
+    broker: str,
+    expected_modes: Optional[list[str]] = None,
+    window_days: int = 5,
+    as_of_date: Optional[str] = None,
+    min_closed_trade_count: int = 2,
+) -> dict[str, Any]:
+    ensure_symbol_rankings_schema()
+    normalized_broker = normalize_text(broker).upper()
+    if not normalized_broker:
+        raise ValueError("broker is required")
+
+    ranking_date = as_of_date or datetime.utcnow().date().isoformat()
+    rolling_rows = get_rolling_symbol_performance(
+        broker=normalized_broker,
+        expected_modes=expected_modes,
+        window_days=window_days,
+        as_of_date=ranking_date,
+    )
+
+    rows_by_mode: dict[str, list[dict[str, Any]]] = {}
+    for row in rolling_rows:
+        mode = normalize_text(row.get("mode")).lower()
+        symbol = normalize_text(row.get("symbol")).upper()
+        if not mode or not symbol:
+            continue
+        scored = dict(row)
+        demoted, demotion_reason = _symbol_ranking_demoted(
+            scored,
+            min_closed_trade_count=min_closed_trade_count,
+        )
+        scored["score"] = _symbol_ranking_score(scored)
+        scored["demoted"] = demoted
+        scored["demotion_reason"] = demotion_reason
+        rows_by_mode.setdefault(mode, []).append(scored)
+
+    ranked_rows: list[dict[str, Any]] = []
+    for mode, rows in sorted(rows_by_mode.items()):
+        rows.sort(
+            key=lambda row: (
+                bool(row.get("demoted")),
+                -float(row.get("score") or 0.0),
+                -int(row.get("priority") or 0),
+                normalize_text(row.get("symbol")).upper(),
+            )
+        )
+        for rank, row in enumerate(rows, start=1):
+            ranked = dict(row)
+            ranked["rank"] = rank
+            ranked_rows.append(ranked)
+
+    execute(
+        """
+        DELETE FROM symbol_rankings
+        WHERE ranking_date = %(ranking_date)s::date
+          AND broker = %(broker)s
+          AND window_days = %(window_days)s
+        """,
+        {
+            "ranking_date": ranking_date,
+            "broker": normalized_broker,
+            "window_days": max(1, int(window_days)),
+        },
+    )
+
+    for row in ranked_rows:
+        execute(
+            """
+            INSERT INTO symbol_rankings (
+                ranking_date, broker, window_days, mode, symbol, rank, score, priority,
+                trade_count, closed_trade_count, winning_trade_count, losing_trade_count,
+                realized_pnl_total, average_realized_pnl, win_rate_percent,
+                candidate_count, placed_count, skipped_count, rejected_count,
+                demoted, demotion_reason, updated_at
+            ) VALUES (
+                %(ranking_date)s::date, %(broker)s, %(window_days)s, %(mode)s, %(symbol)s, %(rank)s, %(score)s, %(priority)s,
+                %(trade_count)s, %(closed_trade_count)s, %(winning_trade_count)s, %(losing_trade_count)s,
+                %(realized_pnl_total)s, %(average_realized_pnl)s, %(win_rate_percent)s,
+                %(candidate_count)s, %(placed_count)s, %(skipped_count)s, %(rejected_count)s,
+                %(demoted)s, %(demotion_reason)s, NOW()
+            )
+            ON CONFLICT (ranking_date, broker, window_days, mode, symbol)
+            DO UPDATE SET
+                rank = EXCLUDED.rank,
+                score = EXCLUDED.score,
+                priority = EXCLUDED.priority,
+                trade_count = EXCLUDED.trade_count,
+                closed_trade_count = EXCLUDED.closed_trade_count,
+                winning_trade_count = EXCLUDED.winning_trade_count,
+                losing_trade_count = EXCLUDED.losing_trade_count,
+                realized_pnl_total = EXCLUDED.realized_pnl_total,
+                average_realized_pnl = EXCLUDED.average_realized_pnl,
+                win_rate_percent = EXCLUDED.win_rate_percent,
+                candidate_count = EXCLUDED.candidate_count,
+                placed_count = EXCLUDED.placed_count,
+                skipped_count = EXCLUDED.skipped_count,
+                rejected_count = EXCLUDED.rejected_count,
+                demoted = EXCLUDED.demoted,
+                demotion_reason = EXCLUDED.demotion_reason,
+                updated_at = NOW()
+            """,
+            {
+                "ranking_date": ranking_date,
+                "broker": normalized_broker,
+                "window_days": max(1, int(window_days)),
+                "mode": normalize_text(row.get("mode")).lower(),
+                "symbol": normalize_text(row.get("symbol")).upper(),
+                "rank": int(row.get("rank") or 0),
+                "score": to_optional_float(row.get("score")) or 0.0,
+                "priority": int(row.get("priority") or 0),
+                "trade_count": int(row.get("trade_count") or 0),
+                "closed_trade_count": int(row.get("closed_trade_count") or 0),
+                "winning_trade_count": int(row.get("winning_trade_count") or 0),
+                "losing_trade_count": int(row.get("losing_trade_count") or 0),
+                "realized_pnl_total": to_optional_float(row.get("realized_pnl_total")) or 0.0,
+                "average_realized_pnl": to_optional_float(row.get("average_realized_pnl")),
+                "win_rate_percent": to_optional_float(row.get("win_rate_percent")),
+                "candidate_count": int(row.get("candidate_count") or 0),
+                "placed_count": int(row.get("placed_count") or 0),
+                "skipped_count": int(row.get("skipped_count") or 0),
+                "rejected_count": int(row.get("rejected_count") or 0),
+                "demoted": bool(row.get("demoted")),
+                "demotion_reason": normalize_text(row.get("demotion_reason")) or None,
+            },
+        )
+
+    return {
+        "ranking_date": ranking_date,
+        "broker": normalized_broker,
+        "window_days": max(1, int(window_days)),
+        "symbol_count": len(ranked_rows),
+        "mode_count": len(rows_by_mode),
+        "demoted_count": sum(1 for row in ranked_rows if bool(row.get("demoted"))),
+        "min_closed_trade_count": max(1, int(min_closed_trade_count)),
+    }
+
+
+def get_latest_symbol_ranking_rows(
+    *,
+    broker: str,
+    window_days: int = 5,
+    mode: Optional[str] = None,
+) -> list[dict]:
+    ensure_symbol_rankings_schema()
+    normalized_broker = normalize_text(broker).upper()
+    if not normalized_broker:
+        raise ValueError("broker is required")
+    normalized_mode = normalize_text(mode).lower() if mode else ""
+    mode_filter = ""
+    params: dict[str, Any] = {
+        "broker": normalized_broker,
+        "window_days": max(1, int(window_days)),
+    }
+    if normalized_mode:
+        mode_filter = "AND mode = %(mode)s"
+        params["mode"] = normalized_mode
+    return fetch_all(
+        f"""
+        SELECT
+            ranking_date,
+            broker,
+            window_days,
+            mode,
+            symbol,
+            rank,
+            score,
+            priority,
+            trade_count,
+            closed_trade_count,
+            winning_trade_count,
+            losing_trade_count,
+            realized_pnl_total,
+            average_realized_pnl,
+            win_rate_percent,
+            candidate_count,
+            placed_count,
+            skipped_count,
+            rejected_count,
+            demoted,
+            demotion_reason
+        FROM symbol_rankings
+        WHERE broker = %(broker)s
+          AND window_days = %(window_days)s
+          {mode_filter}
+          AND ranking_date = (
+              SELECT MAX(ranking_date)
+              FROM symbol_rankings
+              WHERE broker = %(broker)s
+                AND window_days = %(window_days)s
+          )
+        ORDER BY mode ASC, rank ASC, symbol ASC
+        """,
+        params,
+    )
+
+
 def get_rolling_mode_performance(
     *,
     broker: str,
@@ -1008,6 +1421,17 @@ def get_rolling_mode_performance(
     if as_of_date:
         as_of_filter = "AND exit_time::date <= %(as_of_date)s::date"
         params["as_of_date"] = as_of_date
+    complete_pnl_filter = """
+      AND realized_pnl IS NOT NULL
+      AND NOT (
+          COALESCE(realized_pnl, 0) = 0
+          AND UPPER(COALESCE(exit_reason, '')) IN (
+              'TIME_STOP_CLOSE_REQUESTED_PENDING_FILL_SYNC',
+              'BROKER_POSITION_FLAT_PENDING_FILL_SYNC',
+              'BROKER_CLOSE_UNVERIFIED_NO_FILL_DATA'
+          )
+      )
+    """
 
     return fetch_all(
         f"""
@@ -1019,6 +1443,7 @@ def get_rolling_mode_performance(
               AND {broker_filter_sql}
               AND exit_time IS NOT NULL
               {as_of_filter}
+              {complete_pnl_filter}
             ORDER BY trading_day DESC
             LIMIT %(window_days)s
         )
@@ -1046,6 +1471,7 @@ def get_rolling_mode_performance(
           AND COALESCE(mode, '') <> ''
           AND {broker_filter_sql}
           AND exit_time IS NOT NULL
+          {complete_pnl_filter}
           AND exit_time::date IN (SELECT trading_day FROM trading_days)
         GROUP BY COALESCE(mode, '')
         HAVING COUNT(*) >= %(min_closed_trade_count)s

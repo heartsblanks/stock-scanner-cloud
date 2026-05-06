@@ -13,6 +13,7 @@ _RETENTION_TABLES: dict[str, tuple[str, str]] = {
     "broker_orders": ("created_at", "broker_orders"),
     "reconciliation_details": ("created_at", "reconciliation_details"),
     "reconciliation_runs": ("run_time", "reconciliation_runs"),
+    "symbol_rankings": ("created_at", "symbol_rankings"),
 }
 
 
@@ -85,6 +86,17 @@ def purge_legacy_broker_data() -> dict[str, Any]:
             """
             WITH deleted AS (
                 DELETE FROM broker_orders
+                WHERE UPPER(COALESCE(NULLIF(broker, ''), 'LEGACY')) <> 'IBKR'
+                RETURNING 1
+            )
+            SELECT COUNT(*)::INT AS deleted_count FROM deleted
+            """,
+        ),
+        (
+            "symbol_rankings",
+            """
+            WITH deleted AS (
+                DELETE FROM symbol_rankings
                 WHERE UPPER(COALESCE(NULLIF(broker, ''), 'LEGACY')) <> 'IBKR'
                 RETURNING 1
             )
@@ -206,6 +218,17 @@ def purge_all_test_data() -> dict[str, Any]:
             """
             WITH deleted AS (
                 DELETE FROM mode_rankings
+                WHERE LOWER(COALESCE(mode, '')) = %(mode)s
+                RETURNING 1
+            )
+            SELECT COUNT(*)::INT AS deleted_count FROM deleted
+            """,
+        ),
+        (
+            "symbol_rankings",
+            """
+            WITH deleted AS (
+                DELETE FROM symbol_rankings
                 WHERE LOWER(COALESCE(mode, '')) = %(mode)s
                 RETURNING 1
             )

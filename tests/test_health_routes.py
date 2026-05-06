@@ -8,7 +8,15 @@ from routes.health import register_health_routes
 
 
 class HealthRoutesTests(unittest.TestCase):
-    def _build_client(self, *, send_telegram_alert=None, telegram_alerts_enabled=None, run_symbol_eligibility_refresh=None):
+    def _build_client(
+        self,
+        *,
+        send_telegram_alert=None,
+        telegram_alerts_enabled=None,
+        get_symbol_rankings=None,
+        run_instrument_catalog_sync=None,
+        run_symbol_eligibility_refresh=None,
+    ):
         app = Flask(__name__)
         register_health_routes(
             app,
@@ -22,6 +30,8 @@ class HealthRoutesTests(unittest.TestCase):
             get_ibkr_operational_status=lambda: {"ok": True},
             telegram_alerts_enabled=telegram_alerts_enabled or (lambda: True),
             send_telegram_alert=send_telegram_alert or (lambda **kwargs: {"ok": True, "sent": True, "reason": "delivered"}),
+            get_symbol_rankings=get_symbol_rankings,
+            run_instrument_catalog_sync=run_instrument_catalog_sync,
             run_symbol_eligibility_refresh=run_symbol_eligibility_refresh,
         )
         return app.test_client()
@@ -81,6 +91,39 @@ class HealthRoutesTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["target_session_date"], "2026-04-21")
         self.assertEqual(captured["payload"]["modes"], ["us_test"])
+
+    def test_admin_sync_instrument_catalog_runs_when_authorized(self):
+        client = self._build_client(
+            run_instrument_catalog_sync=lambda: {"ok": True, "synced_count": 12, "symbols": ["QCOM"]},
+        )
+        with patch.dict(os.environ, {"ADMIN_API_TOKEN": "secret-token"}, clear=False):
+            response = client.post(
+                "/admin/sync-instrument-catalog",
+                headers={"X-Admin-Token": "secret-token"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["synced_count"], 12)
+
+    def test_symbol_rankings_endpoint_returns_rows(self):
+        captured = {}
+
+        def _rankings(**kwargs):
+            captured.update(kwargs)
+            return [{"symbol": "TMUS", "rank": 1}]
+
+        client = self._build_client(get_symbol_rankings=_rankings)
+        response = client.get("/symbol-rankings?broker=IBKR&window_days=5&mode=core_two")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(captured["broker"], "IBKR")
+        self.assertEqual(captured["window_days"], 5)
+        self.assertEqual(captured["mode"], "core_two")
 
 
 if __name__ == "__main__":

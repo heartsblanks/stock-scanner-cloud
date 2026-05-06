@@ -7,6 +7,7 @@ try:
         get_dashboard_summary,
         get_stale_ibkr_closed_trade_lifecycles,
         get_latest_mode_ranking_order,
+        refresh_symbol_rankings,
         refresh_mode_rankings,
         upsert_trade_lifecycle,
     )
@@ -159,13 +160,13 @@ class DashboardSummaryDateScopeTests(unittest.TestCase):
         payload = get_dashboard_summary(target_date=target_date)
 
         self.assertEqual(payload["summary"]["date"], target_date)
-        mock_symbols.assert_called_once_with(limit=10, target_date=target_date)
-        mock_modes.assert_called_once_with(limit=10, target_date=target_date)
-        mock_exit_reasons.assert_called_once_with(limit=20, target_date=target_date)
-        mock_external_exit.assert_called_once_with(target_date=target_date)
-        mock_hourly_perf.assert_called_once_with(limit=24, target_date=target_date)
+        mock_symbols.assert_called_once_with(limit=10, target_date=target_date, broker=None)
+        mock_modes.assert_called_once_with(limit=10, target_date=target_date, broker=None)
+        mock_exit_reasons.assert_called_once_with(limit=20, target_date=target_date, broker=None)
+        mock_external_exit.assert_called_once_with(target_date=target_date, broker=None)
+        mock_hourly_perf.assert_called_once_with(limit=24, target_date=target_date, broker=None)
         self.assertEqual(mock_hourly_quality.call_count, 2)
-        self.assertEqual(mock_equity_curve.call_args.kwargs, {"limit": 5000, "target_date": target_date})
+        self.assertEqual(mock_equity_curve.call_args.kwargs, {"limit": 5000, "target_date": target_date, "broker": None})
 
 
 class ModeRankingTests(unittest.TestCase):
@@ -179,6 +180,7 @@ class ModeRankingTests(unittest.TestCase):
 
         query = mock_fetch_all.call_args.args[0]
         self.assertIn("COALESCE(NULLIF(broker, ''), 'IBKR')", query)
+        self.assertIn("TIME_STOP_CLOSE_REQUESTED_PENDING_FILL_SYNC", query)
 
     @patch("repositories.trades_repo.execute")
     @patch("repositories.trades_repo.get_rolling_mode_performance")
@@ -215,6 +217,85 @@ class ModeRankingTests(unittest.TestCase):
         )
 
         self.assertEqual(ordered_modes, ["core_two", "core_one", "core_three"])
+
+
+class SymbolRankingTests(unittest.TestCase):
+    @patch("repositories.trades_repo.execute")
+    @patch("repositories.trades_repo.ensure_symbol_rankings_schema")
+    @patch("repositories.trades_repo.get_rolling_symbol_performance")
+    def test_refresh_symbol_rankings_scores_and_demotes_weak_symbols(
+        self,
+        mock_rolling,
+        mock_ensure_schema,
+        mock_execute,
+    ):
+        mock_rolling.return_value = [
+            {
+                "mode": "core_two",
+                "symbol": "CSCO",
+                "priority": 8,
+                "trade_count": 2,
+                "closed_trade_count": 2,
+                "winning_trade_count": 0,
+                "losing_trade_count": 2,
+                "realized_pnl_total": -4.0,
+                "average_realized_pnl": -2.0,
+                "win_rate_percent": 0.0,
+                "candidate_count": 3,
+                "placed_count": 2,
+                "skipped_count": 0,
+                "rejected_count": 1,
+            },
+            {
+                "mode": "core_two",
+                "symbol": "TMUS",
+                "priority": 8,
+                "trade_count": 2,
+                "closed_trade_count": 2,
+                "winning_trade_count": 2,
+                "losing_trade_count": 0,
+                "realized_pnl_total": 5.0,
+                "average_realized_pnl": 2.5,
+                "win_rate_percent": 100.0,
+                "candidate_count": 2,
+                "placed_count": 2,
+                "skipped_count": 0,
+                "rejected_count": 0,
+            },
+        ]
+
+        payload = refresh_symbol_rankings(
+            broker="IBKR",
+            expected_modes=["core_two"],
+            window_days=5,
+            as_of_date="2026-05-06",
+            min_closed_trade_count=2,
+        )
+
+        self.assertEqual(payload["symbol_count"], 2)
+        self.assertEqual(payload["demoted_count"], 1)
+        insert_params = [call.args[1] for call in mock_execute.call_args_list[1:]]
+        tmus = next(params for params in insert_params if params["symbol"] == "TMUS")
+        csco = next(params for params in insert_params if params["symbol"] == "CSCO")
+        self.assertEqual(tmus["rank"], 1)
+        self.assertFalse(tmus["demoted"])
+        self.assertTrue(csco["demoted"])
+        self.assertEqual(csco["demotion_reason"], "negative_pnl_low_win_rate")
+
+    @patch("repositories.trades_repo.fetch_all")
+    @patch("repositories.trades_repo.ensure_symbol_rankings_schema")
+    def test_get_latest_symbol_ranking_rows_filters_by_mode(self, mock_ensure_schema, mock_fetch_all):
+        from repositories.trades_repo import get_latest_symbol_ranking_rows
+
+        mock_fetch_all.return_value = []
+
+        get_latest_symbol_ranking_rows(broker="IBKR", window_days=5, mode="core_two")
+
+        query = mock_fetch_all.call_args.args[0]
+        params = mock_fetch_all.call_args.args[1]
+        self.assertIn("AND mode = %(mode)s", query)
+        self.assertEqual(params["mode"], "core_two")
+        self.assertEqual(params["broker"], "IBKR")
 
 
 class StaleLifecycleSelectionTests(unittest.TestCase):

@@ -1,6 +1,14 @@
 import unittest
+from unittest.mock import MagicMock, patch
 
-from analytics.instruments import _normalize_primary_exchange, _rows_to_groups, get_instrument_groups
+from analytics.instruments import (
+    _DEFAULT_INSTRUMENT_GROUPS,
+    MANDATORY_MODES,
+    _normalize_primary_exchange,
+    _rows_to_groups,
+    get_instrument_groups,
+    sync_quality_candidate_instruments,
+)
 
 
 class InstrumentRegistryTests(unittest.TestCase):
@@ -46,8 +54,49 @@ class InstrumentRegistryTests(unittest.TestCase):
         self.assertEqual(_normalize_primary_exchange("nasdaq"), "NASDAQ")
         self.assertIsNone(_normalize_primary_exchange("NONE"))
 
+    def test_rows_to_groups_allows_us_test_to_be_empty(self):
+        rows = []
+        for mode_index, mode in enumerate(MANDATORY_MODES, start=1):
+            rows.append(
+                {
+                    "mode": mode,
+                    "display_name": f"{mode.title()} Name",
+                    "symbol": f"M{mode_index}",
+                    "instrument_type": "stock",
+                    "priority": 10,
+                    "market": "NASDAQ",
+                    "exchange": None,
+                    "primary_exchange": None,
+                    "currency": None,
+                }
+            )
+
+        instrument_groups = _rows_to_groups(rows)
+
+        self.assertEqual(instrument_groups["us_test"], {})
+        for mode in MANDATORY_MODES:
+            self.assertTrue(instrument_groups[mode])
+
+    @patch("analytics.instruments.get_db_cursor")
+    def test_sync_quality_candidates_upserts_by_symbol_and_moves_us_test_rows(self, mock_get_db_cursor):
+        mock_cursor = MagicMock()
+        mock_get_db_cursor.return_value.__enter__.return_value = mock_cursor
+
+        result = sync_quality_candidate_instruments()
+
+        self.assertTrue(result["ok"])
+        self.assertIn("QCOM", result["symbols"])
+        query = mock_cursor.executemany.call_args.args[0]
+        rows = mock_cursor.executemany.call_args.args[1]
+        qcom = next(row for row in rows if row["symbol"] == "QCOM")
+        csco = next(row for row in rows if row["symbol"] == "CSCO")
+        self.assertIn("ON CONFLICT (symbol)", query)
+        self.assertIn("mode = EXCLUDED.mode", query)
+        self.assertEqual(qcom["mode"], "core_three")
+        self.assertEqual(csco["mode"], "core_two")
+
     def test_instrument_symbols_are_unique_across_modes(self):
-        instrument_groups = get_instrument_groups()
+        instrument_groups = _DEFAULT_INSTRUMENT_GROUPS
         seen_symbols = set()
 
         for mode, instruments in instrument_groups.items():
@@ -58,13 +107,11 @@ class InstrumentRegistryTests(unittest.TestCase):
                 self.assertTrue(display_name)
                 seen_symbols.add(symbol)
 
-    def test_each_instrument_mode_stays_within_six_symbol_target(self):
-        instrument_groups = get_instrument_groups()
+    def test_mandatory_instrument_modes_have_seed_symbols(self):
+        instrument_groups = _DEFAULT_INSTRUMENT_GROUPS
         for mode, instruments in instrument_groups.items():
-            if mode.startswith("core_"):
-                self.assertLessEqual(len(instruments), 6, f"{mode} should stay at six or fewer symbols")
-            else:
-                self.assertLessEqual(len(instruments), 6, f"{mode} should stay at six or fewer symbols")
+            if mode in MANDATORY_MODES:
+                self.assertTrue(instruments, f"{mode} should not be empty")
 
 
 if __name__ == "__main__":

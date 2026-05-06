@@ -276,6 +276,41 @@ CREATE INDEX IF NOT EXISTS idx_mode_rankings_window ON mode_rankings(window_days
 CREATE UNIQUE INDEX IF NOT EXISTS uq_mode_rankings_day_broker_window_mode
     ON mode_rankings(ranking_date, broker, window_days, mode);
 
+-- Symbol rankings: rolling broker-specific ordering used by next-session eligibility.
+CREATE TABLE IF NOT EXISTS symbol_rankings (
+    id SERIAL PRIMARY KEY,
+    ranking_date DATE NOT NULL,
+    broker TEXT NOT NULL,
+    window_days INT NOT NULL,
+    mode TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    rank INT NOT NULL,
+    score NUMERIC,
+    priority INT NOT NULL DEFAULT 0,
+    trade_count INT NOT NULL DEFAULT 0,
+    closed_trade_count INT NOT NULL DEFAULT 0,
+    winning_trade_count INT NOT NULL DEFAULT 0,
+    losing_trade_count INT NOT NULL DEFAULT 0,
+    realized_pnl_total NUMERIC NOT NULL DEFAULT 0,
+    average_realized_pnl NUMERIC,
+    win_rate_percent NUMERIC,
+    candidate_count INT NOT NULL DEFAULT 0,
+    placed_count INT NOT NULL DEFAULT 0,
+    skipped_count INT NOT NULL DEFAULT 0,
+    rejected_count INT NOT NULL DEFAULT 0,
+    demoted BOOLEAN NOT NULL DEFAULT FALSE,
+    demotion_reason TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_symbol_rankings_broker_date
+    ON symbol_rankings(broker, ranking_date DESC);
+CREATE INDEX IF NOT EXISTS idx_symbol_rankings_mode_rank
+    ON symbol_rankings(mode, rank);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_symbol_rankings_day_broker_window_mode_symbol
+    ON symbol_rankings(ranking_date, broker, window_days, mode, symbol);
+
 -- Instrument catalog (DB source of truth)
 CREATE TABLE IF NOT EXISTS instrument_catalog (
     id SERIAL PRIMARY KEY,

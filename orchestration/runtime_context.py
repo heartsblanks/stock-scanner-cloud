@@ -15,7 +15,13 @@ from orchestration.scan_context import (
     IBKR_SCHEDULED_MODE_ORDER,
     to_float_or_none,
 )
-from storage import get_daily_realized_pnl, get_latest_mode_ranking_order, get_trade_lifecycle_summary_for_date, refresh_mode_rankings
+from storage import (
+    get_daily_realized_pnl,
+    get_latest_mode_ranking_order,
+    get_trade_lifecycle_summary_for_date,
+    refresh_mode_rankings,
+    refresh_symbol_rankings,
+)
 
 
 PAPER_TRADE_MIN_CONFIDENCE = int(os.getenv("PAPER_TRADE_MIN_CONFIDENCE", "70"))
@@ -24,6 +30,8 @@ IBKR_PAPER_TRADE_MIN_CONFIDENCE = int(
 )
 IBKR_MODE_RANKING_WINDOW_DAYS = max(1, int(os.getenv("IBKR_MODE_RANKING_WINDOW_DAYS", "5")))
 IBKR_MODE_RANKING_MIN_CLOSED_TRADES = max(1, int(os.getenv("IBKR_MODE_RANKING_MIN_CLOSED_TRADES", "2")))
+IBKR_SYMBOL_RANKING_WINDOW_DAYS = max(1, int(os.getenv("IBKR_SYMBOL_RANKING_WINDOW_DAYS", "5")))
+IBKR_SYMBOL_RANKING_MIN_CLOSED_TRADES = max(1, int(os.getenv("IBKR_SYMBOL_RANKING_MIN_CLOSED_TRADES", "2")))
 NY_TZ = ZoneInfo("America/New_York")
 
 PAPER_BROKER = get_paper_broker()
@@ -299,6 +307,21 @@ def refresh_ibkr_mode_rankings(*, ranking_date: str | None = None) -> dict[str, 
     return {
         "ok": True,
         "message": "ibkr mode rankings refreshed",
+        **result,
+    }
+
+
+def refresh_ibkr_symbol_rankings(*, ranking_date: str | None = None) -> dict[str, Any]:
+    result = refresh_symbol_rankings(
+        broker="IBKR",
+        expected_modes=IBKR_SCHEDULED_MODE_ORDER,
+        window_days=IBKR_SYMBOL_RANKING_WINDOW_DAYS,
+        as_of_date=ranking_date,
+        min_closed_trade_count=IBKR_SYMBOL_RANKING_MIN_CLOSED_TRADES,
+    )
+    return {
+        "ok": True,
+        "message": "ibkr symbol rankings refreshed",
         **result,
     }
 

@@ -167,6 +167,26 @@ class SchedulerOpsTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertIn("refresh_symbol_eligibility", result["results"])
 
+    def test_post_close_ops_runs_symbol_rankings_before_symbol_eligibility(self):
+        now_ny = datetime(2026, 4, 2, 16, 30, tzinfo=NY_TZ)
+        execution_order = []
+
+        result = execute_post_close_ops(
+            now_ny=now_ny,
+            run_sync=lambda: execution_order.append("sync") or {"ok": True, "task": "sync"},
+            run_symbol_ranking_refresh=lambda: execution_order.append("rankings") or {"ok": True, "task": "rankings"},
+            run_symbol_eligibility_refresh=lambda: execution_order.append("eligibility") or {"ok": True, "task": "eligibility"},
+            run_ibkr_stale_close_repair=lambda: execution_order.append("repair") or {"ok": True, "task": "repair"},
+            run_reconcile=lambda: execution_order.append("reconcile") or {"ok": True, "task": "reconcile"},
+            run_trade_analysis=lambda: {"ok": True, "task": "trade_analysis"},
+            run_signal_analysis=lambda: {"ok": True, "task": "signal_analysis"},
+            run_mode_ranking_refresh=None,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(execution_order, ["sync", "repair", "rankings", "eligibility", "reconcile"])
+        self.assertIn("refresh_symbol_rankings", result["results"])
+
     def test_post_close_ops_captures_action_exception_without_crashing_whole_flow(self):
         now_ny = datetime(2026, 4, 2, 16, 30, tzinfo=NY_TZ)
         result = execute_post_close_ops(

@@ -262,6 +262,8 @@ Current paper-trading config defaults:
 - `PAPER_TRADE_ENFORCE_MAX_POSITIONS=false`
 - `PAPER_TRADE_MAX_POSITIONS=10` as the dormant future cap when the flag is re-enabled
 - instrument watchlists are intentionally split across multiple categories to keep scans lightweight and scheduler rotation manageable
+- production watchlists are sourced from the DB-backed `instrument_catalog`; code-level instrument defaults are only schema/seed/sync helpers
+- next-session scan allowlists are built from price eligibility plus rolling `symbol_rankings`, capped by `SYMBOL_ELIGIBILITY_MAX_SYMBOLS_PER_MODE`
 - these values are now carried through deployment config in `cloudbuild.yaml`, so future changes can be made at deploy-time without editing strategy logic
 - placement sizing is additionally clamped by `PAPER_MAX_NOTIONAL`, so confidence-based sizing cannot expand a paper trade above the broker-side per-trade hard cap
 - IBKR HTTP audit logging is now opt-in for successful requests via `ENABLE_BROKER_HTTP_AUDIT`; failures are always persisted
@@ -869,10 +871,13 @@ Cloud Scheduler triggers operational HTTP endpoints on Cloud Run.
 - current cron: `30 16 * * 1-5 (America/New_York)`
 - runs:
   1. sync
-  2. reconciliation
-  3. trade analysis
-  4. signal analysis
-  5. daily snapshot export
+  2. stale IBKR close repair
+  3. symbol ranking refresh
+  4. next-session symbol eligibility refresh
+  5. reconciliation
+  6. trade analysis
+  7. signal analysis
+  8. mode ranking refresh
 
 #### `maintenance`
 - housekeeping scheduler endpoint: `POST /scheduler/maintenance`
