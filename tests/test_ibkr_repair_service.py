@@ -118,6 +118,68 @@ class IbkrRepairServiceTests(unittest.TestCase):
         self.assertAlmostEqual(captured_lifecycle["realized_pnl"], -76.08, places=2)
         self.assertEqual(captured_broker_orders[0]["order_id"], "36")
 
+    def test_repairs_time_stop_pending_rows_from_exit_order_sync(self):
+        captured_lifecycle: dict = {}
+        captured_broker_orders: list[dict] = []
+        synced_order_ids: list[str] = []
+
+        def sync_order(_broker, order_id):
+            synced_order_ids.append(order_id)
+            if order_id != "900":
+                raise AssertionError("time-stop repair should sync the close order before the entry parent")
+            return {
+                "id": "900",
+                "status": "filled",
+                "symbol": "RIVN",
+                "entry_filled_qty": "10",
+                "entry_filled_avg_price": "100.12",
+            }
+
+        result = repair_ibkr_stale_closes(
+            target_date="2026-04-21",
+            get_stale_ibkr_closed_trade_lifecycles=lambda **kwargs: [
+                {
+                    "trade_key": "IBKR:RIVN:815",
+                    "symbol": "RIVN",
+                    "mode": "primary",
+                    "side": "BUY",
+                    "direction": "LONG",
+                    "status": "CLOSED",
+                    "entry_time": datetime(2026, 4, 21, 14, 35, 3, tzinfo=UTC),
+                    "entry_price": "100.00",
+                    "exit_time": datetime(2026, 4, 21, 15, 24, 58, tzinfo=UTC),
+                    "exit_price": None,
+                    "stop_price": "99.00",
+                    "target_price": "102.00",
+                    "exit_reason": "TIME_STOP_CLOSE_REQUESTED_PENDING_FILL_SYNC",
+                    "shares": "10",
+                    "signal_timestamp": None,
+                    "signal_entry": None,
+                    "signal_stop": None,
+                    "signal_target": None,
+                    "signal_confidence": None,
+                    "order_id": "815",
+                    "parent_order_id": "815",
+                    "exit_order_id": "900",
+                }
+            ],
+            sync_order_by_id_for_broker=sync_order,
+            get_latest_exit_trade_event_for_parent_order_id=lambda parent_order_id, broker=None: None,
+            upsert_trade_lifecycle=lambda **kwargs: captured_lifecycle.update(kwargs),
+            safe_insert_broker_order=lambda **kwargs: captured_broker_orders.append(kwargs),
+            parse_iso_utc=parse_iso_utc,
+            to_float_or_none=to_float_or_none,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["repaired_count"], 1)
+        self.assertEqual(synced_order_ids, ["900"])
+        self.assertEqual(captured_lifecycle["exit_order_id"], "900")
+        self.assertEqual(captured_lifecycle["exit_reason"], "TIME_STOP")
+        self.assertAlmostEqual(captured_lifecycle["exit_price"], 100.12, places=2)
+        self.assertAlmostEqual(captured_lifecycle["realized_pnl"], 1.2, places=2)
+        self.assertEqual(captured_broker_orders[0]["order_id"], "900")
+
     def test_skips_rows_when_live_sync_cannot_provide_exit_data(self):
         result = repair_ibkr_stale_closes(
             target_date="2026-04-10",

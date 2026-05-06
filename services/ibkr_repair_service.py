@@ -7,12 +7,28 @@ from typing import Any, Callable
 from core.trade_math import compute_duration_minutes, compute_realized_pnl, compute_realized_pnl_percent
 
 _TERMINAL_UNVERIFIED_EXIT_REASON = "BROKER_CLOSE_UNVERIFIED_NO_FILL_DATA"
+_TIME_STOP_PENDING_EXIT_REASON = "TIME_STOP_CLOSE_REQUESTED_PENDING_FILL_SYNC"
 _UNVERIFIED_SOURCE_REASONS = {
     "",
     "MANUAL_CLOSE",
     "STALE_OPEN_RECONCILED",
     "BROKER_POSITION_FLAT_PENDING_FILL_SYNC",
+    _TIME_STOP_PENDING_EXIT_REASON,
 }
+
+
+def _normalize_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _normalize_reason(value: Any) -> str:
+    return _normalize_text(value).upper()
+
+
+def _exit_reason_after_confirmed_fill(row: dict[str, Any]) -> str:
+    if _normalize_reason(row.get("exit_reason")) == _TIME_STOP_PENDING_EXIT_REASON:
+        return "TIME_STOP"
+    return "BROKER_FILLED_EXIT_REPAIRED"
 
 
 def _build_lifecycle_repair_payload(
@@ -74,11 +90,11 @@ def _repair_payload_from_trade_event(
     if get_latest_exit_trade_event_for_parent_order_id is None:
         return None
 
-    parent_order_id = str(row.get("parent_order_id", "") or row.get("order_id", "")).strip()
+    parent_order_id = _normalize_text(row.get("parent_order_id") or row.get("order_id"))
     if not parent_order_id:
         return None
 
-    symbol = str(row.get("symbol", "") or "").strip().upper()
+    symbol = _normalize_text(row.get("symbol")).upper()
     try:
         event = get_latest_exit_trade_event_for_parent_order_id(parent_order_id, "IBKR", symbol) or {}
     except TypeError:
@@ -107,7 +123,7 @@ def _repair_payload_from_trade_event(
 
     return _build_lifecycle_repair_payload(
         row=row,
-        exit_order_id=str(event.get("order_id", "") or row.get("exit_order_id", "") or parent_order_id),
+        exit_order_id=_normalize_text(event.get("order_id") or row.get("exit_order_id") or parent_order_id),
         exit_price=exit_price,
         exit_time=exit_time,
         exit_reason=resolved_exit_reason,
@@ -140,8 +156,10 @@ def _repair_payload_from_existing_lifecycle(
             return None
         parsed_exit_time = parse_iso_utc(parsed_exit_time_raw)
 
-    existing_exit_reason = str(row.get("exit_reason", "") or "").strip()
-    if existing_exit_reason.upper() in {
+    existing_exit_reason = _normalize_text(row.get("exit_reason"))
+    if existing_exit_reason.upper() == _TIME_STOP_PENDING_EXIT_REASON:
+        existing_exit_reason = "TIME_STOP"
+    elif existing_exit_reason.upper() in {
         "STALE_OPEN_RECONCILED",
         "BROKER_POSITION_FLAT_PENDING_FILL_SYNC",
     }:
@@ -149,7 +167,7 @@ def _repair_payload_from_existing_lifecycle(
 
     return _build_lifecycle_repair_payload(
         row=row,
-        exit_order_id=str(row.get("exit_order_id", "") or row.get("parent_order_id", "") or row.get("order_id", "")),
+        exit_order_id=_normalize_text(row.get("exit_order_id") or row.get("parent_order_id") or row.get("order_id")),
         exit_price=exit_price,
         exit_time=parsed_exit_time,
         exit_reason=existing_exit_reason or "BROKER_FILLED_EXIT_REPAIRED",
@@ -175,7 +193,7 @@ def _terminal_unverified_payload_from_existing_lifecycle(
     if exit_price != entry_price:
         return None
 
-    existing_exit_reason = str(row.get("exit_reason", "") or "").strip().upper()
+    existing_exit_reason = _normalize_reason(row.get("exit_reason"))
     if existing_exit_reason not in _UNVERIFIED_SOURCE_REASONS:
         return None
 
@@ -188,11 +206,141 @@ def _terminal_unverified_payload_from_existing_lifecycle(
 
     return _build_lifecycle_repair_payload(
         row=row,
-        exit_order_id=str(row.get("exit_order_id", "") or row.get("parent_order_id", "") or row.get("order_id", "")),
+        exit_order_id=_normalize_text(row.get("exit_order_id") or row.get("parent_order_id") or row.get("order_id")),
         exit_price=exit_price,
         exit_time=parsed_exit_time,
         exit_reason=_TERMINAL_UNVERIFIED_EXIT_REASON,
         exit_status="unverified_closed",
+        to_float_or_none=to_float_or_none,
+    )
+
+
+def _repair_sync_order_ids(row: dict[str, Any], parent_order_id: str) -> list[str]:
+    candidates = [
+        row.get("exit_order_id"),
+        parent_order_id,
+        row.get("order_id"),
+    ]
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        order_id = _normalize_text(candidate)
+        if not order_id or order_id in seen:
+            continue
+        seen.add(order_id)
+        normalized.append(order_id)
+    return normalized
+
+
+def _direct_exit_sync_result(
+    *,
+    row: dict[str, Any],
+    sync_result: dict[str, Any],
+    synced_order_id: str,
+    parent_order_id: str,
+    to_float_or_none: Callable[[Any], float | None],
+) -> dict[str, Any] | None:
+    exit_order_id = _normalize_text(row.get("exit_order_id"))
+    if not exit_order_id or synced_order_id != exit_order_id:
+        return None
+    if exit_order_id in {_normalize_text(parent_order_id), _normalize_text(row.get("order_id"))}:
+        return None
+    if _normalize_text(sync_result.get("status")).lower() == "unknown":
+        return None
+
+    exit_price = (
+        to_float_or_none(sync_result.get("exit_filled_avg_price"))
+        or to_float_or_none(sync_result.get("exit_price"))
+        or to_float_or_none(sync_result.get("filled_avg_price"))
+        or to_float_or_none(sync_result.get("avg_fill_price"))
+        or to_float_or_none(sync_result.get("entry_filled_avg_price"))
+    )
+    if exit_price is None:
+        return None
+
+    exit_time = (
+        _normalize_text(sync_result.get("exit_filled_at"))
+        or _normalize_text(sync_result.get("exit_time"))
+        or _normalize_text(sync_result.get("filled_at"))
+        or _normalize_text(sync_result.get("entry_filled_at"))
+        or _normalize_text(row.get("exit_time"))
+        or _normalize_text(row.get("updated_at"))
+    )
+    if not exit_time:
+        return None
+
+    filled_qty = (
+        sync_result.get("exit_filled_qty")
+        or sync_result.get("filled_qty")
+        or sync_result.get("entry_filled_qty")
+        or row.get("shares")
+    )
+
+    return {
+        **sync_result,
+        "exit_order_id": exit_order_id,
+        "exit_price": exit_price,
+        "exit_filled_avg_price": exit_price,
+        "exit_filled_qty": filled_qty,
+        "exit_filled_at": exit_time,
+        "exit_status": sync_result.get("exit_status") or sync_result.get("status") or "Filled",
+        "exit_reason": _exit_reason_after_confirmed_fill(row),
+        "direct_exit_order_sync": True,
+    }
+
+
+def _repair_payload_from_sync_result(
+    *,
+    row: dict[str, Any],
+    sync_result: dict[str, Any],
+    synced_order_id: str,
+    parent_order_id: str,
+    parse_iso_utc: Callable[[str], Any],
+    to_float_or_none: Callable[[Any], float | None],
+) -> dict[str, Any] | None:
+    normalized_sync_result = dict(sync_result or {})
+    direct_exit_result = _direct_exit_sync_result(
+        row=row,
+        sync_result=normalized_sync_result,
+        synced_order_id=synced_order_id,
+        parent_order_id=parent_order_id,
+        to_float_or_none=to_float_or_none,
+    )
+    if direct_exit_result is not None:
+        normalized_sync_result = direct_exit_result
+
+    exit_order_id = _normalize_text(normalized_sync_result.get("exit_order_id"))
+    exit_price = to_float_or_none(normalized_sync_result.get("exit_price"))
+    exit_time_raw = (
+        _normalize_text(normalized_sync_result.get("exit_filled_at"))
+        or _normalize_text(normalized_sync_result.get("exit_time"))
+        or _normalize_text(normalized_sync_result.get("filled_at"))
+    )
+    if not exit_order_id or exit_price is None or not exit_time_raw:
+        return None
+
+    has_fill_evidence = (
+        (to_float_or_none(normalized_sync_result.get("exit_filled_qty")) or 0) > 0
+        or to_float_or_none(normalized_sync_result.get("exit_filled_avg_price")) is not None
+        or bool(_normalize_text(normalized_sync_result.get("exit_filled_at")))
+        or bool(normalized_sync_result.get("direct_exit_order_sync"))
+    )
+    raw_exit_reason = _normalize_text(normalized_sync_result.get("exit_reason"))
+    normalized_exit_reason = raw_exit_reason.upper()
+    if has_fill_evidence:
+        resolved_exit_reason = _exit_reason_after_confirmed_fill(row)
+    elif normalized_exit_reason in _UNVERIFIED_SOURCE_REASONS:
+        resolved_exit_reason = _TERMINAL_UNVERIFIED_EXIT_REASON
+    else:
+        resolved_exit_reason = raw_exit_reason or _TERMINAL_UNVERIFIED_EXIT_REASON
+
+    return _build_lifecycle_repair_payload(
+        row=row,
+        exit_order_id=exit_order_id,
+        exit_price=exit_price,
+        exit_time=parse_iso_utc(exit_time_raw),
+        exit_reason=resolved_exit_reason,
+        exit_status=_normalize_text(normalized_sync_result.get("exit_status")) or "Filled",
         to_float_or_none=to_float_or_none,
     )
 
@@ -227,8 +375,8 @@ def repair_ibkr_stale_closes(
             })
             break
 
-        parent_order_id = str(row.get("parent_order_id", "") or row.get("order_id", "")).strip()
-        symbol = str(row.get("symbol", "")).strip().upper()
+        parent_order_id = _normalize_text(row.get("parent_order_id") or row.get("order_id"))
+        symbol = _normalize_text(row.get("symbol")).upper()
         if not parent_order_id:
             skipped_count += 1
             results.append({
@@ -240,6 +388,11 @@ def repair_ibkr_stale_closes(
 
         repair_payload: dict[str, Any] | None = None
         sync_result: dict[str, Any] = {}
+        sync_order_id = ""
+        sync_attempted_order_ids: list[str] = []
+        sync_exception: Exception | None = None
+        invalid_exit_time_error: Exception | None = None
+        invalid_exit_time_value = ""
 
         repair_payload = _repair_payload_from_trade_event(
             row=row,
@@ -256,57 +409,62 @@ def repair_ibkr_stale_closes(
             )
 
         if repair_payload is None:
-            try:
-                sync_result = sync_order_by_id_for_broker("IBKR", parent_order_id) or {}
-            except Exception as exc:
+            for candidate_order_id in _repair_sync_order_ids(row, parent_order_id):
+                sync_attempted_order_ids.append(candidate_order_id)
+                try:
+                    sync_result = sync_order_by_id_for_broker("IBKR", candidate_order_id) or {}
+                    sync_order_id = candidate_order_id
+                except Exception as exc:
+                    sync_exception = exc
+                    continue
+
+                try:
+                    repair_payload = _repair_payload_from_sync_result(
+                        row=row,
+                        sync_result=sync_result,
+                        synced_order_id=candidate_order_id,
+                        parent_order_id=parent_order_id,
+                        parse_iso_utc=parse_iso_utc,
+                        to_float_or_none=to_float_or_none,
+                    )
+                except Exception as exc:
+                    invalid_exit_time_error = exc
+                    invalid_exit_time_value = (
+                        _normalize_text(sync_result.get("exit_filled_at"))
+                        or _normalize_text(sync_result.get("exit_time"))
+                        or _normalize_text(sync_result.get("filled_at"))
+                        or _normalize_text(sync_result.get("entry_filled_at"))
+                    )
+                    repair_payload = None
+                    continue
+
+                if repair_payload is not None:
+                    break
+
+            if repair_payload is None and sync_exception is not None and not sync_result:
                 skipped_count += 1
                 results.append({
                     "symbol": symbol,
                     "parent_order_id": parent_order_id,
                     "repaired": False,
                     "reason": "sync_exception",
-                    "details": str(exc),
+                    "details": str(sync_exception),
+                    "attempted_order_ids": sync_attempted_order_ids,
                 })
                 continue
 
-            exit_order_id = str(sync_result.get("exit_order_id", "") or "").strip()
-            exit_price = to_float_or_none(sync_result.get("exit_price"))
-            exit_time_raw = str(sync_result.get("exit_filled_at", "") or sync_result.get("exit_time", "") or "").strip()
-            has_fill_evidence = (
-                (to_float_or_none(sync_result.get("exit_filled_qty")) or 0) > 0
-                or to_float_or_none(sync_result.get("exit_filled_avg_price")) is not None
-                or bool(str(sync_result.get("exit_filled_at", "") or "").strip())
-            )
-            if exit_order_id and exit_price is not None and exit_time_raw:
-                try:
-                    raw_exit_reason = str(sync_result.get("exit_reason", "") or "").strip()
-                    normalized_exit_reason = raw_exit_reason.upper()
-                    if has_fill_evidence:
-                        resolved_exit_reason = "BROKER_FILLED_EXIT_REPAIRED"
-                    elif normalized_exit_reason in _UNVERIFIED_SOURCE_REASONS:
-                        resolved_exit_reason = _TERMINAL_UNVERIFIED_EXIT_REASON
-                    else:
-                        resolved_exit_reason = raw_exit_reason or _TERMINAL_UNVERIFIED_EXIT_REASON
-                    repair_payload = _build_lifecycle_repair_payload(
-                        row=row,
-                        exit_order_id=exit_order_id,
-                        exit_price=exit_price,
-                        exit_time=parse_iso_utc(exit_time_raw),
-                        exit_reason=resolved_exit_reason,
-                        exit_status=str(sync_result.get("exit_status", "Filled") or "Filled"),
-                        to_float_or_none=to_float_or_none,
-                    )
-                except Exception as exc:
-                    skipped_count += 1
-                    results.append({
-                        "symbol": symbol,
-                        "parent_order_id": parent_order_id,
-                        "repaired": False,
-                        "reason": "invalid_exit_time",
-                        "details": str(exc),
-                        "exit_time": exit_time_raw,
-                    })
-                    continue
+            if repair_payload is None and invalid_exit_time_error is not None:
+                skipped_count += 1
+                results.append({
+                    "symbol": symbol,
+                    "parent_order_id": parent_order_id,
+                    "repaired": False,
+                    "reason": "invalid_exit_time",
+                    "details": str(invalid_exit_time_error),
+                    "exit_time": invalid_exit_time_value,
+                    "attempted_order_ids": sync_attempted_order_ids,
+                })
+                continue
 
         if repair_payload is None:
             repair_payload = _terminal_unverified_payload_from_existing_lifecycle(
@@ -324,6 +482,8 @@ def repair_ibkr_stale_closes(
                 "reason": "repair_data_unavailable",
                 "exit_order_id": sync_result.get("exit_order_id", ""),
                 "exit_price": sync_result.get("exit_price"),
+                "synced_order_id": sync_order_id,
+                "attempted_order_ids": sync_attempted_order_ids,
             })
             continue
 
@@ -378,6 +538,7 @@ def repair_ibkr_stale_closes(
             "exit_order_id": repair_payload["exit_order_id"],
             "exit_price": repair_payload["exit_price"],
             "exit_reason": repair_payload["exit_reason"],
+            "synced_order_id": sync_order_id,
         })
 
     return {

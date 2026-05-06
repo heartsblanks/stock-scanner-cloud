@@ -308,6 +308,7 @@ class StaleLifecycleSelectionTests(unittest.TestCase):
         query = mock_fetch_all.call_args.args[0]
         params = mock_fetch_all.call_args.args[1]
         self.assertIn("UPPER(COALESCE(exit_reason, '')) = 'MANUAL_CLOSE'", query)
+        self.assertIn("TIME_STOP_CLOSE_REQUESTED_PENDING_FILL_SYNC", query)
         self.assertIn("COALESCE(exit_price, 0) = COALESCE(entry_price, 0)", query)
         self.assertIn("COALESCE(exit_order_id, '') = COALESCE(parent_order_id, '')", query)
         self.assertEqual(params["target_date"], "2026-04-17")

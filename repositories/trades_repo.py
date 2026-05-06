@@ -597,6 +597,10 @@ def get_stale_ibkr_closed_trade_lifecycles(*, target_date: Optional[str] = None,
               AND COALESCE(realized_pnl, 0) = 0
             )
             OR (
+              UPPER(COALESCE(exit_reason, '')) = 'TIME_STOP_CLOSE_REQUESTED_PENDING_FILL_SYNC'
+              AND COALESCE(realized_pnl, 0) = 0
+            )
+            OR (
               UPPER(COALESCE(exit_reason, '')) = 'MANUAL_CLOSE'
               AND COALESCE(realized_pnl, 0) = 0
               AND entry_price IS NOT NULL
