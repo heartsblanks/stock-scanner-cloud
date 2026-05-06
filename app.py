@@ -279,6 +279,28 @@ _SYNC_RUN_LOCK = threading.Lock()
 _SYNC_RUN_STARTED_AT_MONOTONIC: float | None = None
 
 
+def _truthy_env(name: str, default: bool = False) -> bool:
+    raw = str(os.getenv(name, "true" if default else "false")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _post_sync_repair_policy(body: Any) -> tuple[bool, str]:
+    if not isinstance(body, dict):
+        return False, ""
+
+    partial = bool(body.get("partial"))
+    stopped_reason = str(body.get("stopped_reason", "") or "").strip().lower()
+    if _truthy_env("AUTO_IBKR_REPAIR_AFTER_SYNC", True):
+        return True, "after_sync"
+    if (
+        _truthy_env("AUTO_IBKR_REPAIR_AFTER_PARTIAL_SYNC", True)
+        and partial
+        and stopped_reason.startswith("ibkr_")
+    ):
+        return True, "after_partial_sync"
+    return False, ""
+
+
 def handle_sync_paper_trades():
     global _SYNC_RUN_STARTED_AT_MONOTONIC
 
@@ -321,34 +343,31 @@ def handle_sync_paper_trades():
         body = result[0] if isinstance(result, tuple) and len(result) == 2 else result
         status_code = result[1] if isinstance(result, tuple) and len(result) == 2 else None
 
-        auto_repair_enabled = str(os.getenv("AUTO_IBKR_REPAIR_AFTER_PARTIAL_SYNC", "true")).strip().lower() in {"1", "true", "yes", "on"}
-        if isinstance(body, dict) and auto_repair_enabled:
-            partial = bool(body.get("partial"))
-            stopped_reason = str(body.get("stopped_reason", "") or "").strip().lower()
-            if partial and stopped_reason.startswith("ibkr_"):
-                target_date = datetime.now(NY_TZ).date().isoformat()
-                try:
-                    repair_result = run_ibkr_stale_close_repair(target_date=target_date)
-                    body["post_sync_repair"] = repair_result
-                    log_info(
-                        "Automatic IBKR stale-close repair completed after partial sync",
-                        component="app",
-                        operation="handle_sync_paper_trades",
-                        target_date=target_date,
-                        stopped_reason=stopped_reason,
-                        repaired_count=(repair_result or {}).get("repaired_count"),
-                        skipped_count=(repair_result or {}).get("skipped_count"),
-                    )
-                except Exception as repair_error:
-                    body["post_sync_repair"] = {"ok": False, "error": str(repair_error), "target_date": target_date}
-                    log_info(
-                        "Automatic IBKR stale-close repair failed after partial sync",
-                        component="app",
-                        operation="handle_sync_paper_trades",
-                        target_date=target_date,
-                        stopped_reason=stopped_reason,
-                        error=str(repair_error),
-                    )
+        should_repair_after_sync, repair_policy_reason = _post_sync_repair_policy(body)
+        if isinstance(body, dict) and should_repair_after_sync:
+            target_date = datetime.now(NY_TZ).date().isoformat()
+            try:
+                repair_result = run_ibkr_stale_close_repair(target_date=target_date)
+                body["post_sync_repair"] = repair_result
+                log_info(
+                    "Automatic IBKR stale-close repair completed after sync",
+                    component="app",
+                    operation="handle_sync_paper_trades",
+                    target_date=target_date,
+                    repair_policy_reason=repair_policy_reason,
+                    repaired_count=(repair_result or {}).get("repaired_count"),
+                    skipped_count=(repair_result or {}).get("skipped_count"),
+                )
+            except Exception as repair_error:
+                body["post_sync_repair"] = {"ok": False, "error": str(repair_error), "target_date": target_date}
+                log_info(
+                    "Automatic IBKR stale-close repair failed after sync",
+                    component="app",
+                    operation="handle_sync_paper_trades",
+                    target_date=target_date,
+                    repair_policy_reason=repair_policy_reason,
+                    error=str(repair_error),
+                )
 
         return (body, status_code) if status_code is not None else body
     finally:
