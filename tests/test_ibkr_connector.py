@@ -59,7 +59,7 @@ class _FakeTrade:
 
 
 class _FakeExecution:
-    def __init__(self, *, order_id, order_ref, price, shares, avg_price=None, side="BOT", time="2026-04-10T15:37:03+00:00"):
+    def __init__(self, *, order_id, order_ref, price, shares, avg_price=None, side="BOT", time="2026-04-10T15:37:03+00:00", perm_id=0):
         self.orderId = order_id
         self.orderRef = order_ref
         self.price = price
@@ -67,6 +67,7 @@ class _FakeExecution:
         self.avgPrice = avg_price if avg_price is not None else price
         self.side = side
         self.time = time
+        self.permId = perm_id
 
 
 class _FakeCommissionReport:
@@ -240,6 +241,7 @@ class _FakeIbForBracketFlow:
         parent_perm_id_after_sleep=0,
         existing_position_qty=0.0,
         existing_open_order_count=0,
+        recent_fills=None,
     ):
         self.symbol = symbol
         self.parent_status = parent_status
@@ -251,6 +253,7 @@ class _FakeIbForBracketFlow:
         self.placed_orders = []
         self._existing_position_qty = existing_position_qty
         self._existing_open_order_count = existing_open_order_count
+        self._recent_fills = list(recent_fills or [])
 
     def qualifyContracts(self, contract):
         return [contract]
@@ -308,6 +311,12 @@ class _FakeIbForBracketFlow:
             )
             for idx in range(1, self._existing_open_order_count + 1)
         ]
+
+    def reqExecutions(self):
+        return list(self._recent_fills)
+
+    def fills(self):
+        return list(self._recent_fills)
 
 
 class IbkrConnectorTests(unittest.TestCase):
@@ -830,6 +839,54 @@ class IbkrConnectorTests(unittest.TestCase):
         self.assertFalse(result["placed"])
         self.assertEqual(result["reason"], "ibkr_order_not_acknowledged")
         self.assertEqual(result["broker_perm_id"], 0)
+
+    def test_place_paper_bracket_order_accepts_late_parent_fill_when_perm_id_lags(self):
+        late_fill = _FakeFill(
+            symbol="TSLA",
+            execution=_FakeExecution(
+                order_id=700,
+                order_ref="scanner-TSLA-BUY-4010000-10",
+                price=401.12,
+                shares=10,
+                side="BOT",
+                perm_id=128999,
+            ),
+        )
+        client = IbkrGatewayClient.__new__(IbkrGatewayClient)
+        fake_ib = _FakeIbForBracketFlow(
+            symbol="TSLA",
+            parent_status="PendingSubmit",
+            parent_perm_id=0,
+            recent_fills=[late_fill],
+        )
+        client._reset_connection = lambda: fake_ib
+        client._load_order_classes = lambda: (
+            _FakeLimitOrderForBracket,
+            _FakeMarketOrderForBracket,
+            _FakeStopOrderForBracket,
+            _FakeGenericOrderForBracket,
+            _FakeStockForBracket,
+        )
+        client._entry_poll_config = lambda: (1, 0.0)
+
+        result = client.place_paper_bracket_order(
+            {
+                "metrics": {
+                    "symbol": "TSLA",
+                    "direction": "BUY",
+                    "entry": 401.0,
+                    "stop": 399.0,
+                    "target": 405.0,
+                    "shares": 10,
+                }
+            }
+        )
+
+        self.assertTrue(result["attempted"])
+        self.assertTrue(result["placed"])
+        self.assertEqual(result["broker_order_status"], "Filled")
+        self.assertEqual(result["broker_perm_id"], 128999)
+        self.assertEqual(result["order_status_transitions"][-1]["attempt"], "late_fill_check")
 
     def test_place_paper_bracket_order_waits_for_pending_submit_perm_id_ack(self):
         client = IbkrGatewayClient.__new__(IbkrGatewayClient)

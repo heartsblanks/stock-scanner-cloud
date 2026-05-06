@@ -268,9 +268,9 @@ class IbkrGatewayClient:
 
     def _entry_poll_config(self) -> tuple[int, float]:
         try:
-            attempts = max(1, int(os.getenv("IBKR_ENTRY_POLL_ATTEMPTS", "4")))
+            attempts = max(1, int(os.getenv("IBKR_ENTRY_POLL_ATTEMPTS", "8")))
         except Exception:
-            attempts = 4
+            attempts = 8
         try:
             interval_seconds = max(0.1, float(os.getenv("IBKR_ENTRY_POLL_INTERVAL_SECONDS", "0.5")))
         except Exception:
@@ -662,6 +662,46 @@ class IbkrGatewayClient:
                 operation="fetch_recent_fills",
             )
         return list(getattr(ib, "fills", lambda: [])() or [])
+
+    def _entry_fill_snapshot_for_order(
+        self,
+        ib,
+        *,
+        order_id: str,
+        order_ref: str,
+    ) -> dict[str, Any] | None:
+        normalized_order_id = str(order_id or "").strip()
+        normalized_order_ref = str(order_ref or "").strip()
+        if not normalized_order_id and not normalized_order_ref:
+            return None
+
+        for fill in reversed(self._fetch_recent_fills(ib)):
+            fill_order_id = self._execution_order_id(fill)
+            fill_order_ref = self._execution_order_ref(fill)
+            if normalized_order_id and fill_order_id == normalized_order_id:
+                pass
+            elif normalized_order_ref and fill_order_ref == normalized_order_ref:
+                pass
+            else:
+                continue
+
+            execution = getattr(fill, "execution", None)
+            filled_qty = _to_float(getattr(execution, "shares", 0.0))
+            fill_price = _to_float(getattr(execution, "avgPrice", 0.0), _to_float(getattr(execution, "price", 0.0)))
+            if filled_qty <= 0:
+                continue
+
+            return {
+                "status": "Filled",
+                "perm_id": _to_float(getattr(execution, "permId", 0.0)),
+                "filled_qty": filled_qty,
+                "remaining_qty": 0.0,
+                "avg_fill_price": fill_price,
+                "last_fill_price": _to_float(getattr(execution, "price", 0.0), fill_price),
+                "filled_at": self._execution_time_value(fill),
+                "source": "recent_execution_fill",
+            }
+        return None
 
     def _fetch_completed_trades(self, ib) -> list[Any]:
         fetch_fn = getattr(ib, "reqCompletedOrders", None)
@@ -1890,6 +1930,38 @@ class IbkrGatewayClient:
             trailing_stop_status = str(getattr(getattr(trailing_stop_trade, "orderStatus", None), "status", "")).strip()
             trade_errors = self._collect_trade_errors(parent_trade) + self._collect_trade_errors(take_profit_trade) + self._collect_trade_errors(trailing_stop_trade)
 
+            if not self._is_rejected_entry_status(parent_status) and parent_perm_id <= 0:
+                entry_fill_snapshot = self._entry_fill_snapshot_for_order(
+                    ib,
+                    order_id=str(base_order_id),
+                    order_ref=client_order_id,
+                )
+                if entry_fill_snapshot is not None:
+                    parent_snapshot = {
+                        **parent_snapshot,
+                        **entry_fill_snapshot,
+                    }
+                    parent_snapshots.append(
+                        {
+                            "attempt": "late_fill_check",
+                            **parent_snapshot,
+                        }
+                    )
+                    parent_status = str(parent_snapshot.get("status", "")).strip()
+                    parent_perm_id = int(_to_float(parent_snapshot.get("perm_id"), 0))
+                    log_warning(
+                        "IBKR bridge accepted placement from late fill evidence",
+                        component="ibkr_bridge",
+                        operation="place_paper_bracket_order",
+                        symbol=symbol,
+                        client_order_id=client_order_id,
+                        parent_order_id=base_order_id,
+                        parent_status=parent_status,
+                        parent_perm_id=parent_perm_id,
+                        filled_qty=parent_snapshot.get("filled_qty"),
+                        avg_fill_price=parent_snapshot.get("avg_fill_price"),
+                    )
+
             if self._is_rejected_entry_status(parent_status):
                 rejection_details = f"Parent order status is terminal reject state: {parent_status or 'UNKNOWN'}"
                 fallback_result = _retry_with_whole_shares_if_supported(
@@ -1942,7 +2014,8 @@ class IbkrGatewayClient:
                     "trade_errors": trade_errors,
                 }
 
-            if parent_perm_id <= 0:
+            parent_filled_qty = _to_float(parent_snapshot.get("filled_qty"), 0.0)
+            if parent_perm_id <= 0 and parent_filled_qty <= 0:
                 missing_perm_details = "Parent order did not receive broker acknowledgment (permId is missing)."
                 fallback_result = _retry_with_whole_shares_if_supported(
                     trigger_reason="ibkr_order_not_acknowledged",
