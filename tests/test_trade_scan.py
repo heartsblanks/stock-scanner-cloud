@@ -17,6 +17,7 @@ if "psycopg" not in sys.modules:
     sys.modules["psycopg.rows"] = fake_psycopg_rows
 
 from analytics.trade_scan import calculate_position_sizing, evaluate_symbol
+from core.paper_trade_config import get_paper_trade_limits
 
 
 NY_TZ = ZoneInfo("America/New_York")
@@ -171,6 +172,34 @@ class TradeScanSizingConfigTests(unittest.TestCase):
         self.assertAlmostEqual(sizing["max_total_allocated_capital"], 100000.0, places=2)
         self.assertAlmostEqual(sizing["remaining_allocatable_capital"], 75000.0, places=2)
         self.assertEqual(sizing["shares"], 300)
+
+    def test_position_sizing_enforces_four_slots_for_2000_account(self):
+        with patch.dict(
+            os.environ,
+            {
+                "PAPER_TRADE_MAX_CAPITAL_ALLOCATION_PCT": "1.0",
+                "PAPER_TRADE_ENFORCE_MAX_POSITIONS": "true",
+                "PAPER_TRADE_MAX_POSITIONS": "4",
+            },
+            clear=False,
+        ):
+            sizing = calculate_position_sizing(
+                account_size=2000.0,
+                entry=100.0,
+                stop=98.0,
+                current_open_positions=1,
+                current_open_exposure=500.0,
+            )
+            limits = get_paper_trade_limits()
+
+        self.assertTrue(sizing["position_limit_enforced"])
+        self.assertEqual(sizing["max_positions"], 4)
+        self.assertEqual(sizing["remaining_slots"], 3)
+        self.assertAlmostEqual(sizing["remaining_allocatable_capital"], 1500.0, places=2)
+        self.assertAlmostEqual(sizing["per_trade_notional"], 500.0, places=2)
+        self.assertEqual(sizing["shares"], 5)
+        self.assertTrue(limits["position_limit_enforced"])
+        self.assertEqual(limits["max_positions"], 4)
 
     def test_position_sizing_allows_fractional_shares_when_enabled(self):
         with patch.dict(

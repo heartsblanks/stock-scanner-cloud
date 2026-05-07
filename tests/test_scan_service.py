@@ -19,6 +19,7 @@ from services.scan_service import (
     _is_alert_only_mode,
     _mode_placement_confidence_floor,
     _preferred_symbol_priority_floor_for_mode,
+    _configured_hard_notional_cap,
     evaluate_symbol_performance_gate,
     execute_full_scan,
     _get_live_ibkr_account_equity,
@@ -374,6 +375,15 @@ class ScanServiceSizingTests(unittest.TestCase):
         with patch.dict("os.environ", {"PAPER_ACCOUNT_HARD_CAP": "", "SCHEDULED_PAPER_ACCOUNT_SIZE": ""}, clear=False):
             self.assertEqual(_cap_account_size(5000.0), 1000.0)
             self.assertEqual(_cap_account_size(750.0), 750.0)
+
+    def test_account_size_cap_can_scale_to_2000(self):
+        with patch.dict("os.environ", {"PAPER_ACCOUNT_HARD_CAP": "2000", "SCHEDULED_PAPER_ACCOUNT_SIZE": "2000"}, clear=False):
+            self.assertEqual(_cap_account_size(5000.0), 2000.0)
+            self.assertEqual(_cap_account_size(1500.0), 1500.0)
+
+    def test_hard_notional_cap_can_scale_to_500(self):
+        with patch.dict("os.environ", {"PAPER_MAX_NOTIONAL": "500"}, clear=False):
+            self.assertEqual(_configured_hard_notional_cap(), 500.0)
 
     def test_requires_fractional_above_cap_when_entry_exceeds_250(self):
         with patch.dict("os.environ", {"ENABLE_FRACTIONAL_SHARES": "false", "PAPER_MAX_NOTIONAL": "250"}, clear=False):

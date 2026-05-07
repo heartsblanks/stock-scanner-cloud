@@ -38,11 +38,16 @@ def _allow_non_usd_symbols() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
-def _symbol_eligibility_max_symbols_per_mode() -> int:
+def _symbol_eligibility_max_symbols_per_mode() -> int | None:
+    raw = os.getenv("SYMBOL_ELIGIBILITY_MAX_SYMBOLS_PER_MODE")
+    if raw is not None and not str(raw).strip():
+        return None
     try:
-        value = int(os.getenv("SYMBOL_ELIGIBILITY_MAX_SYMBOLS_PER_MODE", "6"))
+        value = int(raw if raw is not None else "6")
     except Exception:
         value = 6
+    if value <= 0:
+        return None
     return max(1, value)
 
 
@@ -101,6 +106,7 @@ def _apply_ranking_filter_to_mode_rows(
     instruments: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     max_symbols = _symbol_eligibility_max_symbols_per_mode()
+    cap_disabled = max_symbols is None
     priority_map = _priority_by_symbol(instruments)
     ranking_rows: list[dict[str, Any]] = []
     ranking_by_symbol: dict[str, dict[str, Any]] = {}
@@ -182,18 +188,21 @@ def _apply_ranking_filter_to_mode_rows(
             str(item["symbol"]),
         )
     )
-    allowed_symbols = {str(item["symbol"]) for item in candidates[:max_symbols]}
+    allowed_candidates = candidates if cap_disabled else candidates[:max_symbols]
+    allowed_symbols = {str(item["symbol"]) for item in allowed_candidates}
 
-    for row in rows:
-        symbol = str(row.get("symbol", "")).strip().upper()
-        if symbol and bool(row.get("eligible")) and symbol not in allowed_symbols:
-            row["eligible"] = False
-            row["ineligible_reason"] = "ranked_below_live_allowlist"
-            ranked_below_count += 1
+    if not cap_disabled:
+        for row in rows:
+            symbol = str(row.get("symbol", "")).strip().upper()
+            if symbol and bool(row.get("eligible")) and symbol not in allowed_symbols:
+                row["eligible"] = False
+                row["ineligible_reason"] = "ranked_below_live_allowlist"
+                ranked_below_count += 1
 
     return {
         "mode": mode,
         "max_symbols": max_symbols,
+        "cap_disabled": cap_disabled,
         "ranking_available": ranking_available,
         "ranking_row_count": len(ranking_rows),
         "allowed_symbols": sorted(allowed_symbols),
