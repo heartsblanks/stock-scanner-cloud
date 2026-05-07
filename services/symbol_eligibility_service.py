@@ -11,6 +11,7 @@ from repositories.trades_repo import get_latest_symbol_ranking_rows
 from repositories.symbol_eligibility_repo import (
     get_current_symbol_session_eligibility_rows,
     get_latest_symbol_session_eligibility_rows,
+    get_symbol_session_eligibility_rows,
     replace_symbol_session_eligibility_rows,
 )
 
@@ -48,6 +49,14 @@ def _symbol_eligibility_max_symbols_per_mode() -> int | None:
         value = 6
     if value <= 0:
         return None
+    return max(1, value)
+
+
+def _symbol_eligibility_max_price_fetch_errors() -> int:
+    try:
+        value = int(os.getenv("SYMBOL_ELIGIBILITY_MAX_PRICE_FETCH_ERRORS", "5"))
+    except Exception:
+        value = 5
     return max(1, value)
 
 
@@ -233,6 +242,7 @@ def refresh_symbol_eligibility_for_date(
 
     instrument_groups = get_instrument_groups(force_refresh=True)
     selected_modes = [str(mode).strip().lower() for mode in (modes or list(instrument_groups.keys())) if str(mode).strip()]
+    max_fetch_errors_before_circuit = _symbol_eligibility_max_price_fetch_errors()
 
     mode_summaries: list[dict[str, Any]] = []
     total_symbols = 0
@@ -248,6 +258,34 @@ def refresh_symbol_eligibility_for_date(
         mode_above_cap = 0
         mode_non_usd = 0
         mode_errors = 0
+        mode_cached_prices = 0
+        fetch_error_streak = 0
+        fetch_circuit_open = False
+        previous_rows_by_symbol: dict[str, dict[str, Any]] | None = None
+
+        def _previous_row_for(symbol: str) -> dict[str, Any] | None:
+            nonlocal previous_rows_by_symbol
+            if previous_rows_by_symbol is None:
+                try:
+                    previous_rows = get_symbol_session_eligibility_rows(
+                        session_date=target_session_date,
+                        mode=mode,
+                    )
+                except Exception as exc:
+                    previous_rows = []
+                    log_warning(
+                        "Failed to load cached symbol eligibility prices",
+                        component="symbol_eligibility_service",
+                        operation="refresh_symbol_eligibility_for_date",
+                        mode=mode,
+                        error=str(exc),
+                    )
+                previous_rows_by_symbol = {
+                    str(row.get("symbol", "")).strip().upper(): row
+                    for row in previous_rows
+                    if str(row.get("symbol", "")).strip()
+                }
+            return previous_rows_by_symbol.get(symbol)
 
         for display_name, info in instruments.items():
             mode_total += 1
@@ -263,39 +301,65 @@ def refresh_symbol_eligibility_for_date(
             ineligible_reason: str | None = None
             last_price: float | None = None
             price_timestamp: datetime | None = None
+            row_source = source
 
             if currency != "USD" and not allow_non_usd:
                 ineligible_reason = "non_usd_symbol_excluded"
                 mode_non_usd += 1
             else:
-                try:
-                    candles = fetch_intraday_fn(
-                        symbol,
-                        exchange=exchange,
-                        primary_exchange=primary_exchange,
-                        currency=currency,
-                    )
-                    last_price = _extract_last_close(candles or [])
-                    if last_price is None:
-                        ineligible_reason = "price_unavailable"
-                    elif last_price > notional_cap:
-                        ineligible_reason = f"price_above_cap_{notional_cap:.2f}"
-                        mode_above_cap += 1
-                    else:
-                        eligible = True
-                        ineligible_reason = None
-                        price_timestamp = datetime.now(NY_TZ)
-                except Exception as exc:
+                if fetch_circuit_open:
                     ineligible_reason = "price_fetch_error"
                     mode_errors += 1
-                    log_exception(
-                        "Failed to refresh symbol eligibility price",
-                        exc,
-                        component="symbol_eligibility_service",
-                        operation="refresh_symbol_eligibility_for_date",
-                        mode=mode,
-                        symbol=symbol,
-                    )
+                else:
+                    try:
+                        candles = fetch_intraday_fn(
+                            symbol,
+                            exchange=exchange,
+                            primary_exchange=primary_exchange,
+                            currency=currency,
+                        )
+                        fetch_error_streak = 0
+                        last_price = _extract_last_close(candles or [])
+                        if last_price is None:
+                            ineligible_reason = "price_unavailable"
+                        elif last_price > notional_cap:
+                            ineligible_reason = f"price_above_cap_{notional_cap:.2f}"
+                            mode_above_cap += 1
+                        else:
+                            eligible = True
+                            ineligible_reason = None
+                            price_timestamp = datetime.now(NY_TZ)
+                    except Exception as exc:
+                        ineligible_reason = "price_fetch_error"
+                        mode_errors += 1
+                        fetch_error_streak += 1
+                        if fetch_error_streak >= max_fetch_errors_before_circuit:
+                            fetch_circuit_open = True
+                        log_exception(
+                            "Failed to refresh symbol eligibility price",
+                            exc,
+                            component="symbol_eligibility_service",
+                            operation="refresh_symbol_eligibility_for_date",
+                            mode=mode,
+                            symbol=symbol,
+                            fetch_error_streak=fetch_error_streak,
+                            fetch_circuit_open=fetch_circuit_open,
+                        )
+
+                if ineligible_reason == "price_fetch_error":
+                    previous_row = _previous_row_for(symbol)
+                    cached_price = _to_float(previous_row.get("last_price") if previous_row else None, 0.0)
+                    if cached_price > 0:
+                        last_price = cached_price
+                        price_timestamp = previous_row.get("price_timestamp") if previous_row else None
+                        row_source = f"{source}_cached_on_fetch_error"
+                        mode_cached_prices += 1
+                        if last_price > notional_cap:
+                            ineligible_reason = f"price_above_cap_{notional_cap:.2f}"
+                            mode_above_cap += 1
+                        else:
+                            eligible = True
+                            ineligible_reason = None
 
             if eligible:
                 mode_eligible += 1
@@ -311,7 +375,7 @@ def refresh_symbol_eligibility_for_date(
                     "max_notional": notional_cap,
                     "eligible": eligible,
                     "ineligible_reason": ineligible_reason,
-                    "source": source,
+                    "source": row_source,
                     "price_timestamp": price_timestamp,
                 }
             )
@@ -342,6 +406,8 @@ def refresh_symbol_eligibility_for_date(
                 "above_cap_count": mode_above_cap,
                 "non_usd_excluded_count": mode_non_usd,
                 "price_error_count": mode_errors,
+                "cached_price_count": mode_cached_prices,
+                "price_fetch_circuit_opened": fetch_circuit_open,
                 "ranking_filter": ranking_filter,
             }
         )

@@ -183,6 +183,76 @@ class SymbolEligibilityRankingTests(unittest.TestCase):
         self.assertEqual(result["eligible_count"], 3)
         self.assertTrue(result["modes"][0]["ranking_filter"]["cap_disabled"])
 
+    @patch("services.symbol_eligibility_service.replace_symbol_session_eligibility_rows")
+    @patch("services.symbol_eligibility_service.get_symbol_session_eligibility_rows")
+    @patch("services.symbol_eligibility_service.get_latest_symbol_ranking_rows")
+    @patch("services.symbol_eligibility_service.get_instrument_groups")
+    @patch("services.symbol_eligibility_service.sync_quality_candidate_instruments")
+    def test_refresh_uses_cached_prices_after_fetch_error_circuit(
+        self,
+        mock_sync_catalog,
+        mock_groups,
+        mock_rankings,
+        mock_previous_rows,
+        mock_replace,
+    ):
+        mock_sync_catalog.return_value = {"ok": True, "synced_count": 12}
+        mock_groups.return_value = {
+            "core_two": {
+                "Alpha": {"symbol": "AAA", "priority": 9, "currency": "USD"},
+                "Beta": {"symbol": "BBB", "priority": 8, "currency": "USD"},
+                "High Price": {"symbol": "HIGH", "priority": 8, "currency": "USD"},
+                "Demoted": {"symbol": "DEM", "priority": 8, "currency": "USD"},
+            }
+        }
+        mock_rankings.return_value = [
+            {"symbol": "AAA", "rank": 1, "score": 100, "demoted": False},
+            {"symbol": "BBB", "rank": 2, "score": 90, "demoted": False},
+            {"symbol": "HIGH", "rank": 3, "score": 80, "demoted": False},
+            {"symbol": "DEM", "rank": 4, "score": 70, "demoted": True},
+        ]
+        mock_previous_rows.return_value = [
+            {"symbol": "AAA", "last_price": 20.0, "price_timestamp": None},
+            {"symbol": "BBB", "last_price": 450.0, "price_timestamp": None},
+            {"symbol": "HIGH", "last_price": 600.0, "price_timestamp": None},
+            {"symbol": "DEM", "last_price": 20.0, "price_timestamp": None},
+        ]
+        fetch_calls = []
+
+        def fetch_raises(symbol, **kwargs):
+            fetch_calls.append(symbol)
+            raise RuntimeError("bridge unavailable")
+
+        with patch.dict(
+            "os.environ",
+            {
+                "SYMBOL_ELIGIBILITY_MAX_SYMBOLS_PER_MODE": "0",
+                "SYMBOL_ELIGIBILITY_MAX_NOTIONAL": "500",
+                "SYMBOL_ELIGIBILITY_MAX_PRICE_FETCH_ERRORS": "1",
+            },
+            clear=False,
+        ):
+            result = refresh_symbol_eligibility_for_date(
+                target_session_date="2026-05-07",
+                fetch_intraday_fn=fetch_raises,
+                modes=["core_two"],
+            )
+
+        rows = mock_replace.call_args.kwargs["rows"]
+        by_symbol = {row["symbol"]: row for row in rows}
+        self.assertEqual(fetch_calls, ["AAA"])
+        self.assertTrue(by_symbol["AAA"]["eligible"])
+        self.assertTrue(by_symbol["BBB"]["eligible"])
+        self.assertEqual(by_symbol["AAA"]["source"], "ibkr_intraday_cached_on_fetch_error")
+        self.assertFalse(by_symbol["HIGH"]["eligible"])
+        self.assertEqual(by_symbol["HIGH"]["ineligible_reason"], "price_above_cap_500.00")
+        self.assertFalse(by_symbol["DEM"]["eligible"])
+        self.assertEqual(by_symbol["DEM"]["ineligible_reason"], "symbol_rank_demoted")
+        self.assertEqual(result["eligible_count"], 2)
+        self.assertEqual(result["modes"][0]["cached_price_count"], 4)
+        self.assertTrue(result["modes"][0]["price_fetch_circuit_opened"])
+        self.assertTrue(result["modes"][0]["ranking_filter"]["cap_disabled"])
+
 
 if __name__ == "__main__":
     unittest.main()
