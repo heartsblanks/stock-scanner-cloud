@@ -155,6 +155,30 @@ _DEFAULT_INSTRUMENT_GROUPS: dict[str, dict[str, dict[str, object]]] = {
     },
 }
 
+
+def _quality_candidate(
+    *,
+    mode: str,
+    display_name: str,
+    symbol: str,
+    priority: int,
+    market: str,
+    primary_exchange: str | None = None,
+) -> dict[str, object]:
+    primary = (primary_exchange or market).strip().upper()
+    return {
+        "mode": mode,
+        "display_name": display_name,
+        "symbol": symbol,
+        "instrument_type": "stock",
+        "priority": priority,
+        "market": market.strip().upper(),
+        "exchange": "SMART",
+        "primary_exchange": primary,
+        "currency": "USD",
+    }
+
+
 QUALITY_CANDIDATE_INSTRUMENTS: tuple[dict[str, object], ...] = (
     {
         "mode": "core_three",
@@ -618,6 +642,36 @@ QUALITY_CANDIDATE_INSTRUMENTS: tuple[dict[str, object], ...] = (
         "primary_exchange": "NASDAQ",
         "currency": "USD",
     },
+    _quality_candidate(mode="core_one", display_name="JPMorgan Chase", symbol="JPM", priority=9, market="NYSE"),
+    _quality_candidate(mode="core_one", display_name="Salesforce", symbol="CRM", priority=9, market="NYSE"),
+    _quality_candidate(mode="core_one", display_name="Home Depot", symbol="HD", priority=9, market="NYSE"),
+    _quality_candidate(mode="core_one", display_name="GE Aerospace", symbol="GE", priority=9, market="NYSE"),
+    _quality_candidate(mode="core_one", display_name="Caterpillar", symbol="CAT", priority=9, market="NYSE"),
+    _quality_candidate(mode="core_one", display_name="IBM", symbol="IBM", priority=9, market="NYSE"),
+    _quality_candidate(mode="core_one", display_name="Boeing", symbol="BA", priority=9, market="NYSE"),
+    _quality_candidate(mode="core_one", display_name="Exxon Mobil", symbol="XOM", priority=9, market="NYSE"),
+    _quality_candidate(mode="core_one", display_name="Chevron", symbol="CVX", priority=9, market="NYSE"),
+    _quality_candidate(mode="core_one", display_name="Visa", symbol="V", priority=9, market="NYSE"),
+    _quality_candidate(mode="core_two", display_name="UnitedHealth", symbol="UNH", priority=8, market="NYSE"),
+    _quality_candidate(mode="core_two", display_name="AbbVie", symbol="ABBV", priority=8, market="NYSE"),
+    _quality_candidate(mode="core_two", display_name="Merck", symbol="MRK", priority=8, market="NYSE"),
+    _quality_candidate(mode="core_two", display_name="Pfizer", symbol="PFE", priority=8, market="NYSE"),
+    _quality_candidate(mode="core_two", display_name="Bank of America", symbol="BAC", priority=8, market="NYSE"),
+    _quality_candidate(mode="core_two", display_name="Citigroup", symbol="C", priority=8, market="NYSE"),
+    _quality_candidate(mode="core_two", display_name="Morgan Stanley", symbol="MS", priority=8, market="NYSE"),
+    _quality_candidate(mode="core_two", display_name="Blackstone", symbol="BX", priority=8, market="NYSE"),
+    _quality_candidate(mode="core_two", display_name="Coca-Cola", symbol="KO", priority=8, market="NYSE"),
+    _quality_candidate(mode="core_two", display_name="Procter & Gamble", symbol="PG", priority=8, market="NYSE"),
+    _quality_candidate(mode="core_two", display_name="McDonald's", symbol="MCD", priority=8, market="NYSE"),
+    _quality_candidate(mode="core_two", display_name="Target", symbol="TGT", priority=8, market="NYSE"),
+    _quality_candidate(mode="core_three", display_name="Micron", symbol="MU", priority=8, market="NASDAQ"),
+    _quality_candidate(mode="core_three", display_name="Taiwan Semiconductor", symbol="TSM", priority=8, market="NYSE"),
+    _quality_candidate(mode="core_three", display_name="Cadence Design Systems", symbol="CDNS", priority=8, market="NASDAQ"),
+    _quality_candidate(mode="core_three", display_name="Arista Networks", symbol="ANET", priority=8, market="NYSE"),
+    _quality_candidate(mode="core_three", display_name="Fortinet", symbol="FTNT", priority=8, market="NASDAQ"),
+    _quality_candidate(mode="core_three", display_name="Zscaler", symbol="ZS", priority=8, market="NASDAQ"),
+    _quality_candidate(mode="core_three", display_name="Vertiv", symbol="VRT", priority=8, market="NYSE"),
+    _quality_candidate(mode="core_three", display_name="Atlassian", symbol="TEAM", priority=8, market="NASDAQ"),
 )
 
 _SCHEMA_READY = False

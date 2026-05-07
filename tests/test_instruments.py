@@ -86,14 +86,25 @@ class InstrumentRegistryTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertIn("QCOM", result["symbols"])
+        self.assertIn("JPM", result["symbols"])
+        self.assertIn("UNH", result["symbols"])
+        self.assertIn("TSM", result["symbols"])
         query = mock_cursor.executemany.call_args.args[0]
         rows = mock_cursor.executemany.call_args.args[1]
         qcom = next(row for row in rows if row["symbol"] == "QCOM")
         csco = next(row for row in rows if row["symbol"] == "CSCO")
+        jpm = next(row for row in rows if row["symbol"] == "JPM")
+        unh = next(row for row in rows if row["symbol"] == "UNH")
+        tsm = next(row for row in rows if row["symbol"] == "TSM")
+        mu = next(row for row in rows if row["symbol"] == "MU")
         self.assertIn("ON CONFLICT (symbol)", query)
         self.assertIn("mode = EXCLUDED.mode", query)
         self.assertEqual(qcom["mode"], "core_three")
         self.assertEqual(csco["mode"], "core_two")
+        self.assertEqual(jpm["mode"], "core_one")
+        self.assertEqual(unh["mode"], "core_two")
+        self.assertEqual(tsm["mode"], "core_three")
+        self.assertEqual(mu["mode"], "core_three")
 
     def test_instrument_symbols_are_unique_across_modes(self):
         instrument_groups = _DEFAULT_INSTRUMENT_GROUPS
