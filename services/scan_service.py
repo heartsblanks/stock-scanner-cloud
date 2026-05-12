@@ -234,7 +234,7 @@ def _min_net_reward_risk() -> float:
 
 
 def _low_price_alert_only_below() -> float:
-    return _env_float("PAPER_LOW_PRICE_ALERT_ONLY_BELOW", 5.0)
+    return _env_float("PAPER_LOW_PRICE_ALERT_ONLY_BELOW", 0.0)
 
 
 def _low_price_strict_below() -> float:

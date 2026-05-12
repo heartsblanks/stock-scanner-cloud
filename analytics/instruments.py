@@ -664,6 +664,8 @@ QUALITY_CANDIDATE_INSTRUMENTS: tuple[dict[str, object], ...] = (
     _quality_candidate(mode="core_two", display_name="Procter & Gamble", symbol="PG", priority=8, market="NYSE"),
     _quality_candidate(mode="core_two", display_name="McDonald's", symbol="MCD", priority=8, market="NYSE"),
     _quality_candidate(mode="core_two", display_name="Target", symbol="TGT", priority=8, market="NYSE"),
+    _quality_candidate(mode="secondary", display_name="Plug Power", symbol="PLUG", priority=7, market="NASDAQ"),
+    _quality_candidate(mode="secondary", display_name="Keel Infrastructure", symbol="KEEL", priority=7, market="NASDAQ"),
     _quality_candidate(mode="core_three", display_name="Micron", symbol="MU", priority=8, market="NASDAQ"),
     _quality_candidate(mode="core_three", display_name="Taiwan Semiconductor", symbol="TSM", priority=8, market="NYSE"),
     _quality_candidate(mode="core_three", display_name="Cadence Design Systems", symbol="CDNS", priority=8, market="NASDAQ"),

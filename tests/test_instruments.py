@@ -89,6 +89,8 @@ class InstrumentRegistryTests(unittest.TestCase):
         self.assertIn("JPM", result["symbols"])
         self.assertIn("UNH", result["symbols"])
         self.assertIn("TSM", result["symbols"])
+        self.assertIn("PLUG", result["symbols"])
+        self.assertIn("KEEL", result["symbols"])
         query = mock_cursor.executemany.call_args.args[0]
         rows = mock_cursor.executemany.call_args.args[1]
         qcom = next(row for row in rows if row["symbol"] == "QCOM")
@@ -97,6 +99,8 @@ class InstrumentRegistryTests(unittest.TestCase):
         unh = next(row for row in rows if row["symbol"] == "UNH")
         tsm = next(row for row in rows if row["symbol"] == "TSM")
         mu = next(row for row in rows if row["symbol"] == "MU")
+        plug = next(row for row in rows if row["symbol"] == "PLUG")
+        keel = next(row for row in rows if row["symbol"] == "KEEL")
         self.assertIn("ON CONFLICT (symbol)", query)
         self.assertIn("mode = EXCLUDED.mode", query)
         self.assertEqual(qcom["mode"], "core_three")
@@ -105,6 +109,10 @@ class InstrumentRegistryTests(unittest.TestCase):
         self.assertEqual(unh["mode"], "core_two")
         self.assertEqual(tsm["mode"], "core_three")
         self.assertEqual(mu["mode"], "core_three")
+        self.assertEqual(plug["mode"], "secondary")
+        self.assertEqual(plug["priority"], 7)
+        self.assertEqual(keel["mode"], "secondary")
+        self.assertEqual(keel["priority"], 7)
 
     def test_instrument_symbols_are_unique_across_modes(self):
         instrument_groups = _DEFAULT_INSTRUMENT_GROUPS

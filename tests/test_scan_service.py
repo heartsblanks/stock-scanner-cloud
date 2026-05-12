@@ -148,7 +148,7 @@ class ScanServiceSizingTests(unittest.TestCase):
         self.assertEqual(reason, "net_reward_risk_below_floor")
         self.assertLess(details["net_reward_risk"], 1.8)
 
-    def test_low_price_quality_blocks_cheap_symbols_even_before_economics(self):
+    def test_low_price_quality_allows_cheap_symbols_by_default(self):
         metrics = {
             "entry": 4.99,
             "stop": 4.8,
@@ -158,6 +158,22 @@ class ScanServiceSizingTests(unittest.TestCase):
         }
 
         blocked, reason, details = _evaluate_low_price_quality(metrics)
+
+        self.assertFalse(blocked)
+        self.assertEqual(reason, "")
+        self.assertEqual(details["low_price_alert_only_below"], 0.0)
+
+    def test_low_price_quality_can_be_configured_as_alert_only(self):
+        metrics = {
+            "entry": 4.99,
+            "stop": 4.8,
+            "target": 5.5,
+            "shares": 100,
+            "final_confidence": 110,
+        }
+
+        with patch.dict("os.environ", {"PAPER_LOW_PRICE_ALERT_ONLY_BELOW": "5"}, clear=False):
+            blocked, reason, details = _evaluate_low_price_quality(metrics)
 
         self.assertTrue(blocked)
         self.assertEqual(reason, "low_price_alert_only")
