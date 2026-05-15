@@ -2,8 +2,8 @@
 set -euo pipefail
 
 PROJECT_ID="${PROJECT_ID:-stock-scanner-490821}"
-ZONE="${ZONE:-europe-west1-b}"
-INSTANCE_NAME="${INSTANCE_NAME:-ibkr-bridge-vm}"
+ZONE="${ZONE:-us-central1-a}"
+INSTANCE_NAME="${INSTANCE_NAME:-ibkr-bridge-vm-us}"
 BRANCH="${BRANCH:-main}"
 VM_USER="${VM_USER:-ibkr}"
 
