@@ -132,7 +132,7 @@ DEFAULT_PAPER_ACCOUNT_HARD_CAP = 1000.0
 
 def _parse_mode_int_map(raw_value: str, default: dict[str, int]) -> dict[str, int]:
     parsed = dict(default)
-    for item in str(raw_value or "").split(","):
+    for item in str(raw_value or "").replace(";", ",").split(","):
         if ":" not in item:
             continue
         key, value = item.split(":", 1)
@@ -150,13 +150,13 @@ def _mode_placement_confidence_floor(mode: str) -> int | None:
     floors = _parse_mode_int_map(
         os.getenv("PAPER_MODE_PLACEMENT_CONFIDENCE_FLOORS", ""),
         {
-            "primary": 100,
-            "secondary": 101,
-            "fourth": 101,
-            "fifth": 101,
-            "core_one": 104,
-            "core_two": 103,
-            "core_three": 102,
+            "primary": 88,
+            "secondary": 90,
+            "fourth": 90,
+            "fifth": 92,
+            "core_one": 88,
+            "core_two": 88,
+            "core_three": 88,
         },
     )
     return floors.get(str(mode or "").strip().lower())

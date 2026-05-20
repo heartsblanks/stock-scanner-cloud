@@ -105,13 +105,24 @@ class ScanServiceSizingTests(unittest.TestCase):
         self.assertEqual(reason, "")
         self.assertEqual(details["win_count"], 1)
 
-    def test_default_live_quality_thresholds_are_strict(self):
+    def test_default_live_quality_thresholds_are_calibrated_for_live_candidates(self):
         self.assertFalse(_is_alert_only_mode("third"))
         self.assertFalse(_is_alert_only_mode("sixth"))
-        self.assertEqual(_mode_placement_confidence_floor("primary"), 100)
-        self.assertEqual(_mode_placement_confidence_floor("core_one"), 104)
+        self.assertEqual(_mode_placement_confidence_floor("primary"), 88)
+        self.assertEqual(_mode_placement_confidence_floor("secondary"), 90)
+        self.assertEqual(_mode_placement_confidence_floor("fifth"), 92)
+        self.assertEqual(_mode_placement_confidence_floor("core_one"), 88)
         self.assertEqual(_preferred_symbol_priority_floor_for_mode("primary"), 9)
         self.assertEqual(_preferred_symbol_priority_floor_for_mode("core_one"), 9)
+
+    def test_mode_confidence_floor_accepts_semicolon_env_map_for_cloud_run(self):
+        with patch.dict(
+            "os.environ",
+            {"PAPER_MODE_PLACEMENT_CONFIDENCE_FLOORS": "primary:87;core_one:89"},
+            clear=False,
+        ):
+            self.assertEqual(_mode_placement_confidence_floor("primary"), 87)
+            self.assertEqual(_mode_placement_confidence_floor("core_one"), 89)
 
     def test_alert_only_modes_are_env_configurable(self):
         with patch.dict("os.environ", {"PAPER_ALERT_ONLY_MODES": "third,sixth"}, clear=False):

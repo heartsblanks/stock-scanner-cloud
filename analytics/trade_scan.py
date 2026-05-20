@@ -133,8 +133,8 @@ def _is_core_mode(mode: str | None) -> bool:
 
 def _volume_confirmation_threshold(mode: str | None) -> float:
     if _is_core_mode(mode):
-        return _env_float("PAPER_CORE_MIN_RELATIVE_VOLUME", 1.1)
-    return _env_float("PAPER_MIN_RELATIVE_VOLUME", 1.2)
+        return _env_float("PAPER_CORE_MIN_RELATIVE_VOLUME", 1.05)
+    return _env_float("PAPER_MIN_RELATIVE_VOLUME", 1.1)
 
 
 def _max_breakout_opening_range_multiple(mode: str | None, instrument_type: str) -> float:
