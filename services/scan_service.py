@@ -150,13 +150,13 @@ def _mode_placement_confidence_floor(mode: str) -> int | None:
     floors = _parse_mode_int_map(
         os.getenv("PAPER_MODE_PLACEMENT_CONFIDENCE_FLOORS", ""),
         {
-            "primary": 88,
-            "secondary": 90,
-            "fourth": 90,
-            "fifth": 92,
-            "core_one": 88,
-            "core_two": 88,
-            "core_three": 88,
+            "primary": 82,
+            "secondary": 84,
+            "fourth": 84,
+            "fifth": 84,
+            "core_one": 82,
+            "core_two": 82,
+            "core_three": 82,
         },
     )
     return floors.get(str(mode or "").strip().lower())
@@ -246,7 +246,7 @@ def _low_price_min_gross_target_profit_dollars() -> float:
 
 
 def _low_price_min_confidence() -> float:
-    return _env_float("PAPER_LOW_PRICE_MIN_CONFIDENCE", 103.0)
+    return _env_float("PAPER_LOW_PRICE_MIN_CONFIDENCE", 84.0)
 
 
 def _one_trade_per_symbol_per_day_enabled() -> bool:

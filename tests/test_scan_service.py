@@ -108,10 +108,10 @@ class ScanServiceSizingTests(unittest.TestCase):
     def test_default_live_quality_thresholds_are_calibrated_for_live_candidates(self):
         self.assertFalse(_is_alert_only_mode("third"))
         self.assertFalse(_is_alert_only_mode("sixth"))
-        self.assertEqual(_mode_placement_confidence_floor("primary"), 88)
-        self.assertEqual(_mode_placement_confidence_floor("secondary"), 90)
-        self.assertEqual(_mode_placement_confidence_floor("fifth"), 92)
-        self.assertEqual(_mode_placement_confidence_floor("core_one"), 88)
+        self.assertEqual(_mode_placement_confidence_floor("primary"), 82)
+        self.assertEqual(_mode_placement_confidence_floor("secondary"), 84)
+        self.assertEqual(_mode_placement_confidence_floor("fifth"), 84)
+        self.assertEqual(_mode_placement_confidence_floor("core_one"), 82)
         self.assertEqual(_preferred_symbol_priority_floor_for_mode("primary"), 9)
         self.assertEqual(_preferred_symbol_priority_floor_for_mode("core_one"), 9)
 
@@ -165,7 +165,7 @@ class ScanServiceSizingTests(unittest.TestCase):
             "stop": 4.8,
             "target": 5.5,
             "shares": 100,
-            "final_confidence": 110,
+            "final_confidence": 84,
         }
 
         blocked, reason, details = _evaluate_low_price_quality(metrics)
@@ -173,6 +173,22 @@ class ScanServiceSizingTests(unittest.TestCase):
         self.assertFalse(blocked)
         self.assertEqual(reason, "")
         self.assertEqual(details["low_price_alert_only_below"], 0.0)
+        self.assertEqual(details["low_price_min_confidence"], 84.0)
+
+    def test_low_price_quality_blocks_below_default_live_confidence_floor(self):
+        metrics = {
+            "entry": 4.99,
+            "stop": 4.8,
+            "target": 5.5,
+            "shares": 100,
+            "final_confidence": 83,
+        }
+
+        blocked, reason, details = _evaluate_low_price_quality(metrics)
+
+        self.assertTrue(blocked)
+        self.assertEqual(reason, "low_price_confidence_below_floor")
+        self.assertEqual(details["low_price_min_confidence"], 84.0)
 
     def test_low_price_quality_can_be_configured_as_alert_only(self):
         metrics = {
