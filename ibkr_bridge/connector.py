@@ -37,7 +37,7 @@ def _fractional_shares_enabled() -> bool:
     return _truthy_env("ENABLE_FRACTIONAL_SHARES", False)
 
 
-DEFAULT_PAPER_MAX_NOTIONAL = 250.0
+DEFAULT_PAPER_MAX_NOTIONAL = 1000.0
 
 
 def _configured_hard_notional_cap() -> float:

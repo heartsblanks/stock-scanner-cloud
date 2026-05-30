@@ -1094,6 +1094,45 @@ class IbkrConnectorTests(unittest.TestCase):
         self.assertEqual(result["shares"], 2.0)
         self.assertEqual(fake_ib.placed_orders[0].totalQuantity, 2.0)
 
+    def test_place_paper_bracket_order_defaults_to_1000_notional_cap(self):
+        client = IbkrGatewayClient.__new__(IbkrGatewayClient)
+        fake_ib = _FakeIbForBracketFlow(
+            symbol="AMD",
+            parent_status="Submitted",
+            parent_perm_id=128001,
+        )
+        client._reset_connection = lambda: fake_ib
+        client._load_order_classes = lambda: (
+            _FakeLimitOrderForBracket,
+            _FakeMarketOrderForBracket,
+            _FakeStopOrderForBracket,
+            _FakeGenericOrderForBracket,
+            _FakeStockForBracket,
+        )
+        client._entry_poll_config = lambda: (1, 0.0)
+
+        with patch.dict(os.environ, {"ENABLE_FRACTIONAL_SHARES": "false"}, clear=False):
+            os.environ.pop("PAPER_MAX_NOTIONAL", None)
+            result = client.place_paper_bracket_order(
+                {
+                    "metrics": {
+                        "symbol": "AMD",
+                        "direction": "BUY",
+                        "entry": 100.0,
+                        "stop": 99.0,
+                        "target": 103.0,
+                        "shares": 20,
+                        "per_trade_notional": 2000.0,
+                        "remaining_allocatable_capital": 2000.0,
+                    }
+                }
+            )
+
+        self.assertTrue(result["attempted"])
+        self.assertTrue(result["placed"])
+        self.assertEqual(result["shares"], 10.0)
+        self.assertEqual(fake_ib.placed_orders[0].totalQuantity, 10.0)
+
 
 if __name__ == "__main__":
     unittest.main()
