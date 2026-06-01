@@ -34,6 +34,40 @@ def _configured_notional_cap() -> float:
     return cap if cap > 0 else 250.0
 
 
+def _low_price_mode_min_price() -> float:
+    value = _to_float(os.getenv("PAPER_LOW_PRICE_MODE_MIN_PRICE"), 1.0)
+    return value if value > 0 else 1.0
+
+
+def _low_price_mode_max_price() -> float:
+    value = _to_float(os.getenv("PAPER_LOW_PRICE_MODE_MAX_PRICE"), 30.0)
+    return value if value > 0 else 30.0
+
+
+def _evaluate_price_eligibility(
+    *,
+    mode: str,
+    last_price: float | None,
+    notional_cap: float,
+) -> tuple[bool, str | None]:
+    if last_price is None:
+        return False, "price_unavailable"
+
+    normalized_mode = str(mode or "").strip().lower()
+    if normalized_mode == "low_price":
+        min_price = _low_price_mode_min_price()
+        max_price = _low_price_mode_max_price()
+        if last_price < min_price:
+            return False, "low_price_price_below_floor"
+        if last_price > max_price:
+            return False, f"price_above_low_price_ceiling_{max_price:.2f}"
+
+    if last_price > notional_cap:
+        return False, f"price_above_cap_{notional_cap:.2f}"
+
+    return True, None
+
+
 def _allow_non_usd_symbols() -> bool:
     raw = str(os.getenv("ALLOW_NON_USD_SYMBOLS", "false")).strip().lower()
     return raw in {"1", "true", "yes", "on"}
@@ -320,15 +354,18 @@ def refresh_symbol_eligibility_for_date(
                         )
                         fetch_error_streak = 0
                         last_price = _extract_last_close(candles or [])
-                        if last_price is None:
-                            ineligible_reason = "price_unavailable"
-                        elif last_price > notional_cap:
-                            ineligible_reason = f"price_above_cap_{notional_cap:.2f}"
-                            mode_above_cap += 1
-                        else:
-                            eligible = True
-                            ineligible_reason = None
+                        eligible, ineligible_reason = _evaluate_price_eligibility(
+                            mode=mode,
+                            last_price=last_price,
+                            notional_cap=notional_cap,
+                        )
+                        if eligible:
                             price_timestamp = datetime.now(NY_TZ)
+                        elif ineligible_reason and (
+                            ineligible_reason.startswith("price_above_cap_")
+                            or ineligible_reason.startswith("price_above_low_price_ceiling_")
+                        ):
+                            mode_above_cap += 1
                     except Exception as exc:
                         ineligible_reason = "price_fetch_error"
                         mode_errors += 1
@@ -354,12 +391,16 @@ def refresh_symbol_eligibility_for_date(
                         price_timestamp = previous_row.get("price_timestamp") if previous_row else None
                         row_source = f"{source}_cached_on_fetch_error"
                         mode_cached_prices += 1
-                        if last_price > notional_cap:
-                            ineligible_reason = f"price_above_cap_{notional_cap:.2f}"
+                        eligible, ineligible_reason = _evaluate_price_eligibility(
+                            mode=mode,
+                            last_price=last_price,
+                            notional_cap=notional_cap,
+                        )
+                        if ineligible_reason and (
+                            ineligible_reason.startswith("price_above_cap_")
+                            or ineligible_reason.startswith("price_above_low_price_ceiling_")
+                        ):
                             mode_above_cap += 1
-                        else:
-                            eligible = True
-                            ineligible_reason = None
 
             if eligible:
                 mode_eligible += 1

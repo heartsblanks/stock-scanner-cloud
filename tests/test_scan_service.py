@@ -7,6 +7,7 @@ from unittest.mock import patch
 from services.scan_service import (
     _apply_hard_notional_cap,
     _apply_low_price_notional_cap,
+    _apply_low_price_mode_notional_tier,
     _apply_confidence_loss_sizing,
     _apply_minimum_viable_position_sizing,
     _maybe_send_high_quality_long_signal_alert,
@@ -14,6 +15,7 @@ from services.scan_service import (
     _daily_quality_guardrail_status,
     _evaluate_commission_adjusted_quality,
     _evaluate_low_price_quality,
+    _evaluate_low_price_mode_quality,
     _evaluate_symbol_day_block,
     _requires_fractional_above_cap,
     _is_alert_only_mode,
@@ -108,6 +110,7 @@ class ScanServiceSizingTests(unittest.TestCase):
     def test_default_live_quality_thresholds_are_calibrated_for_live_candidates(self):
         self.assertFalse(_is_alert_only_mode("third"))
         self.assertFalse(_is_alert_only_mode("sixth"))
+        self.assertEqual(_mode_placement_confidence_floor("low_price"), 88)
         self.assertEqual(_mode_placement_confidence_floor("primary"), 82)
         self.assertEqual(_mode_placement_confidence_floor("secondary"), 84)
         self.assertEqual(_mode_placement_confidence_floor("fifth"), 84)
@@ -206,6 +209,61 @@ class ScanServiceSizingTests(unittest.TestCase):
         self.assertEqual(reason, "low_price_alert_only")
         self.assertEqual(details["low_price_alert_only_below"], 5.0)
 
+    def test_low_price_mode_quality_requires_volume_and_fee_adjusted_economics(self):
+        metrics = {
+            "mode": "low_price",
+            "entry": 8.0,
+            "stop": 7.8,
+            "target": 8.7,
+            "shares": 10,
+            "final_confidence": 90,
+            "relative_volume": 1.0,
+        }
+
+        blocked, reason, details = _evaluate_low_price_mode_quality(metrics)
+
+        self.assertTrue(blocked)
+        self.assertEqual(reason, "low_price_relative_volume_below_floor")
+        self.assertEqual(details["low_price_min_relative_volume"], 1.3)
+
+    def test_low_price_mode_quality_allows_configured_minimums(self):
+        metrics = {
+            "mode": "low_price",
+            "entry": 8.0,
+            "stop": 7.8,
+            "target": 8.7,
+            "shares": 20,
+            "final_confidence": 90,
+            "relative_volume": 1.4,
+        }
+
+        blocked, reason, details = _evaluate_low_price_mode_quality(metrics)
+
+        self.assertFalse(blocked)
+        self.assertEqual(reason, "")
+        self.assertGreaterEqual(details["gross_target_profit"], 8.0)
+        self.assertGreaterEqual(details["net_target_profit"], 4.5)
+
+    def test_low_price_mode_notional_tiers_cap_position_size(self):
+        examples = [
+            (1.5, 300.0),
+            (4.0, 500.0),
+            (20.0, 1000.0),
+        ]
+        for entry, expected_cap in examples:
+            metrics = {
+                "mode": "low_price",
+                "entry": entry,
+                "risk_per_share": 0.1,
+                "per_trade_notional": 2000.0,
+                "adjusted_per_trade_notional": 2000.0,
+            }
+
+            _apply_low_price_mode_notional_tier(metrics)
+
+            self.assertEqual(metrics["low_price_mode_notional_cap"], expected_cap)
+            self.assertLessEqual(metrics["per_trade_notional"], expected_cap)
+
     def test_symbol_day_block_catches_broker_filled_loss_today(self):
         blocked, reason, details = _evaluate_symbol_day_block(
             [{"exit_time": "2026-05-06T14:30:00+00:00", "realized_pnl": -3.55}],
@@ -268,7 +326,7 @@ class ScanServiceSizingTests(unittest.TestCase):
 
         with patch.dict("os.environ", {"PAPER_ALERT_ONLY_MODES": "third"}, clear=False):
             result = execute_full_scan(
-                {"mode": "third", "paper_trade": True, "scan_source": "SCHEDULED"},
+                {"mode": "third", "paper_trade": True, "scan_source": "MANUAL"},
                 market_time_check=lambda: (True, "Market timing OK."),
                 build_scan_id=lambda timestamp_utc, mode: f"{mode}-scan",
                 market_phase_from_timestamp=lambda timestamp_utc: "MIDDAY",
@@ -488,7 +546,7 @@ class ScanServiceSizingTests(unittest.TestCase):
             )
 
         result = execute_full_scan(
-            {"mode": "third", "paper_trade": True, "scan_source": "SCHEDULED"},
+            {"mode": "third", "paper_trade": True, "scan_source": "MANUAL"},
             market_time_check=lambda: (True, "Market timing OK."),
             build_scan_id=lambda timestamp_utc, mode: f"{mode}-scan",
             market_phase_from_timestamp=lambda timestamp_utc: "MIDDAY",
@@ -579,7 +637,7 @@ class ScanServiceSizingTests(unittest.TestCase):
             clear=False,
         ):
             result = execute_full_scan(
-                {"mode": "third", "paper_trade": True, "scan_source": "SCHEDULED"},
+                {"mode": "third", "paper_trade": True, "scan_source": "MANUAL"},
                 market_time_check=lambda: (True, "Market timing OK."),
                 build_scan_id=lambda timestamp_utc, mode: f"{mode}-scan",
                 market_phase_from_timestamp=lambda timestamp_utc: "MIDDAY",
@@ -654,7 +712,7 @@ class ScanServiceSizingTests(unittest.TestCase):
             },
         ):
             result = execute_full_scan(
-                {"mode": "primary", "paper_trade": False, "scan_source": "SCHEDULED"},
+                {"mode": "primary", "paper_trade": False, "scan_source": "MANUAL"},
                 market_time_check=lambda: (True, "Market timing OK."),
                 build_scan_id=lambda timestamp_utc, mode: f"{mode}-scan",
                 market_phase_from_timestamp=lambda timestamp_utc: "OPEN",
@@ -720,7 +778,7 @@ class ScanServiceSizingTests(unittest.TestCase):
             },
         ):
             result = execute_full_scan(
-                {"mode": "core_one", "paper_trade": True, "scan_source": "SCHEDULED"},
+                {"mode": "core_one", "paper_trade": True, "scan_source": "MANUAL"},
                 market_time_check=lambda: (True, "Market timing OK."),
                 build_scan_id=lambda timestamp_utc, mode: f"{mode}-scan",
                 market_phase_from_timestamp=lambda timestamp_utc: "OPEN",
@@ -806,7 +864,7 @@ class ScanServiceSizingTests(unittest.TestCase):
             side_effect=lambda symbol, limit=5: recent_trade_calls.append((symbol, limit)) or [],
         ):
             result = execute_full_scan(
-                {"mode": "core_one", "paper_trade": True, "scan_source": "SCHEDULED"},
+                {"mode": "core_one", "paper_trade": True, "scan_source": "MANUAL"},
                 market_time_check=lambda: (True, "Market timing OK."),
                 build_scan_id=lambda timestamp_utc, mode: f"{mode}-scan",
                 market_phase_from_timestamp=lambda timestamp_utc: "MIDDAY",

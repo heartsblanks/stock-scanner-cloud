@@ -150,6 +150,7 @@ def _mode_placement_confidence_floor(mode: str) -> int | None:
     floors = _parse_mode_int_map(
         os.getenv("PAPER_MODE_PLACEMENT_CONFIDENCE_FLOORS", ""),
         {
+            "low_price": 88,
             "primary": 82,
             "secondary": 84,
             "fourth": 84,
@@ -247,6 +248,65 @@ def _low_price_min_gross_target_profit_dollars() -> float:
 
 def _low_price_min_confidence() -> float:
     return _env_float("PAPER_LOW_PRICE_MIN_CONFIDENCE", 84.0)
+
+
+def _is_low_price_mode(mode: Any) -> bool:
+    return str(mode or "").strip().lower() == "low_price"
+
+
+def _low_price_mode_min_price() -> float:
+    value = _env_float("PAPER_LOW_PRICE_MODE_MIN_PRICE", 1.0)
+    return value if value > 0 else 1.0
+
+
+def _low_price_mode_max_price() -> float:
+    value = _env_float("PAPER_LOW_PRICE_MODE_MAX_PRICE", 30.0)
+    return value if value > 0 else 30.0
+
+
+def _low_price_mode_min_relative_volume() -> float:
+    return _env_float("PAPER_LOW_PRICE_MODE_MIN_RELATIVE_VOLUME", 1.3)
+
+
+def _low_price_mode_min_gross_target_profit_dollars() -> float:
+    return _env_float("PAPER_LOW_PRICE_MODE_MIN_GROSS_TARGET_PROFIT_DOLLARS", 8.0)
+
+
+def _low_price_mode_min_net_target_profit_dollars() -> float:
+    return _env_float("PAPER_LOW_PRICE_MODE_MIN_NET_TARGET_PROFIT_DOLLARS", 4.5)
+
+
+def _low_price_mode_min_net_reward_risk() -> float:
+    return _env_float("PAPER_LOW_PRICE_MODE_MIN_NET_REWARD_RISK", 1.5)
+
+
+def _parse_low_price_notional_tiers() -> list[tuple[float, float, float]]:
+    raw_value = str(
+        os.getenv("PAPER_LOW_PRICE_MODE_NOTIONAL_TIERS", "1:2:300;2:5:500;5:30:1000")
+    ).strip()
+    tiers: list[tuple[float, float, float]] = []
+    for item in raw_value.replace(",", ";").split(";"):
+        parts = [part.strip() for part in item.split(":")]
+        if len(parts) != 3:
+            continue
+        try:
+            low, high, cap = float(parts[0]), float(parts[1]), float(parts[2])
+        except Exception:
+            continue
+        if low >= 0 and high > low and cap > 0:
+            tiers.append((low, high, cap))
+    return tiers or [(1.0, 2.0, 300.0), (2.0, 5.0, 500.0), (5.0, 30.0, 1000.0)]
+
+
+def _low_price_mode_notional_cap(entry_price: float) -> float:
+    for low, high, cap in _parse_low_price_notional_tiers():
+        if entry_price >= low and entry_price < high:
+            return cap
+    max_price = _low_price_mode_max_price()
+    for low, high, cap in _parse_low_price_notional_tiers():
+        if entry_price >= low and entry_price <= max_price and high == max_price:
+            return cap
+    return _configured_hard_notional_cap()
 
 
 def _one_trade_per_symbol_per_day_enabled() -> bool:
@@ -737,6 +797,54 @@ def _evaluate_low_price_quality(metrics: dict[str, Any]) -> tuple[bool, str, dic
     return False, "", details
 
 
+def _evaluate_low_price_mode_quality(metrics: dict[str, Any]) -> tuple[bool, str, dict[str, float]]:
+    if not _is_low_price_mode(metrics.get("mode")):
+        return False, "", {}
+
+    economics = _calculate_commission_adjusted_economics(metrics)
+    entry = _to_float(metrics.get("entry"), 0.0)
+    confidence = _to_float(metrics.get("final_confidence"), 0.0)
+    relative_volume = _to_float(metrics.get("relative_volume"), 0.0)
+    min_price = _low_price_mode_min_price()
+    max_price = _low_price_mode_max_price()
+    min_confidence = _mode_placement_confidence_floor("low_price") or 88
+    min_relative_volume = _low_price_mode_min_relative_volume()
+    min_gross_target = _low_price_mode_min_gross_target_profit_dollars()
+    min_net_target = _low_price_mode_min_net_target_profit_dollars()
+    min_net_rr = _low_price_mode_min_net_reward_risk()
+
+    details = {
+        **economics,
+        "entry": round(entry, 4),
+        "confidence": round(confidence, 4),
+        "relative_volume": round(relative_volume, 4),
+        "low_price_min_price": round(min_price, 4),
+        "low_price_max_price": round(max_price, 4),
+        "low_price_min_confidence": round(float(min_confidence), 4),
+        "low_price_min_relative_volume": round(min_relative_volume, 4),
+        "low_price_min_gross_target_profit": round(min_gross_target, 4),
+        "low_price_min_net_target_profit": round(min_net_target, 4),
+        "low_price_min_net_reward_risk": round(min_net_rr, 4),
+    }
+
+    if entry <= 0 or entry < min_price:
+        return True, "low_price_price_below_floor", details
+    if entry > max_price:
+        return True, "low_price_price_above_ceiling", details
+    if confidence < min_confidence:
+        return True, "low_price_confidence_below_floor", details
+    if relative_volume < min_relative_volume:
+        return True, "low_price_relative_volume_below_floor", details
+    if economics["gross_target_profit"] < min_gross_target:
+        return True, "low_price_target_profit_below_floor", details
+    if economics["net_target_profit"] < min_net_target:
+        return True, "low_price_net_target_profit_below_floor", details
+    if economics["net_reward_risk"] < min_net_rr:
+        return True, "low_price_net_reward_risk_below_floor", details
+
+    return False, "", details
+
+
 def _evaluate_commission_adjusted_quality(metrics: dict[str, Any]) -> tuple[bool, str, dict[str, float]]:
     economics = _calculate_commission_adjusted_economics(metrics)
     min_gross_target = _min_gross_target_profit_dollars()
@@ -883,6 +991,44 @@ def _apply_low_price_notional_cap(metrics: dict[str, Any]) -> None:
     metrics["actual_risk"] = round(capped_shares * _to_float(metrics.get("risk_per_share"), 0.0), 4)
 
 
+def _apply_low_price_mode_notional_tier(metrics: dict[str, Any]) -> None:
+    if not _is_low_price_mode(metrics.get("mode")):
+        return
+
+    entry_price = _to_float(metrics.get("entry"), 0.0)
+    if entry_price <= 0:
+        return
+
+    tier_cap = _low_price_mode_notional_cap(entry_price)
+    current_notional = _to_float(metrics.get("per_trade_notional"), 0.0)
+    if tier_cap <= 0 or current_notional <= 0:
+        return
+
+    capped_notional = min(current_notional, tier_cap)
+    capped_shares = _normalize_share_quantity(capped_notional / entry_price)
+    metrics["low_price_mode_notional_cap"] = round(tier_cap, 4)
+    metrics["low_price_mode_notional_tiers"] = os.getenv(
+        "PAPER_LOW_PRICE_MODE_NOTIONAL_TIERS",
+        "1:2:300;2:5:500;5:30:1000",
+    )
+
+    if capped_shares <= 0:
+        metrics["shares"] = 0.0
+        metrics["per_trade_notional"] = 0.0
+        metrics["adjusted_per_trade_notional"] = 0.0
+        metrics["actual_position_cost"] = 0.0
+        metrics["actual_risk"] = 0.0
+        return
+
+    final_notional = capped_shares * entry_price
+    metrics["shares"] = capped_shares
+    metrics["per_trade_notional"] = round(final_notional, 4)
+    metrics["adjusted_per_trade_notional"] = round(final_notional, 4)
+    metrics["notional_capped_shares"] = capped_shares
+    metrics["actual_position_cost"] = round(final_notional, 4)
+    metrics["actual_risk"] = round(capped_shares * _to_float(metrics.get("risk_per_share"), 0.0), 4)
+
+
 def execute_scan_request(payload: dict[str, Any], *, handler: Callable[[dict[str, Any]], Any]) -> Any:
     return handler(payload)
 
@@ -966,6 +1112,7 @@ def execute_full_scan(
         supported_modes = set(REQUIRED_MODES)
     except Exception:
         supported_modes = {
+            "low_price",
             "primary",
             "secondary",
             "third",
@@ -1581,7 +1728,9 @@ def execute_full_scan(
                     loss_multiplier=loss_multiplier,
                     final_multiplier=final_multiplier,
                 )
+                paper_trade_candidate["metrics"]["mode"] = mode
                 _apply_hard_notional_cap(paper_trade_candidate["metrics"])
+                _apply_low_price_mode_notional_tier(paper_trade_candidate["metrics"])
                 _apply_low_price_notional_cap(paper_trade_candidate["metrics"])
                 # --- Expose multipliers at response level (latest candidate wins) ---
                 try:
@@ -1633,6 +1782,7 @@ def execute_full_scan(
                         continue
                     paper_trade_candidate = refreshed_candidate
                     paper_metrics = paper_trade_candidate["metrics"]
+                    paper_metrics["mode"] = mode
                     paper_metrics["current_open_positions"] = current_open_positions
                     paper_metrics["current_open_exposure"] = current_open_exposure
                     candidate_symbol = str(paper_metrics.get("symbol", "")).strip().upper()
@@ -1691,6 +1841,7 @@ def execute_full_scan(
                         final_multiplier=final_multiplier,
                     )
                     _apply_hard_notional_cap(paper_metrics)
+                    _apply_low_price_mode_notional_tier(paper_metrics)
                     _apply_low_price_notional_cap(paper_metrics)
                     _apply_minimum_viable_position_sizing(paper_metrics)
 
@@ -1763,7 +1914,10 @@ def execute_full_scan(
                     skip_reasons.append(f"{candidate_symbol}:position_size_too_small_after_slot_compression")
                     continue
 
-                low_price_blocked, low_price_reason, low_price_details = _evaluate_low_price_quality(paper_metrics)
+                if _is_low_price_mode(mode):
+                    low_price_blocked, low_price_reason, low_price_details = _evaluate_low_price_mode_quality(paper_metrics)
+                else:
+                    low_price_blocked, low_price_reason, low_price_details = _evaluate_low_price_quality(paper_metrics)
                 if low_price_blocked and not disable_strategy_gates:
                     record_attempt(
                         "PLACEMENT_SKIPPED",
@@ -1823,8 +1977,10 @@ def execute_full_scan(
                     continue
 
                 try:
-                    placement_max_notional = _to_float(paper_metrics.get("hard_max_notional"), 0.0) or _to_float(
-                        paper_metrics.get("per_trade_notional"), 0.0
+                    placement_max_notional = (
+                        _to_float(paper_metrics.get("low_price_mode_notional_cap"), 0.0)
+                        or _to_float(paper_metrics.get("hard_max_notional"), 0.0)
+                        or _to_float(paper_metrics.get("per_trade_notional"), 0.0)
                     )
                     if place_supports_max_notional and placement_max_notional > 0:
                         broker_results = _normalize_paper_trade_results(

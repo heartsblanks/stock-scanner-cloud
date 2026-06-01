@@ -16,7 +16,7 @@ if "psycopg" not in sys.modules:
     sys.modules["psycopg"] = fake_psycopg
     sys.modules["psycopg.rows"] = fake_psycopg_rows
 
-from analytics.trade_scan import calculate_position_sizing, evaluate_symbol
+from analytics.trade_scan import _volume_confirmation_threshold, calculate_position_sizing, evaluate_symbol
 from core.paper_trade_config import get_paper_trade_limits
 
 
@@ -226,6 +226,9 @@ class TradeScanSizingConfigTests(unittest.TestCase):
 
 
 class TradeScanTimePenaltyTests(unittest.TestCase):
+    def test_low_price_mode_uses_stricter_relative_volume_threshold(self):
+        self.assertEqual(_volume_confirmation_threshold("low_price"), 1.3)
+
     def test_valid_breakout_passes_atr_noise_filter(self):
         info = {"symbol": "GOOGL", "type": "stock", "priority": 9, "market": "NASDAQ"}
         candles = build_valid_breakout_candles()

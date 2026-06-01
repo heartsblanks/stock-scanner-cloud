@@ -16,6 +16,7 @@ class InstrumentRegistryTests(unittest.TestCase):
         rows = []
         for mode_index, mode in enumerate(
             [
+                "low_price",
                 "primary",
                 "secondary",
                 "third",
@@ -54,7 +55,7 @@ class InstrumentRegistryTests(unittest.TestCase):
         self.assertEqual(_normalize_primary_exchange("nasdaq"), "NASDAQ")
         self.assertIsNone(_normalize_primary_exchange("NONE"))
 
-    def test_rows_to_groups_allows_us_test_to_be_empty(self):
+    def test_rows_to_groups_allows_legacy_modes_to_be_empty(self):
         rows = []
         for mode_index, mode in enumerate(MANDATORY_MODES, start=1):
             rows.append(
@@ -74,6 +75,7 @@ class InstrumentRegistryTests(unittest.TestCase):
         instrument_groups = _rows_to_groups(rows)
 
         self.assertEqual(instrument_groups["us_test"], {})
+        self.assertEqual(instrument_groups["core_one"], {})
         for mode in MANDATORY_MODES:
             self.assertTrue(instrument_groups[mode])
 
@@ -85,41 +87,36 @@ class InstrumentRegistryTests(unittest.TestCase):
         result = sync_quality_candidate_instruments()
 
         self.assertTrue(result["ok"])
-        self.assertIn("QCOM", result["symbols"])
-        self.assertIn("JPM", result["symbols"])
-        self.assertIn("UNH", result["symbols"])
-        self.assertIn("TSM", result["symbols"])
+        self.assertIn("SOFI", result["symbols"])
+        self.assertIn("HIMS", result["symbols"])
         self.assertIn("PLUG", result["symbols"])
         self.assertIn("KEEL", result["symbols"])
+        self.assertIn("XPEV", result["symbols"])
+        self.assertEqual(result["modes"], ["low_price"])
+        self.assertTrue(result["legacy_modes_deactivated"])
+        deactivate_query = mock_cursor.execute.call_args.args[0]
+        self.assertIn("WHERE mode <> 'low_price'", deactivate_query)
         query = mock_cursor.executemany.call_args.args[0]
         rows = mock_cursor.executemany.call_args.args[1]
-        qcom = next(row for row in rows if row["symbol"] == "QCOM")
-        csco = next(row for row in rows if row["symbol"] == "CSCO")
-        jpm = next(row for row in rows if row["symbol"] == "JPM")
-        unh = next(row for row in rows if row["symbol"] == "UNH")
-        tsm = next(row for row in rows if row["symbol"] == "TSM")
-        mu = next(row for row in rows if row["symbol"] == "MU")
+        sofi = next(row for row in rows if row["symbol"] == "SOFI")
+        hims = next(row for row in rows if row["symbol"] == "HIMS")
         plug = next(row for row in rows if row["symbol"] == "PLUG")
         keel = next(row for row in rows if row["symbol"] == "KEEL")
         self.assertIn("ON CONFLICT (symbol)", query)
         self.assertIn("mode = EXCLUDED.mode", query)
-        self.assertEqual(qcom["mode"], "core_three")
-        self.assertEqual(csco["mode"], "core_two")
-        self.assertEqual(jpm["mode"], "core_one")
-        self.assertEqual(unh["mode"], "core_two")
-        self.assertEqual(tsm["mode"], "core_three")
-        self.assertEqual(mu["mode"], "core_three")
-        self.assertEqual(plug["mode"], "secondary")
+        self.assertEqual(sofi["mode"], "low_price")
+        self.assertEqual(hims["market"], "NYSE")
+        self.assertEqual(plug["mode"], "low_price")
         self.assertEqual(plug["priority"], 7)
-        self.assertEqual(keel["mode"], "secondary")
+        self.assertEqual(keel["mode"], "low_price")
         self.assertEqual(keel["priority"], 7)
 
-    def test_instrument_symbols_are_unique_across_modes(self):
+    def test_instrument_symbols_are_unique_within_each_mode(self):
         instrument_groups = _DEFAULT_INSTRUMENT_GROUPS
-        seen_symbols = set()
 
         for mode, instruments in instrument_groups.items():
             self.assertTrue(instruments, f"{mode} should not be empty")
+            seen_symbols = set()
             for display_name, info in instruments.items():
                 symbol = info["symbol"]
                 self.assertNotIn(symbol, seen_symbols, f"duplicate symbol found: {symbol}")

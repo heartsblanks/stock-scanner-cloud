@@ -10,6 +10,7 @@ from core.logging_utils import log_warning
 
 
 REQUIRED_MODES = (
+    "low_price",
     "primary",
     "secondary",
     "third",
@@ -21,7 +22,18 @@ REQUIRED_MODES = (
     "core_two",
     "core_three",
 )
-OPTIONAL_MODES = {"us_test"}
+OPTIONAL_MODES = {
+    "primary",
+    "secondary",
+    "third",
+    "fourth",
+    "fifth",
+    "sixth",
+    "us_test",
+    "core_one",
+    "core_two",
+    "core_three",
+}
 MANDATORY_MODES = tuple(mode for mode in REQUIRED_MODES if mode not in OPTIONAL_MODES)
 
 _DEFAULT_INSTRUMENT_GROUPS: dict[str, dict[str, dict[str, object]]] = {
@@ -177,6 +189,82 @@ def _quality_candidate(
         "primary_exchange": primary,
         "currency": "USD",
     }
+
+
+LOW_PRICE_CANDIDATE_INSTRUMENTS: tuple[dict[str, object], ...] = (
+    _quality_candidate(mode="low_price", display_name="SoFi", symbol="SOFI", priority=9, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Hims & Hers", symbol="HIMS", priority=9, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="Rivian", symbol="RIVN", priority=9, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Snap", symbol="SNAP", priority=8, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="NIO", symbol="NIO", priority=8, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="Joby Aviation", symbol="JOBY", priority=8, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="Lucid", symbol="LCID", priority=8, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Archer Aviation", symbol="ACHR", priority=8, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="Opendoor", symbol="OPEN", priority=7, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="QuantumScape", symbol="QS", priority=7, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="Plug Power", symbol="PLUG", priority=7, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Grab", symbol="GRAB", priority=7, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Bitfarms", symbol="BITF", priority=7, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Clover Health", symbol="CLOV", priority=7, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="TAL Education", symbol="TAL", priority=7, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="Telefonica Brasil", symbol="VIV", priority=6, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="BigBear.ai", symbol="BBAI", priority=7, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="SoundHound AI", symbol="SOUN", priority=7, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="C3.ai", symbol="AI", priority=7, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="D-Wave Quantum", symbol="QBTS", priority=7, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="Nu Holdings", symbol="NU", priority=7, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="Peloton", symbol="PTON", priority=6, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="fuboTV", symbol="FUBO", priority=6, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="MARA Holdings", symbol="MARA", priority=7, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="TeraWulf", symbol="WULF", priority=7, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Recursion", symbol="RXRX", priority=7, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Cerence", symbol="CRNC", priority=6, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Keel Infrastructure", symbol="KEEL", priority=7, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Kraft Heinz", symbol="KHC", priority=8, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Pfizer", symbol="PFE", priority=8, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="Comcast", symbol="CMCSA", priority=8, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Ford", symbol="F", priority=8, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="American Airlines", symbol="AAL", priority=7, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Carnival", symbol="CCL", priority=7, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="Norwegian Cruise Line", symbol="NCLH", priority=7, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="Bilibili", symbol="BILI", priority=7, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="ChargePoint", symbol="CHPT", priority=6, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="Ginkgo Bioworks", symbol="DNA", priority=6, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="Luminar", symbol="LAZR", priority=6, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="AST SpaceMobile", symbol="ASTS", priority=7, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Sirius XM", symbol="SIRI", priority=6, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Warner Bros. Discovery", symbol="WBD", priority=7, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Paramount Global", symbol="PARA", priority=6, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Lumen Technologies", symbol="LUMN", priority=6, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="Riot Platforms", symbol="RIOT", priority=7, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Sunrun", symbol="RUN", priority=7, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Virgin Galactic", symbol="SPCE", priority=6, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="Tilray", symbol="TLRY", priority=6, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Upstart", symbol="UPST", priority=7, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Array Technologies", symbol="ARRY", priority=6, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Bloom Energy", symbol="BE", priority=7, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="Blink Charging", symbol="BLNK", priority=6, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Enovix", symbol="ENVX", priority=7, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="MicroVision", symbol="MVIS", priority=6, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="SNDL", symbol="SNDL", priority=6, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="TMC the metals company", symbol="TMC", priority=6, market="NASDAQ"),
+    _quality_candidate(mode="low_price", display_name="Unity Software", symbol="U", priority=7, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="Vale", symbol="VALE", priority=7, market="NYSE"),
+    _quality_candidate(mode="low_price", display_name="XPeng", symbol="XPEV", priority=7, market="NYSE"),
+)
+
+_DEFAULT_INSTRUMENT_GROUPS["low_price"] = {
+    str(row["display_name"]): {
+        "symbol": str(row["symbol"]),
+        "type": str(row["instrument_type"]),
+        "priority": int(row["priority"]),
+        "market": str(row["market"]),
+        "exchange": row.get("exchange"),
+        "primary_exchange": row.get("primary_exchange"),
+        "currency": row.get("currency"),
+    }
+    for row in LOW_PRICE_CANDIDATE_INSTRUMENTS
+}
 
 
 QUALITY_CANDIDATE_INSTRUMENTS: tuple[dict[str, object], ...] = (
@@ -754,22 +842,21 @@ def _seed_defaults_if_empty() -> None:
         return
 
     seed_rows: list[dict[str, object]] = []
-    for mode, instruments in _DEFAULT_INSTRUMENT_GROUPS.items():
-        for display_name, info in instruments.items():
-            seed_rows.append(
-                {
-                    "mode": mode,
-                    "display_name": display_name,
-                    "symbol": _normalize_text(info.get("symbol")).upper(),
-                    "instrument_type": _normalize_text(info.get("type")).lower(),
-                    "priority": int(info.get("priority") or 0),
-                    "market": _normalize_text(info.get("market")).upper(),
-                    "exchange": _normalize_text(info.get("exchange")).upper() or None,
-                    "primary_exchange": _normalize_primary_exchange(info.get("primary_exchange")),
-                    "currency": _normalize_text(info.get("currency")).upper() or None,
-                    "active": True,
-                }
-            )
+    for raw_row in LOW_PRICE_CANDIDATE_INSTRUMENTS:
+        seed_rows.append(
+            {
+                "mode": "low_price",
+                "display_name": _normalize_text(raw_row.get("display_name")),
+                "symbol": _normalize_text(raw_row.get("symbol")).upper(),
+                "instrument_type": _normalize_text(raw_row.get("instrument_type")).lower() or "stock",
+                "priority": int(raw_row.get("priority") or 0),
+                "market": _normalize_text(raw_row.get("market")).upper() or "NASDAQ",
+                "exchange": _normalize_optional_market_field(raw_row.get("exchange")),
+                "primary_exchange": _normalize_primary_exchange(raw_row.get("primary_exchange")),
+                "currency": _normalize_optional_market_field(raw_row.get("currency")) or "USD",
+                "active": True,
+            }
+        )
 
     with get_db_cursor(commit=True) as cur:
         cur.executemany(
@@ -854,22 +941,27 @@ def _rows_to_groups(rows: list[dict[str, object]]) -> dict[str, dict[str, dict[s
 
 def sync_quality_candidate_instruments() -> dict[str, object]:
     """
-    Upsert the stronger candidate pool into the DB source-of-truth catalog.
+    Upsert the scheduled low-price candidate pool into the DB catalog.
 
-    Existing symbols, including rows that used to live in us_test, are moved into
-    their scheduled scan mode via the symbol-level unique key instead of being
-    duplicated.
+    Existing symbols are moved into low_price via the symbol-level unique key.
+    Legacy modes remain in the table for history, but inactive for scheduled
+    live scans.
     """
     global _CACHE_DATA, _CACHE_LOADED_AT
 
     ensure_instrument_catalog_schema()
     rows: list[dict[str, object]] = []
-    for raw_row in QUALITY_CANDIDATE_INSTRUMENTS:
+    seen_symbols: set[str] = set()
+    for raw_row in LOW_PRICE_CANDIDATE_INSTRUMENTS:
+        symbol = _normalize_text(raw_row.get("symbol")).upper()
+        if not symbol or symbol in seen_symbols:
+            continue
+        seen_symbols.add(symbol)
         rows.append(
             {
                 "mode": _normalize_text(raw_row.get("mode")).lower(),
                 "display_name": _normalize_text(raw_row.get("display_name")),
-                "symbol": _normalize_text(raw_row.get("symbol")).upper(),
+                "symbol": symbol,
                 "instrument_type": _normalize_text(raw_row.get("instrument_type")).lower() or "stock",
                 "priority": int(raw_row.get("priority") or 0),
                 "market": _normalize_text(raw_row.get("market")).upper() or "NASDAQ",
@@ -881,6 +973,15 @@ def sync_quality_candidate_instruments() -> dict[str, object]:
         )
 
     with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE instrument_catalog
+            SET active = FALSE,
+                updated_at = NOW()
+            WHERE mode <> 'low_price'
+              AND active = TRUE
+            """
+        )
         cur.executemany(
             """
             INSERT INTO instrument_catalog (
@@ -932,6 +1033,7 @@ def sync_quality_candidate_instruments() -> dict[str, object]:
         "synced_count": len(rows),
         "symbols": [str(row["symbol"]) for row in rows],
         "modes": sorted({str(row["mode"]) for row in rows}),
+        "legacy_modes_deactivated": True,
     }
 
 
@@ -955,6 +1057,25 @@ def _load_groups_from_db() -> dict[str, dict[str, dict[str, object]]]:
         ORDER BY mode ASC, priority DESC, display_name ASC
         """
     )
+    if not any(_normalize_text(row.get("mode")).lower() == "low_price" for row in rows):
+        sync_quality_candidate_instruments()
+        rows = fetch_all(
+            """
+            SELECT
+                mode,
+                display_name,
+                symbol,
+                instrument_type,
+                priority,
+                market,
+                exchange,
+                primary_exchange,
+                currency
+            FROM instrument_catalog
+            WHERE active = TRUE
+            ORDER BY mode ASC, priority DESC, display_name ASC
+            """
+        )
     return _rows_to_groups(rows)
 
 

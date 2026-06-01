@@ -14,6 +14,14 @@ class SymbolEligibilityRankingTests(unittest.TestCase):
         }
         return [{"close": prices.get(symbol, 20.0)}]
 
+    def _fetch_low_price_candles(self, symbol, **kwargs):
+        prices = {
+            "TOO_LOW": 0.75,
+            "OK": 12.0,
+            "TOO_HIGH": 31.0,
+        }
+        return [{"close": prices.get(symbol, 12.0)}]
+
     @patch("services.symbol_eligibility_service.replace_symbol_session_eligibility_rows")
     @patch("services.symbol_eligibility_service.get_latest_symbol_ranking_rows")
     @patch("services.symbol_eligibility_service.get_instrument_groups")
@@ -252,6 +260,53 @@ class SymbolEligibilityRankingTests(unittest.TestCase):
         self.assertEqual(result["modes"][0]["cached_price_count"], 4)
         self.assertTrue(result["modes"][0]["price_fetch_circuit_opened"])
         self.assertTrue(result["modes"][0]["ranking_filter"]["cap_disabled"])
+
+    @patch("services.symbol_eligibility_service.replace_symbol_session_eligibility_rows")
+    @patch("services.symbol_eligibility_service.get_latest_symbol_ranking_rows")
+    @patch("services.symbol_eligibility_service.get_instrument_groups")
+    @patch("services.symbol_eligibility_service.sync_quality_candidate_instruments")
+    def test_low_price_mode_enforces_one_to_thirty_dollar_price_band(
+        self,
+        mock_sync_catalog,
+        mock_groups,
+        mock_rankings,
+        mock_replace,
+    ):
+        mock_sync_catalog.return_value = {"ok": True, "synced_count": 58}
+        mock_groups.return_value = {
+            "low_price": {
+                "Too Low": {"symbol": "TOO_LOW", "priority": 8, "currency": "USD"},
+                "Ok": {"symbol": "OK", "priority": 8, "currency": "USD"},
+                "Too High": {"symbol": "TOO_HIGH", "priority": 8, "currency": "USD"},
+            }
+        }
+        mock_rankings.return_value = []
+
+        with patch.dict(
+            "os.environ",
+            {
+                "SYMBOL_ELIGIBILITY_MAX_SYMBOLS_PER_MODE": "0",
+                "SYMBOL_ELIGIBILITY_MAX_NOTIONAL": "1000",
+            },
+            clear=False,
+        ):
+            result = refresh_symbol_eligibility_for_date(
+                target_session_date="2026-05-07",
+                fetch_intraday_fn=self._fetch_low_price_candles,
+                modes=["low_price"],
+            )
+
+        rows = mock_replace.call_args.kwargs["rows"]
+        by_symbol = {row["symbol"]: row for row in rows}
+        self.assertFalse(by_symbol["TOO_LOW"]["eligible"])
+        self.assertEqual(by_symbol["TOO_LOW"]["ineligible_reason"], "low_price_price_below_floor")
+        self.assertTrue(by_symbol["OK"]["eligible"])
+        self.assertFalse(by_symbol["TOO_HIGH"]["eligible"])
+        self.assertEqual(
+            by_symbol["TOO_HIGH"]["ineligible_reason"],
+            "price_above_low_price_ceiling_30.00",
+        )
+        self.assertEqual(result["eligible_count"], 1)
 
 
 if __name__ == "__main__":

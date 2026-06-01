@@ -132,6 +132,8 @@ def _is_core_mode(mode: str | None) -> bool:
 
 
 def _volume_confirmation_threshold(mode: str | None) -> float:
+    if str(mode or "").strip().lower() == "low_price":
+        return _env_float("PAPER_LOW_PRICE_MODE_MIN_RELATIVE_VOLUME", 1.3)
     if _is_core_mode(mode):
         return _env_float("PAPER_CORE_MIN_RELATIVE_VOLUME", 1.05)
     return _env_float("PAPER_MIN_RELATIVE_VOLUME", 1.1)

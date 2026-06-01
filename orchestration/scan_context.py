@@ -9,15 +9,7 @@ from zoneinfo import ZoneInfo
 
 NY_TZ = ZoneInfo("America/New_York")
 IBKR_SCHEDULED_MODE_ORDER = [
-    "primary",
-    "secondary",
-    "third",
-    "fourth",
-    "fifth",
-    "sixth",
-    "core_one",
-    "core_two",
-    "core_three",
+    "low_price",
 ]
 
 
