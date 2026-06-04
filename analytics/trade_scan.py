@@ -151,6 +151,131 @@ def _max_vwap_extension_pct(mode: str | None) -> float:
         return _env_float("PAPER_MAX_VWAP_EXTENSION_PCT_CORE", 0.015)
     return _env_float("PAPER_MAX_VWAP_EXTENSION_PCT_NON_CORE", 0.01)
 
+
+def _parse_ny_time_env(name: str, default: str) -> tuple[int, int]:
+    raw = str(os.getenv(name, default)).strip() or default
+    try:
+        hour_raw, minute_raw = raw.split(":", 1)
+        hour = max(0, min(23, int(hour_raw)))
+        minute = max(0, min(59, int(minute_raw)))
+        return hour, minute
+    except Exception:
+        hour_raw, minute_raw = default.split(":", 1)
+        return int(hour_raw), int(minute_raw)
+
+
+def _minutes_after_open_for_time(hour: int, minute: int) -> int:
+    return (hour * 60 + minute) - (9 * 60 + 30)
+
+
+def _low_price_mode(mode: str | None) -> bool:
+    return str(mode or "").strip().lower() == "low_price"
+
+
+def _last_three_candle_relative_volume(candles: list[dict], lookback: int = 20) -> dict:
+    recent_volumes = []
+    for candle in candles[-3:]:
+        try:
+            volume = float(candle.get("volume"))
+        except Exception:
+            continue
+        if volume > 0:
+            recent_volumes.append(volume)
+
+    prior_volumes = []
+    prior_slice_end = max(0, len(candles) - 3)
+    for candle in candles[:prior_slice_end][-max(1, lookback):]:
+        try:
+            volume = float(candle.get("volume"))
+        except Exception:
+            continue
+        if volume > 0:
+            prior_volumes.append(volume)
+
+    latest_sum = sum(recent_volumes) if recent_volumes else None
+    average_volume = (sum(prior_volumes) / len(prior_volumes)) if prior_volumes else None
+    expected_sum = (average_volume * max(1, len(recent_volumes))) if average_volume is not None else None
+    relative_volume = (latest_sum / expected_sum) if latest_sum and expected_sum and expected_sum > 0 else None
+    return {
+        "three_candle_volume": latest_sum,
+        "three_candle_average_volume": average_volume,
+        "three_candle_relative_volume": relative_volume,
+        "three_candle_sample_count": len(prior_volumes),
+    }
+
+
+def _trend_slope_score(candles: list[dict], direction: str, lookback: int) -> dict:
+    closes = []
+    for candle in candles[-max(2, lookback):]:
+        try:
+            closes.append(float(candle["close"]))
+        except Exception:
+            continue
+    if len(closes) < 2:
+        return {"available": False, "aligned": False, "score_adjustment": 0}
+
+    higher_steps = sum(1 for prev, cur in zip(closes, closes[1:]) if cur > prev)
+    lower_steps = sum(1 for prev, cur in zip(closes, closes[1:]) if cur < prev)
+    slope = closes[-1] - closes[0]
+    if direction == "BUY":
+        aligned = slope > 0 and higher_steps >= max(1, len(closes) // 2)
+    else:
+        aligned = slope < 0 and lower_steps >= max(1, len(closes) // 2)
+    return {
+        "available": True,
+        "aligned": aligned,
+        "slope": slope,
+        "higher_steps": higher_steps,
+        "lower_steps": lower_steps,
+        "score_adjustment": 2 if aligned else -3,
+    }
+
+
+def _recent_return(candles: list[dict], lookback: int) -> float | None:
+    if len(candles) < max(2, lookback):
+        return None
+    try:
+        start = float(candles[-max(2, lookback)]["close"])
+        end = float(candles[-1]["close"])
+    except Exception:
+        return None
+    if start <= 0:
+        return None
+    return (end - start) / start
+
+
+def _spread_metrics(quote: dict | None, price: float) -> dict:
+    if not isinstance(quote, dict) or price <= 0:
+        return {"available": False}
+    bid = None
+    ask = None
+    try:
+        bid = float(quote.get("bid"))
+        ask = float(quote.get("ask"))
+    except Exception:
+        return {"available": False}
+    if bid <= 0 or ask <= 0 or ask < bid:
+        return {"available": False}
+    spread = ask - bid
+    midpoint = (ask + bid) / 2.0
+    spread_pct = spread / midpoint if midpoint > 0 else spread / price
+    return {"available": True, "bid": bid, "ask": ask, "spread": spread, "spread_pct": spread_pct}
+
+
+def _is_near_breakout_watch(price: float, or_high: float, or_low: float, vwap: float | None, relative_volume: float | None) -> tuple[bool, str | None]:
+    watch_pct = _env_float("PAPER_NEAR_BREAKOUT_WATCH_PCT", 0.004)
+    min_watch_volume = _env_float("PAPER_NEAR_BREAKOUT_MIN_RELATIVE_VOLUME", 1.1)
+    if price <= 0 or vwap is None:
+        return False, None
+    volume_ok = relative_volume is not None and relative_volume >= min_watch_volume
+    buy_watch = or_high > 0 and price < or_high and ((or_high - price) / price) <= watch_pct and price >= vwap and volume_ok
+    sell_watch = or_low > 0 and price > or_low and ((price - or_low) / price) <= watch_pct and price <= vwap and volume_ok
+    if buy_watch:
+        return True, "BUY"
+    if sell_watch:
+        return True, "SELL"
+    return False, None
+
 def fmt(x: float) -> str:
     return f"{x:.2f}"
 
@@ -263,6 +388,10 @@ def market_time_check():
 
 def fetch_intraday(symbol: str, interval: str = "1min", outputsize: int | None = None) -> list[dict]:
     raise RuntimeError("IBKR intraday fetch must be injected; legacy external market-data fetch is disabled.")
+
+
+def fetch_quote(symbol: str) -> dict:
+    raise RuntimeError("IBKR quote fetch must be injected for live spread checks.")
 
 
 def build_opening_range(candles: list[dict]):
@@ -480,6 +609,8 @@ def evaluate_symbol(
     current_open_positions: int = 0,
     current_open_exposure: float = 0.0,
     disable_strategy_gates: bool = False,
+    quote: dict | None = None,
+    failed_breakout_cooldown_symbols: set[str] | None = None,
 ):
     checks = {}
     metrics = {
@@ -553,8 +684,49 @@ def evaluate_symbol(
             "metrics": metrics,
         }
 
+    volume_stats = calculate_relative_volume(candles, lookback=_env_int("PAPER_RELATIVE_VOLUME_LOOKBACK", 20))
+    min_relative_volume = _volume_confirmation_threshold(info.get("mode"))
+    three_candle_volume_stats = _last_three_candle_relative_volume(
+        candles,
+        lookback=_env_int("PAPER_RELATIVE_VOLUME_LOOKBACK", 20),
+    )
+    min_three_candle_relative_volume = (
+        _env_float("PAPER_LOW_PRICE_MIN_3_CANDLE_REL_VOLUME", 1.1)
+        if _low_price_mode(info.get("mode"))
+        else _env_float("PAPER_MIN_3_CANDLE_REL_VOLUME", 0.0)
+    )
+    metrics.update({
+        "latest_volume": volume_stats.get("latest_volume"),
+        "average_volume": volume_stats.get("average_volume"),
+        "relative_volume": volume_stats.get("relative_volume"),
+        "relative_volume_sample_count": volume_stats.get("sample_count"),
+        "min_relative_volume": min_relative_volume,
+        "three_candle_volume": three_candle_volume_stats.get("three_candle_volume"),
+        "three_candle_average_volume": three_candle_volume_stats.get("three_candle_average_volume"),
+        "three_candle_relative_volume": three_candle_volume_stats.get("three_candle_relative_volume"),
+        "three_candle_volume_sample_count": three_candle_volume_stats.get("three_candle_sample_count"),
+        "min_three_candle_relative_volume": min_three_candle_relative_volume,
+    })
+
     checks["outside_opening_range"] = not (or_low <= price <= or_high)
     if not checks["outside_opening_range"] and not disable_strategy_gates:
+        near_watch, watch_direction = _is_near_breakout_watch(
+            price,
+            or_high,
+            or_low,
+            vwap,
+            volume_stats.get("relative_volume"),
+        )
+        metrics["near_breakout_watch"] = near_watch
+        metrics["direction"] = watch_direction or ("BUY" if price >= (vwap or price) else "SELL")
+        if near_watch:
+            return {
+                "name": name,
+                "decision": "REJECTED",
+                "final_reason": "near_breakout_watch",
+                "checks": checks,
+                "metrics": metrics,
+            }
         return {
             "name": name,
             "decision": "REJECTED",
@@ -582,7 +754,59 @@ def evaluate_symbol(
         metrics["inside_opening_range_forced_direction"] = True
     metrics["direction"] = direction
 
-    
+    cooldown_symbols = failed_breakout_cooldown_symbols or set()
+    checks["failed_breakout_cooldown"] = str(info.get("symbol", "")).strip().upper() not in cooldown_symbols
+    if not checks["failed_breakout_cooldown"] and not disable_strategy_gates:
+        return {
+            "name": name,
+            "decision": "REJECTED",
+            "final_reason": "failed_breakout_cooldown_active",
+            "checks": checks,
+            "metrics": metrics,
+        }
+
+    close_buffer_pct = _env_float("PAPER_BREAKOUT_CLOSE_BUFFER_PCT", 0.001)
+    if direction == "BUY":
+        breakout_close_level = or_high * (1 + close_buffer_pct)
+        checks["breakout_close_confirmation"] = price >= breakout_close_level
+    else:
+        breakout_close_level = or_low * (1 - close_buffer_pct)
+        checks["breakout_close_confirmation"] = price <= breakout_close_level
+    metrics["breakout_close_buffer_pct"] = close_buffer_pct
+    metrics["breakout_close_level"] = breakout_close_level
+    if not checks["breakout_close_confirmation"] and not disable_strategy_gates:
+        return {
+            "name": name,
+            "decision": "REJECTED",
+            "final_reason": "breakout_close_confirmation_failed",
+            "checks": checks,
+            "metrics": metrics,
+        }
+
+    spread = _spread_metrics(quote, price)
+    metrics.update({
+        "quote_available": spread.get("available", False),
+        "quote_bid": spread.get("bid"),
+        "quote_ask": spread.get("ask"),
+        "spread": spread.get("spread"),
+        "spread_pct": spread.get("spread_pct"),
+    })
+    max_spread_pct = _env_float("PAPER_LOW_PRICE_MAX_SPREAD_PCT", 0.006) if _low_price_mode(info.get("mode")) else _env_float("PAPER_MAX_SPREAD_PCT", 0.0)
+    metrics["max_spread_pct"] = max_spread_pct
+    checks["spread_filter"] = True
+    if max_spread_pct > 0:
+        if spread.get("available"):
+            checks["spread_filter"] = float(spread.get("spread_pct") or 0.0) <= max_spread_pct
+            if not checks["spread_filter"] and not disable_strategy_gates:
+                return {
+                    "name": name,
+                    "decision": "REJECTED",
+                    "final_reason": "spread_too_wide",
+                    "checks": checks,
+                    "metrics": metrics,
+                }
+        else:
+            metrics["spread_unavailable_proxy_used"] = True
 
     if direction == "BUY":
         checks["vwap_alignment"] = price > vwap
@@ -598,15 +822,6 @@ def evaluate_symbol(
             "metrics": metrics,
         }
 
-    volume_stats = calculate_relative_volume(candles, lookback=_env_int("PAPER_RELATIVE_VOLUME_LOOKBACK", 20))
-    min_relative_volume = _volume_confirmation_threshold(info.get("mode"))
-    metrics.update({
-        "latest_volume": volume_stats.get("latest_volume"),
-        "average_volume": volume_stats.get("average_volume"),
-        "relative_volume": volume_stats.get("relative_volume"),
-        "relative_volume_sample_count": volume_stats.get("sample_count"),
-        "min_relative_volume": min_relative_volume,
-    })
     checks["volume_confirmation"] = (
         volume_stats.get("relative_volume") is not None
         and float(volume_stats["relative_volume"]) >= min_relative_volume
@@ -619,6 +834,21 @@ def evaluate_symbol(
             "checks": checks,
             "metrics": metrics,
         }
+
+    checks["three_candle_volume_pace"] = True
+    if min_three_candle_relative_volume > 0:
+        checks["three_candle_volume_pace"] = (
+            three_candle_volume_stats.get("three_candle_relative_volume") is not None
+            and float(three_candle_volume_stats["three_candle_relative_volume"]) >= min_three_candle_relative_volume
+        )
+        if not checks["three_candle_volume_pace"] and not disable_strategy_gates:
+            return {
+                "name": name,
+                "decision": "REJECTED",
+                "final_reason": "three_candle_volume_pace_failed",
+                "checks": checks,
+                "metrics": metrics,
+            }
 
     if info["type"] == "stock":
         stop_distance = max(opening_range * 0.35, price * 0.003)
@@ -751,6 +981,34 @@ def evaluate_symbol(
                 "metrics": metrics,
             }
 
+        symbol_return = _recent_return(candles, _env_int("PAPER_RELATIVE_STRENGTH_LOOKBACK_CANDLES", 10))
+        benchmark_return = benchmark_directions.get(f"{market_key}_RETURN")
+        relative_strength_edge = None
+        if symbol_return is not None and benchmark_return is not None:
+            try:
+                relative_strength_edge = symbol_return - float(benchmark_return)
+            except Exception:
+                relative_strength_edge = None
+        min_relative_strength_edge = _env_float("PAPER_RELATIVE_STRENGTH_MIN_EDGE_PCT", 0.001)
+        metrics["symbol_recent_return"] = symbol_return
+        metrics["benchmark_recent_return"] = benchmark_return
+        metrics["relative_strength_edge_pct"] = relative_strength_edge
+        metrics["min_relative_strength_edge_pct"] = min_relative_strength_edge
+        checks["relative_strength_not_opposed"] = True
+        if relative_strength_edge is not None:
+            if direction == "BUY" and relative_strength_edge <= -min_relative_strength_edge:
+                checks["relative_strength_not_opposed"] = False
+            if direction == "SELL" and relative_strength_edge >= min_relative_strength_edge:
+                checks["relative_strength_not_opposed"] = False
+        if not checks["relative_strength_not_opposed"] and not disable_strategy_gates:
+            return {
+                "name": name,
+                "decision": "REJECTED",
+                "final_reason": "relative_strength_opposed",
+                "checks": checks,
+                "metrics": metrics,
+            }
+
     now_ny = get_ny_now()
     minutes_after_open = (now_ny.hour * 60 + now_ny.minute) - (9 * 60 + 30)
     metrics["minutes_after_open"] = minutes_after_open
@@ -796,6 +1054,39 @@ def evaluate_symbol(
             "checks": checks,
             "metrics": metrics,
         }
+
+    checks["low_price_late_session_quality"] = True
+    if _low_price_mode(info.get("mode")) and not disable_strategy_gates:
+        block_hour, block_minute = _parse_ny_time_env("PAPER_LOW_PRICE_BLOCK_AFTER_NY", "15:30")
+        strict_hour, strict_minute = _parse_ny_time_env("PAPER_LOW_PRICE_LATE_STRICT_AFTER_NY", "14:30")
+        block_after_minutes = _minutes_after_open_for_time(block_hour, block_minute)
+        strict_after_minutes = _minutes_after_open_for_time(strict_hour, strict_minute)
+        metrics["low_price_late_block_after_minutes"] = block_after_minutes
+        metrics["low_price_late_strict_after_minutes"] = strict_after_minutes
+        if minutes_after_open >= block_after_minutes:
+            checks["low_price_late_session_quality"] = False
+            return {
+                "name": name,
+                "decision": "REJECTED",
+                "final_reason": "late_session_low_quality",
+                "checks": checks,
+                "metrics": metrics,
+            }
+        if minutes_after_open >= strict_after_minutes:
+            min_late_relative_volume = _env_float("PAPER_LOW_PRICE_LATE_MIN_RELATIVE_VOLUME", 1.3)
+            metrics["low_price_late_min_relative_volume"] = min_late_relative_volume
+            if (
+                metrics.get("relative_volume") is None
+                or float(metrics["relative_volume"]) < min_late_relative_volume
+            ):
+                checks["low_price_late_session_quality"] = False
+                return {
+                    "name": name,
+                    "decision": "REJECTED",
+                    "final_reason": "late_session_low_quality",
+                    "checks": checks,
+                    "metrics": metrics,
+                }
 
     sizing = calculate_position_sizing(
         account_size=account_size,
@@ -909,6 +1200,38 @@ def evaluate_symbol(
         + min(10, (breakout / price) * 1500)
         + (3 if info["type"] == "stock" else 1)
     )
+    trend_quality = _trend_slope_score(
+        candles,
+        direction,
+        lookback=_env_int("PAPER_SYMBOL_TREND_LOOKBACK_CANDLES", 5),
+    )
+    metrics["symbol_trend_available"] = trend_quality.get("available")
+    metrics["symbol_trend_aligned"] = trend_quality.get("aligned")
+    metrics["symbol_trend_slope"] = trend_quality.get("slope")
+    metrics["symbol_trend_score_adjustment"] = trend_quality.get("score_adjustment", 0)
+    checks["symbol_trend_quality"] = bool(trend_quality.get("aligned")) if trend_quality.get("available") else True
+    if (
+        _env_bool("PAPER_SYMBOL_TREND_HARD_GATE", False)
+        and not checks["symbol_trend_quality"]
+        and not disable_strategy_gates
+    ):
+        return {
+            "name": name,
+            "decision": "REJECTED",
+            "final_reason": "symbol_trend_quality_failed",
+            "checks": checks,
+            "metrics": metrics,
+        }
+
+    relative_strength_adjustment = 0
+    relative_strength_edge = metrics.get("relative_strength_edge_pct")
+    min_relative_strength_edge = metrics.get("min_relative_strength_edge_pct") or _env_float("PAPER_RELATIVE_STRENGTH_MIN_EDGE_PCT", 0.001)
+    if relative_strength_edge is not None:
+        if direction == "BUY" and float(relative_strength_edge) >= float(min_relative_strength_edge) * 2:
+            relative_strength_adjustment = 2
+        elif direction == "SELL" and float(relative_strength_edge) <= -float(min_relative_strength_edge) * 2:
+            relative_strength_adjustment = 2
+
     priority = info.get("priority", 0)
 
     time_penalty = 0
@@ -926,7 +1249,13 @@ def evaluate_symbol(
         if minutes_after_open >= 150:
             time_penalty += 6
 
-    raw_final_confidence = base_confidence + priority - time_penalty
+    raw_final_confidence = (
+        base_confidence
+        + priority
+        + int(trend_quality.get("score_adjustment", 0) or 0)
+        + relative_strength_adjustment
+        - time_penalty
+    )
     confidence_quality_cap = _confidence_quality_cap(priority)
     final_confidence = min(raw_final_confidence, confidence_quality_cap) if confidence_quality_cap is not None else raw_final_confidence
     required_confidence = metrics["required_confidence"]
@@ -934,6 +1263,7 @@ def evaluate_symbol(
     metrics.update({
         "base_confidence": base_confidence,
         "priority_boost": priority,
+        "relative_strength_score_adjustment": relative_strength_adjustment,
         "time_penalty": time_penalty,
         "raw_final_confidence": raw_final_confidence,
         "confidence_quality_cap": confidence_quality_cap,
@@ -950,6 +1280,19 @@ def evaluate_symbol(
             "checks": checks,
             "metrics": metrics,
         }
+
+    if _low_price_mode(info.get("mode")) and minutes_after_open >= metrics.get("low_price_late_strict_after_minutes", 99999):
+        min_late_confidence = _env_float("PAPER_LOW_PRICE_LATE_MIN_CONFIDENCE", 92.0)
+        metrics["low_price_late_min_confidence"] = min_late_confidence
+        if final_confidence < min_late_confidence and not disable_strategy_gates:
+            checks["low_price_late_session_quality"] = False
+            return {
+                "name": name,
+                "decision": "REJECTED",
+                "final_reason": "late_session_low_quality",
+                "checks": checks,
+                "metrics": metrics,
+            }
 
     return {
         "name": name,
@@ -1110,6 +1453,37 @@ def fetch_instruments(instruments: dict, *, fetch_intraday_fn=fetch_intraday):
     return cache, fetch_ok, fetch_fail
 
 
+def fetch_quotes(instruments: dict, *, fetch_quote_fn=None):
+    cache = {}
+    fetch_fail = []
+    if fetch_quote_fn is None:
+        return cache, fetch_fail
+
+    for name, info in instruments.items():
+        symbol = str(info.get("symbol", "")).strip().upper()
+        if not symbol:
+            continue
+        try:
+            try:
+                quote = fetch_quote_fn(
+                    symbol,
+                    exchange=(str(info.get("exchange", "")).strip().upper() or None),
+                    primary_exchange=(str(info.get("primary_exchange", "")).strip().upper() or None),
+                    currency=(str(info.get("currency", "")).strip().upper() or None),
+                )
+            except TypeError as exc:
+                message = str(exc)
+                if "unexpected keyword argument" not in message and "positional argument" not in message:
+                    raise
+                quote = fetch_quote_fn(symbol)
+            if quote:
+                cache[name] = quote
+        except Exception as e:
+            fetch_fail.append(f"{name} ({symbol}) quote: {str(e)[:160]}")
+
+    return cache, fetch_fail
+
+
 def get_benchmark_directions_from_cache(cache: dict):
     directions = {}
     failures = {}
@@ -1117,6 +1491,7 @@ def get_benchmark_directions_from_cache(cache: dict):
     if "S&P 500 ETF" in cache:
         directions["SP500"] = get_market_direction(cache["S&P 500 ETF"])
         spy_quality = calculate_benchmark_trend_quality(cache["S&P 500 ETF"], directions["SP500"])
+        directions["SP500_RETURN"] = _recent_return(cache["S&P 500 ETF"], _env_int("PAPER_RELATIVE_STRENGTH_LOOKBACK_CANDLES", 10))
         directions["SP500_TREND_QUALITY"] = spy_quality.get("trend_quality")
         directions["SP500_TREND_AVAILABLE"] = spy_quality.get("available")
         directions["SP500_PRICE_VWAP_ALIGNED"] = spy_quality.get("vwap_aligned")
@@ -1127,6 +1502,7 @@ def get_benchmark_directions_from_cache(cache: dict):
     if "Nasdaq-100 ETF" in cache:
         directions["NASDAQ"] = get_market_direction(cache["Nasdaq-100 ETF"])
         qqq_quality = calculate_benchmark_trend_quality(cache["Nasdaq-100 ETF"], directions["NASDAQ"])
+        directions["NASDAQ_RETURN"] = _recent_return(cache["Nasdaq-100 ETF"], _env_int("PAPER_RELATIVE_STRENGTH_LOOKBACK_CANDLES", 10))
         directions["NASDAQ_TREND_QUALITY"] = qqq_quality.get("trend_quality")
         directions["NASDAQ_TREND_AVAILABLE"] = qqq_quality.get("available")
         directions["NASDAQ_PRICE_VWAP_ALIGNED"] = qqq_quality.get("vwap_aligned")
@@ -1146,7 +1522,9 @@ def run_scan(
     allowed_symbols: list[str] | set[str] | tuple[str, ...] | None = None,
     *,
     fetch_intraday_fn=fetch_intraday,
+    fetch_quote_fn=None,
     source_label: str | None = None,
+    failed_breakout_cooldown_symbols: list[str] | set[str] | tuple[str, ...] | None = None,
 ):
     selected_instruments = get_mode_instruments(mode)
     if not selected_instruments:
@@ -1175,19 +1553,25 @@ def run_scan(
     non_benchmark_instruments = selected_instruments
 
     instrument_cache, instrument_ok, instrument_fail = fetch_instruments(non_benchmark_instruments, fetch_intraday_fn=fetch_intraday_fn)
+    quote_cache, quote_fail = fetch_quotes(non_benchmark_instruments, fetch_quote_fn=fetch_quote_fn)
 
     combined_cache = {}
     combined_cache.update(benchmark_cache)
     combined_cache.update(instrument_cache)
 
     fetch_ok = benchmark_ok + instrument_ok
-    fetch_fail = benchmark_fail + instrument_fail
+    fetch_fail = benchmark_fail + instrument_fail + quote_fail
 
     for k, v in benchmark_direction_fail.items():
         fetch_fail.append(f"Benchmark {k}: {v}")
 
     valid_trades = []
     evaluations = []
+    cooldown_symbols = {
+        str(symbol or "").strip().upper()
+        for symbol in (failed_breakout_cooldown_symbols or [])
+        if str(symbol or "").strip()
+    }
 
     for name, info in selected_instruments.items():
         info = {**info, "mode": mode}
@@ -1212,6 +1596,8 @@ def run_scan(
                 current_open_positions=current_open_positions,
                 current_open_exposure=current_open_exposure,
                 disable_strategy_gates=disable_strategy_gates,
+                quote=quote_cache.get(name),
+                failed_breakout_cooldown_symbols=cooldown_symbols,
             )
             result["info"] = info
             result["candles"] = candles

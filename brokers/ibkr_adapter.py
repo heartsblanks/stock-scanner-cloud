@@ -84,6 +84,28 @@ class IbkrPaperBroker:
         self._ensure_bridge_enabled()
         return ibkr_bridge_get("/open-state", timeout=_bridge_timeout("IBKR_BRIDGE_OPEN_STATE_TIMEOUT_SECONDS", 12)) or {}
 
+    def get_market_quote(
+        self,
+        symbol: str,
+        *,
+        exchange: str | None = None,
+        primary_exchange: str | None = None,
+        currency: str | None = None,
+    ) -> dict[str, Any]:
+        self._ensure_bridge_enabled()
+        params: dict[str, Any] = {"symbol": symbol}
+        if exchange:
+            params["exchange"] = str(exchange).strip().upper()
+        if primary_exchange:
+            params["primary_exchange"] = str(primary_exchange).strip().upper()
+        if currency:
+            params["currency"] = str(currency).strip().upper()
+        return ibkr_bridge_get(
+            "/market-data/quote",
+            params=params,
+            timeout=_bridge_timeout("IBKR_BRIDGE_QUOTE_TIMEOUT_SECONDS", 6),
+        ) or {}
+
     def cancel_open_orders_for_symbol(self, symbol: str) -> list[str]:
         self._ensure_bridge_enabled()
         result = ibkr_bridge_post(

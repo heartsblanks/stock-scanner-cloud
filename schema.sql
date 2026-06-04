@@ -311,6 +311,48 @@ CREATE INDEX IF NOT EXISTS idx_symbol_rankings_mode_rank
 CREATE UNIQUE INDEX IF NOT EXISTS uq_symbol_rankings_day_broker_window_mode_symbol
     ON symbol_rankings(ranking_date, broker, window_days, mode, symbol);
 
+-- Per-symbol scan gate diagnostics used for missed-opportunity analysis and cooldowns.
+CREATE TABLE IF NOT EXISTS scan_gate_observations (
+    id SERIAL PRIMARY KEY,
+    observed_at TIMESTAMPTZ NOT NULL,
+    scan_id TEXT,
+    mode TEXT NOT NULL,
+    scan_source TEXT,
+    broker TEXT NOT NULL DEFAULT 'IBKR',
+    symbol TEXT NOT NULL,
+    decision TEXT,
+    final_reason TEXT,
+    direction TEXT,
+    entry NUMERIC,
+    stop NUMERIC,
+    target NUMERIC,
+    confidence NUMERIC,
+    price NUMERIC,
+    or_high NUMERIC,
+    or_low NUMERIC,
+    vwap NUMERIC,
+    relative_volume NUMERIC,
+    three_candle_relative_volume NUMERIC,
+    spread_pct NUMERIC,
+    relative_strength_edge_pct NUMERIC,
+    max_favorable_30m NUMERIC,
+    max_adverse_30m NUMERIC,
+    max_favorable_60m NUMERIC,
+    max_adverse_60m NUMERIC,
+    max_favorable_120m NUMERIC,
+    max_adverse_120m NUMERIC,
+    outcome_status TEXT NOT NULL DEFAULT 'PENDING',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_scan_gate_observations_symbol_observed
+    ON scan_gate_observations(symbol, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_scan_gate_observations_reason_observed
+    ON scan_gate_observations(final_reason, observed_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_scan_gate_observations_scan_symbol_reason
+    ON scan_gate_observations(scan_id, mode, broker, symbol, COALESCE(final_reason, ''));
+
 -- Instrument catalog (DB source of truth)
 CREATE TABLE IF NOT EXISTS instrument_catalog (
     id SERIAL PRIMARY KEY,

@@ -5,6 +5,7 @@ from typing import Any, Optional
 
 from core.db import execute, fetch_all, fetch_one
 from repositories.common import normalize_text, to_optional_float
+from repositories.scans_repo import ensure_scan_gate_observations_schema
 
 
 _SYMBOL_RANKINGS_SCHEMA_READY = False
@@ -1061,6 +1062,8 @@ def _symbol_ranking_score(row: dict[str, Any]) -> float:
     placed_count = int(row.get("placed_count") or 0)
     skipped_count = int(row.get("skipped_count") or 0)
     rejected_count = int(row.get("rejected_count") or 0)
+    poor_scan_count = int(row.get("poor_scan_count") or 0)
+    near_breakout_follow_count = int(row.get("near_breakout_watch_count") or 0)
 
     return round(
         (priority * 10.0)
@@ -1069,8 +1072,10 @@ def _symbol_ranking_score(row: dict[str, Any]) -> float:
         + (win_rate_percent * 0.15)
         + (placed_count * 1.5)
         + (candidate_count * 0.25)
+        + (near_breakout_follow_count * 0.1)
         - (losing_trade_count * 4.0)
-        - ((skipped_count + rejected_count) * 0.5),
+        - ((skipped_count + rejected_count) * 0.5)
+        - (poor_scan_count * 0.35),
         6,
     )
 
@@ -1085,6 +1090,10 @@ def _symbol_ranking_demoted(row: dict[str, Any], *, min_closed_trade_count: int)
         and (win_rate_percent is None or win_rate_percent < 50.0)
     ):
         return True, "negative_pnl_low_win_rate"
+    poor_scan_count = int(row.get("poor_scan_count") or 0)
+    observation_count = int(row.get("observation_count") or 0)
+    if observation_count >= 10 and poor_scan_count >= 8:
+        return True, "persistent_scan_quality_failures"
     return False, None
 
 
@@ -1098,6 +1107,7 @@ def get_rolling_symbol_performance(
     normalized_broker = normalize_text(broker).upper()
     if not normalized_broker:
         raise ValueError("broker is required")
+    ensure_scan_gate_observations_schema()
 
     normalized_modes = [normalize_text(mode).lower() for mode in (expected_modes or []) if normalize_text(mode)]
     mode_filter = ""
@@ -1177,6 +1187,29 @@ def get_rolling_symbol_performance(
               AND timestamp_utc::date <= %(as_of_date)s::date
               AND timestamp_utc::date >= (%(as_of_date)s::date - (%(calendar_lookback_days)s::text || ' days')::interval)
             GROUP BY UPPER(symbol), LOWER(COALESCE(mode, ''))
+        ),
+        observation_stats AS (
+            SELECT
+                UPPER(symbol) AS symbol,
+                LOWER(COALESCE(mode, '')) AS mode,
+                COUNT(*)::INT AS observation_count,
+                COUNT(*) FILTER (WHERE final_reason = 'near_breakout_watch')::INT AS near_breakout_watch_count,
+                COUNT(*) FILTER (
+                    WHERE final_reason IN (
+                        'three_candle_volume_pace_failed',
+                        'breakout_close_confirmation_failed',
+                        'relative_strength_opposed',
+                        'failed_breakout_cooldown_active',
+                        'late_session_low_quality',
+                        'spread_too_wide',
+                        'Breakout volume confirmation failed.'
+                    )
+                )::INT AS poor_scan_count
+            FROM scan_gate_observations
+            WHERE UPPER(COALESCE(broker, 'IBKR')) = %(broker)s
+              AND observed_at::date <= %(as_of_date)s::date
+              AND observed_at::date >= (%(as_of_date)s::date - (%(calendar_lookback_days)s::text || ' days')::interval)
+            GROUP BY UPPER(symbol), LOWER(COALESCE(mode, ''))
         )
         SELECT
             c.mode,
@@ -1193,7 +1226,10 @@ def get_rolling_symbol_performance(
             COALESCE(a.candidate_count, 0)::INT AS candidate_count,
             COALESCE(a.placed_count, 0)::INT AS placed_count,
             COALESCE(a.skipped_count, 0)::INT AS skipped_count,
-            COALESCE(a.rejected_count, 0)::INT AS rejected_count
+            COALESCE(a.rejected_count, 0)::INT AS rejected_count,
+            COALESCE(o.observation_count, 0)::INT AS observation_count,
+            COALESCE(o.near_breakout_watch_count, 0)::INT AS near_breakout_watch_count,
+            COALESCE(o.poor_scan_count, 0)::INT AS poor_scan_count
         FROM active_catalog c
         LEFT JOIN lifecycle_stats l
           ON l.symbol = c.symbol
@@ -1201,6 +1237,9 @@ def get_rolling_symbol_performance(
         LEFT JOIN attempt_stats a
           ON a.symbol = c.symbol
          AND (a.mode = c.mode OR a.mode = '')
+        LEFT JOIN observation_stats o
+          ON o.symbol = c.symbol
+         AND (o.mode = c.mode OR o.mode = '')
         ORDER BY c.mode ASC, c.priority DESC, c.symbol ASC
         """,
         params,

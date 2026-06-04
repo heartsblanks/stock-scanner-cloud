@@ -583,3 +583,54 @@ def fetch_ibkr_intraday(
             timeout=timeout_seconds,
         )
         raise
+
+
+def fetch_ibkr_quote(
+    symbol: str,
+    *,
+    exchange: str | None = None,
+    primary_exchange: str | None = None,
+    currency: str | None = None,
+) -> dict[str, Any]:
+    timeout_seconds = int(os.getenv("IBKR_BRIDGE_QUOTE_TIMEOUT_SECONDS", "6"))
+    log_info(
+        "IBKR quote fetch requested",
+        component="runtime_context",
+        operation="fetch_ibkr_quote",
+        broker="IBKR",
+        symbol=symbol,
+        exchange=exchange,
+        primary_exchange=primary_exchange,
+        currency=currency,
+        timeout=timeout_seconds,
+    )
+    try:
+        quote = IBKR_PAPER_BROKER.get_market_quote(
+            symbol,
+            exchange=exchange,
+            primary_exchange=primary_exchange,
+            currency=currency,
+        ) or {}
+        log_info(
+            "IBKR quote fetch completed",
+            component="runtime_context",
+            operation="fetch_ibkr_quote",
+            broker="IBKR",
+            symbol=symbol,
+            spread_pct=quote.get("spread_pct") if isinstance(quote, dict) else None,
+        )
+        return quote
+    except Exception as exc:
+        log_exception(
+            "IBKR quote fetch failed",
+            exc,
+            component="runtime_context",
+            operation="fetch_ibkr_quote",
+            broker="IBKR",
+            symbol=symbol,
+            exchange=exchange,
+            primary_exchange=primary_exchange,
+            currency=currency,
+            timeout=timeout_seconds,
+        )
+        return {}

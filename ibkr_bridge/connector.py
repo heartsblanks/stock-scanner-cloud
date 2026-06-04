@@ -627,6 +627,105 @@ class IbkrGatewayClient:
         self._disconnect()
         return normalized
 
+    def get_market_quote(
+        self,
+        symbol: str,
+        *,
+        exchange: str | None = None,
+        primary_exchange: str | None = None,
+        currency: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_symbol = str(symbol or "").strip().upper()
+        if not normalized_symbol:
+            raise RuntimeError("symbol is required")
+
+        ib = self._reset_connection()
+        _LimitOrder, _MarketOrder, _StopOrder, _Order, Stock = self._load_order_classes()
+        route_exchange = str(exchange or "SMART").strip().upper() or "SMART"
+        normalized_currency = str(currency or "USD").strip().upper() or "USD"
+        normalized_primary_exchange = _normalize_primary_exchange(primary_exchange)
+        try:
+            contract = Stock(normalized_symbol, route_exchange, normalized_currency)
+        except TypeError:
+            contract = Stock(normalized_symbol)
+            try:
+                contract.exchange = route_exchange
+            except Exception:
+                pass
+            try:
+                contract.currency = normalized_currency
+            except Exception:
+                pass
+        if normalized_primary_exchange and normalized_primary_exchange != route_exchange:
+            try:
+                contract.primaryExchange = normalized_primary_exchange
+            except Exception:
+                pass
+
+        log_info(
+            "IBKR bridge quote request started",
+            component="ibkr_bridge",
+            operation="get_market_quote",
+            symbol=normalized_symbol,
+            exchange=route_exchange,
+            primary_exchange=(normalized_primary_exchange or None),
+            currency=normalized_currency,
+            timeout=self.config.timeout_seconds,
+        )
+        try:
+            ib.qualifyContracts(contract)
+            ticker = ib.reqMktData(contract, "", False, False)
+            ib.sleep(max(0.25, _to_float(os.getenv("IBKR_QUOTE_WAIT_SECONDS"), 1.0)))
+            bid = _to_float_or_none(getattr(ticker, "bid", None))
+            ask = _to_float_or_none(getattr(ticker, "ask", None))
+            last = _to_float_or_none(getattr(ticker, "last", None))
+            close = _to_float_or_none(getattr(ticker, "close", None))
+            market_price = _to_float_or_none(ticker.marketPrice())
+            try:
+                ib.cancelMktData(contract)
+            except Exception:
+                pass
+        except Exception as exc:
+            self._disconnect()
+            log_exception(
+                "IBKR bridge quote request failed",
+                exc,
+                component="ibkr_bridge",
+                operation="get_market_quote",
+                symbol=normalized_symbol,
+                timeout=self.config.timeout_seconds,
+            )
+            raise
+
+        self._disconnect()
+        midpoint = ((bid + ask) / 2.0) if bid and ask and ask >= bid else None
+        spread = (ask - bid) if bid and ask and ask >= bid else None
+        spread_pct = (spread / midpoint) if spread is not None and midpoint and midpoint > 0 else None
+        payload = {
+            "symbol": normalized_symbol,
+            "bid": bid,
+            "ask": ask,
+            "last": last,
+            "close": close,
+            "market_price": market_price,
+            "midpoint": midpoint,
+            "spread": spread,
+            "spread_pct": spread_pct,
+            "exchange": route_exchange,
+            "primary_exchange": normalized_primary_exchange,
+            "currency": normalized_currency,
+        }
+        log_info(
+            "IBKR bridge quote request completed",
+            component="ibkr_bridge",
+            operation="get_market_quote",
+            symbol=normalized_symbol,
+            bid=bid,
+            ask=ask,
+            spread_pct=spread_pct,
+        )
+        return payload
+
     def _normalize_trade(self, trade: Any) -> dict[str, Any]:
         contract = getattr(trade, "contract", None)
         order = getattr(trade, "order", None)

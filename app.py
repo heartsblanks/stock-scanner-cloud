@@ -117,6 +117,7 @@ from orchestration.runtime_context import (
     close_position,
     close_position_for_broker_name,
     fetch_ibkr_intraday,
+    fetch_ibkr_quote,
     get_current_open_position_state_for_broker,
     get_latest_open_paper_trade_for_symbol_for_broker,
     get_open_orders_for_broker_name,
@@ -142,6 +143,7 @@ from services.sync_service import execute_sync_paper_trades
 from services.ibkr_repair_service import repair_ibkr_stale_closes
 from services.ibkr_vm_journal_repair_service import repair_ibkr_stale_closes_from_bridge_journal
 from services.scan_service import execute_full_scan
+from services.scan_observation_service import refresh_scan_gate_observation_outcomes
 from services.symbol_eligibility_service import (
     refresh_symbol_eligibility_for_date,
     refresh_symbol_eligibility_for_next_session,
@@ -223,7 +225,7 @@ def _run_ibkr_shadow_scan(payload: dict[str, Any]) -> dict[str, Any]:
         result = execute_scan_pipeline(
             ibkr_payload,
             broker_name="IBKR",
-            run_scan_fn=lambda account_size, mode, current_open_positions=0, current_open_exposure=0.0, disable_strategy_gates=False, allowed_symbols=None: run_scan(
+            run_scan_fn=lambda account_size, mode, current_open_positions=0, current_open_exposure=0.0, disable_strategy_gates=False, allowed_symbols=None, failed_breakout_cooldown_symbols=None: run_scan(
                 account_size,
                 mode,
                 current_open_positions=current_open_positions,
@@ -231,6 +233,8 @@ def _run_ibkr_shadow_scan(payload: dict[str, Any]) -> dict[str, Any]:
                 disable_strategy_gates=disable_strategy_gates,
                 allowed_symbols=allowed_symbols,
                 fetch_intraday_fn=fetch_ibkr_intraday,
+                fetch_quote_fn=fetch_ibkr_quote,
+                failed_breakout_cooldown_symbols=failed_breakout_cooldown_symbols,
                 source_label=f"IBKR_{mode.upper()}",
             ),
             resolve_account_size_fn=resolve_ibkr_shadow_account_size,
@@ -458,6 +462,14 @@ def run_market_ops_scheduler(*, now_ny: datetime):
 
 
 def run_daily_post_close_scheduler(*, now_ny: datetime):
+    def run_signal_and_scan_observation_analysis():
+        signal_result = run_signal_analysis()
+        observation_result = refresh_scan_gate_observation_outcomes(fetch_intraday_fn=fetch_ibkr_intraday)
+        return {
+            "signal_analysis": signal_result,
+            "scan_observation_analysis": observation_result,
+        }
+
     return build_execute_post_close_ops(
         now_ny=now_ny,
         run_sync=handle_sync_paper_trades,
@@ -478,7 +490,7 @@ def run_daily_post_close_scheduler(*, now_ny: datetime):
         ),
         run_reconcile=lambda: {"ok": True, "skipped": True, "reason": "reconciliation_disabled_in_ibkr_only_mode"},
         run_trade_analysis=run_trade_analysis,
-        run_signal_analysis=run_signal_analysis,
+        run_signal_analysis=run_signal_and_scan_observation_analysis,
         run_mode_ranking_refresh=lambda: refresh_ibkr_mode_rankings(ranking_date=now_ny.date().isoformat()),
     )
 
@@ -660,6 +672,7 @@ register_analysis_routes(
     signal_analysis_bucket=SIGNAL_ANALYSIS_BUCKET,
     signal_analysis_summary_object=SIGNAL_ANALYSIS_SUMMARY_OBJECT,
     signal_analysis_rows_object=SIGNAL_ANALYSIS_ROWS_OBJECT,
+    run_scan_observation_analysis=lambda: refresh_scan_gate_observation_outcomes(fetch_intraday_fn=fetch_ibkr_intraday),
 )
 register_reconcile_routes(
     app,

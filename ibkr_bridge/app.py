@@ -239,6 +239,37 @@ def get_intraday_market_data():
     return _run_bridge_operation("get_intraday_market_data", fetch_intraday)
 
 
+@app.get("/market-data/quote")
+@require_auth
+def get_market_quote():
+    def fetch_quote():
+        symbol = str(request.args.get("symbol", "")).strip().upper()
+        exchange = str(request.args.get("exchange", "")).strip().upper() or None
+        primary_exchange = str(request.args.get("primary_exchange", "")).strip().upper() or None
+        currency = str(request.args.get("currency", "")).strip().upper() or None
+        payload = get_ibkr_client().get_market_quote(
+            symbol,
+            exchange=exchange,
+            primary_exchange=primary_exchange,
+            currency=currency,
+        )
+        _audit_success(
+            "IBKR bridge quote fetched",
+            operation="get_market_quote",
+            payload=payload,
+            summary={
+                "symbol": symbol,
+                "exchange": exchange,
+                "primary_exchange": primary_exchange,
+                "currency": currency,
+                "spread_pct": payload.get("spread_pct") if isinstance(payload, dict) else None,
+            },
+        )
+        return payload
+
+    return _run_bridge_operation("get_market_quote", fetch_quote)
+
+
 @app.get("/orders/open")
 @require_auth
 def get_open_orders():

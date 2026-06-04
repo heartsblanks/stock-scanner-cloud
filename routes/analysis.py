@@ -17,6 +17,7 @@ def register_analysis_routes(
     signal_analysis_bucket,
     signal_analysis_summary_object,
     signal_analysis_rows_object,
+    run_scan_observation_analysis=None,
 ) -> None:
     @app.post("/analyze-paper-trades")
     def analyze_paper_trades():
@@ -92,3 +93,14 @@ def register_analysis_routes(
             "summary_gcs_uri": summary_gcs_uri,
             "rows_gcs_uri": rows_gcs_uri,
         })
+
+    @app.post("/analyze-scan-observations")
+    def analyze_scan_observations():
+        if run_scan_observation_analysis is None:
+            return jsonify({"ok": False, "error": "scan_observation_analysis_not_configured"}), 501
+        try:
+            result = run_scan_observation_analysis()
+        except Exception as e:
+            log_exception("Scan observation analysis failed", e, route="/analyze-scan-observations")
+            return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify(result)

@@ -58,14 +58,142 @@ def build_valid_breakout_candles() -> list[dict]:
     return candles
 
 
+def build_post_or_breakout_candles(*, final_close: float = 10.72, final_volume: float = 2500) -> list[dict]:
+    candles = []
+    for minute_offset in range(15):
+        close_price = 10.00 + (minute_offset * 0.01)
+        candles.append(
+            {
+                "datetime": f"2026-04-01 09:{30 + minute_offset:02d}:00",
+                "open": close_price - 0.02,
+                "high": 10.30 if minute_offset == 14 else close_price + 0.03,
+                "low": 9.90 if minute_offset == 0 else close_price - 0.03,
+                "close": close_price,
+                "volume": 1000,
+            }
+        )
+    candles.append(
+        {
+            "datetime": "2026-04-01 09:45:00",
+            "open": final_close - 0.04,
+            "high": final_close + 0.02,
+            "low": final_close - 0.06,
+            "close": final_close,
+            "volume": final_volume,
+        }
+    )
+    return candles
+
+
 def benchmark(direction: str, market: str) -> dict:
     return {
         market: direction,
+        f"{market}_RETURN": 0.001,
         f"{market}_TREND_QUALITY": True,
         f"{market}_TREND_AVAILABLE": True,
         f"{market}_PRICE_VWAP_ALIGNED": True,
         f"{market}_SLOPE_ALIGNED": True,
     }
+
+
+class TradeScanQualityV2Tests(unittest.TestCase):
+    def _info(self):
+        return {"symbol": "SOFI", "type": "stock", "priority": 10, "market": "NASDAQ", "mode": "low_price"}
+
+    def _base_env(self):
+        return {
+            "PAPER_LOW_PRICE_MODE_MIN_RELATIVE_VOLUME": "1.2",
+            "PAPER_LOW_PRICE_MIN_3_CANDLE_REL_VOLUME": "1.1",
+            "PAPER_BREAKOUT_CLOSE_BUFFER_PCT": "0.001",
+            "PAPER_LOW_PRICE_BLOCK_AFTER_NY": "15:30",
+            "PAPER_LOW_PRICE_LATE_STRICT_AFTER_NY": "14:30",
+            "PAPER_MAX_BREAKOUT_OR_MULTIPLE_NON_CORE": "2.0",
+            "PAPER_MAX_VWAP_EXTENSION_PCT_NON_CORE": "0.20",
+        }
+
+    def test_breakout_close_confirmation_rejects_weak_close(self):
+        with patch.dict(os.environ, self._base_env(), clear=False):
+            with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 10, 0, tzinfo=NY_TZ)):
+                result = evaluate_symbol(
+                    "SoFi",
+                    self._info(),
+                    build_post_or_breakout_candles(final_close=10.305, final_volume=2500),
+                    2000,
+                    benchmark("BUY", "NASDAQ"),
+                )
+
+        self.assertEqual(result["final_reason"], "breakout_close_confirmation_failed")
+        self.assertFalse(result["checks"]["breakout_close_confirmation"])
+
+    def test_inside_range_near_breakout_records_watch_reason(self):
+        with patch.dict(os.environ, self._base_env(), clear=False):
+            result = evaluate_symbol(
+                "SoFi",
+                self._info(),
+                build_post_or_breakout_candles(final_close=10.28, final_volume=2500),
+                2000,
+                benchmark("BUY", "NASDAQ"),
+            )
+
+        self.assertEqual(result["final_reason"], "near_breakout_watch")
+        self.assertTrue(result["metrics"]["near_breakout_watch"])
+
+    def test_three_candle_volume_pace_rejects_one_candle_fakeout(self):
+        candles = build_post_or_breakout_candles(final_close=10.72, final_volume=1200)
+        candles[-2]["volume"] = 100
+        candles[-3]["volume"] = 100
+        with patch.dict(os.environ, self._base_env(), clear=False):
+            with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 10, 0, tzinfo=NY_TZ)):
+                result = evaluate_symbol("SoFi", self._info(), candles, 2000, benchmark("BUY", "NASDAQ"))
+
+        self.assertEqual(result["final_reason"], "three_candle_volume_pace_failed")
+        self.assertFalse(result["checks"]["three_candle_volume_pace"])
+
+    def test_relative_strength_opposed_rejects_buy(self):
+        opposed_benchmark = benchmark("BUY", "NASDAQ")
+        opposed_benchmark["NASDAQ_RETURN"] = 0.10
+        with patch.dict(os.environ, self._base_env(), clear=False):
+            with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 10, 0, tzinfo=NY_TZ)):
+                result = evaluate_symbol(
+                    "SoFi",
+                    self._info(),
+                    build_post_or_breakout_candles(final_close=10.72, final_volume=2500),
+                    2000,
+                    opposed_benchmark,
+                )
+
+        self.assertEqual(result["final_reason"], "relative_strength_opposed")
+        self.assertFalse(result["checks"]["relative_strength_not_opposed"])
+
+    def test_spread_too_wide_rejects_when_quote_available(self):
+        with patch.dict(os.environ, self._base_env(), clear=False):
+            with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 10, 0, tzinfo=NY_TZ)):
+                result = evaluate_symbol(
+                    "SoFi",
+                    self._info(),
+                    build_post_or_breakout_candles(final_close=10.72, final_volume=2500),
+                    2000,
+                    benchmark("BUY", "NASDAQ"),
+                    quote={"bid": 10.60, "ask": 10.80},
+                )
+
+        self.assertEqual(result["final_reason"], "spread_too_wide")
+        self.assertFalse(result["checks"]["spread_filter"])
+
+    def test_failed_breakout_cooldown_rejects_symbol(self):
+        with patch.dict(os.environ, self._base_env(), clear=False):
+            with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 10, 0, tzinfo=NY_TZ)):
+                result = evaluate_symbol(
+                    "SoFi",
+                    self._info(),
+                    build_post_or_breakout_candles(final_close=10.72, final_volume=2500),
+                    2000,
+                    benchmark("BUY", "NASDAQ"),
+                    failed_breakout_cooldown_symbols={"SOFI"},
+                )
+
+        self.assertEqual(result["final_reason"], "failed_breakout_cooldown_active")
+        self.assertFalse(result["checks"]["failed_breakout_cooldown"])
 
 
 class TradeScanLateSessionTests(unittest.TestCase):
@@ -442,16 +570,17 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
             }
         )
 
-        with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 12, 0, tzinfo=NY_TZ)):
-            result = evaluate_symbol(
-                name="Plug Power",
-                info=info,
-                candles=candles,
-                account_size=100000.0,
-                benchmark_directions=benchmark("SELL", "SP500"),
-                current_open_positions=0,
-                current_open_exposure=0.0,
-            )
+        with patch.dict(os.environ, {"PAPER_BREAKOUT_CLOSE_BUFFER_PCT": "0"}, clear=False):
+            with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 12, 0, tzinfo=NY_TZ)):
+                result = evaluate_symbol(
+                    name="Plug Power",
+                    info=info,
+                    candles=candles,
+                    account_size=100000.0,
+                    benchmark_directions=benchmark("SELL", "SP500"),
+                    current_open_positions=0,
+                    current_open_exposure=0.0,
+                )
 
         self.assertEqual(result["metrics"]["direction"], "SELL")
         self.assertEqual(result["metrics"]["time_penalty"], 20)
@@ -497,16 +626,17 @@ class TradeScanTimePenaltyTests(unittest.TestCase):
             }
         )
 
-        with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 11, 0, tzinfo=NY_TZ)):
-            result = evaluate_symbol(
-                name="Plug Power",
-                info=info,
-                candles=candles,
-                account_size=100000.0,
-                benchmark_directions=benchmark("SELL", "SP500"),
-                current_open_positions=0,
-                current_open_exposure=0.0,
-            )
+        with patch.dict(os.environ, {"PAPER_BREAKOUT_CLOSE_BUFFER_PCT": "0"}, clear=False):
+            with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 11, 0, tzinfo=NY_TZ)):
+                result = evaluate_symbol(
+                    name="Plug Power",
+                    info=info,
+                    candles=candles,
+                    account_size=100000.0,
+                    benchmark_directions=benchmark("SELL", "SP500"),
+                    current_open_positions=0,
+                    current_open_exposure=0.0,
+                )
 
         self.assertEqual(result["metrics"]["direction"], "SELL")
         self.assertEqual(result["metrics"]["required_confidence"], 82)

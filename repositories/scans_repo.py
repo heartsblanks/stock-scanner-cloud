@@ -1,10 +1,238 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from core.db import execute, fetch_all, fetch_one
 from repositories.common import normalize_text
+
+
+def _to_optional_float(value) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed
+
+
+def ensure_scan_gate_observations_schema() -> None:
+    execute(
+        """
+        CREATE TABLE IF NOT EXISTS scan_gate_observations (
+            id SERIAL PRIMARY KEY,
+            observed_at TIMESTAMPTZ NOT NULL,
+            scan_id TEXT,
+            mode TEXT NOT NULL,
+            scan_source TEXT,
+            broker TEXT NOT NULL DEFAULT 'IBKR',
+            symbol TEXT NOT NULL,
+            decision TEXT,
+            final_reason TEXT,
+            direction TEXT,
+            entry NUMERIC,
+            stop NUMERIC,
+            target NUMERIC,
+            confidence NUMERIC,
+            price NUMERIC,
+            or_high NUMERIC,
+            or_low NUMERIC,
+            vwap NUMERIC,
+            relative_volume NUMERIC,
+            three_candle_relative_volume NUMERIC,
+            spread_pct NUMERIC,
+            relative_strength_edge_pct NUMERIC,
+            max_favorable_30m NUMERIC,
+            max_adverse_30m NUMERIC,
+            max_favorable_60m NUMERIC,
+            max_adverse_60m NUMERIC,
+            max_favorable_120m NUMERIC,
+            max_adverse_120m NUMERIC,
+            outcome_status TEXT NOT NULL DEFAULT 'PENDING',
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+        """
+    )
+    execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_scan_gate_observations_symbol_observed
+        ON scan_gate_observations(symbol, observed_at DESC)
+        """
+    )
+    execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_scan_gate_observations_reason_observed
+        ON scan_gate_observations(final_reason, observed_at DESC)
+        """
+    )
+    execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_scan_gate_observations_scan_symbol_reason
+        ON scan_gate_observations(scan_id, mode, broker, symbol, COALESCE(final_reason, ''))
+        """
+    )
+
+
+def insert_scan_gate_observation(
+    *,
+    observed_at: datetime,
+    scan_id: str,
+    mode: str,
+    scan_source: str | None,
+    broker: str,
+    symbol: str,
+    decision: str | None,
+    final_reason: str | None,
+    metrics: dict | None,
+) -> None:
+    ensure_scan_gate_observations_schema()
+    m = metrics or {}
+    execute(
+        """
+        INSERT INTO scan_gate_observations (
+            observed_at, scan_id, mode, scan_source, broker, symbol, decision, final_reason,
+            direction, entry, stop, target, confidence, price, or_high, or_low, vwap,
+            relative_volume, three_candle_relative_volume, spread_pct, relative_strength_edge_pct,
+            updated_at
+        ) VALUES (
+            %(observed_at)s, %(scan_id)s, %(mode)s, %(scan_source)s, %(broker)s, %(symbol)s, %(decision)s, %(final_reason)s,
+            %(direction)s, %(entry)s, %(stop)s, %(target)s, %(confidence)s, %(price)s, %(or_high)s, %(or_low)s, %(vwap)s,
+            %(relative_volume)s, %(three_candle_relative_volume)s, %(spread_pct)s, %(relative_strength_edge_pct)s,
+            NOW()
+        )
+        ON CONFLICT (scan_id, mode, broker, symbol, COALESCE(final_reason, ''))
+        DO UPDATE SET
+            observed_at = EXCLUDED.observed_at,
+            scan_source = EXCLUDED.scan_source,
+            decision = EXCLUDED.decision,
+            direction = EXCLUDED.direction,
+            entry = EXCLUDED.entry,
+            stop = EXCLUDED.stop,
+            target = EXCLUDED.target,
+            confidence = EXCLUDED.confidence,
+            price = EXCLUDED.price,
+            or_high = EXCLUDED.or_high,
+            or_low = EXCLUDED.or_low,
+            vwap = EXCLUDED.vwap,
+            relative_volume = EXCLUDED.relative_volume,
+            three_candle_relative_volume = EXCLUDED.three_candle_relative_volume,
+            spread_pct = EXCLUDED.spread_pct,
+            relative_strength_edge_pct = EXCLUDED.relative_strength_edge_pct,
+            updated_at = NOW()
+        """,
+        {
+            "observed_at": observed_at,
+            "scan_id": normalize_text(scan_id),
+            "mode": normalize_text(mode).lower(),
+            "scan_source": normalize_text(scan_source).upper(),
+            "broker": normalize_text(broker).upper() or "IBKR",
+            "symbol": normalize_text(symbol).upper(),
+            "decision": normalize_text(decision).upper(),
+            "final_reason": normalize_text(final_reason) or None,
+            "direction": normalize_text(m.get("direction")).upper(),
+            "entry": _to_optional_float(m.get("entry")),
+            "stop": _to_optional_float(m.get("stop")),
+            "target": _to_optional_float(m.get("target")),
+            "confidence": _to_optional_float(m.get("final_confidence")),
+            "price": _to_optional_float(m.get("price")),
+            "or_high": _to_optional_float(m.get("or_high")),
+            "or_low": _to_optional_float(m.get("or_low")),
+            "vwap": _to_optional_float(m.get("vwap")),
+            "relative_volume": _to_optional_float(m.get("relative_volume")),
+            "three_candle_relative_volume": _to_optional_float(m.get("three_candle_relative_volume")),
+            "spread_pct": _to_optional_float(m.get("spread_pct")),
+            "relative_strength_edge_pct": _to_optional_float(m.get("relative_strength_edge_pct")),
+        },
+    )
+
+
+def get_recent_failed_breakout_symbols(
+    *,
+    mode: str,
+    broker: str = "IBKR",
+    now_utc: datetime | None = None,
+    cooldown_minutes: int = 90,
+) -> list[str]:
+    ensure_scan_gate_observations_schema()
+    cutoff = (now_utc or datetime.now(timezone.utc)) - timedelta(minutes=max(1, int(cooldown_minutes)))
+    rows = fetch_all(
+        """
+        SELECT DISTINCT UPPER(symbol) AS symbol
+        FROM scan_gate_observations
+        WHERE observed_at >= %(cutoff)s
+          AND LOWER(mode) = %(mode)s
+          AND UPPER(broker) = %(broker)s
+          AND final_reason IN (
+              'three_candle_volume_pace_failed',
+              'breakout_close_confirmation_failed',
+              'Move already too extended from opening range.',
+              'Move already too extended from VWAP.',
+              'spread_too_wide'
+          )
+        ORDER BY symbol ASC
+        """,
+        {
+            "cutoff": cutoff,
+            "mode": normalize_text(mode).lower(),
+            "broker": normalize_text(broker).upper() or "IBKR",
+        },
+    )
+    return [normalize_text(row.get("symbol")).upper() for row in rows if normalize_text(row.get("symbol"))]
+
+
+def get_pending_scan_gate_observations(*, limit: int = 100) -> list[dict]:
+    ensure_scan_gate_observations_schema()
+    return fetch_all(
+        """
+        SELECT *
+        FROM scan_gate_observations
+        WHERE outcome_status = 'PENDING'
+          AND entry IS NOT NULL
+          AND direction IN ('BUY', 'SELL')
+        ORDER BY observed_at ASC
+        LIMIT %(limit)s
+        """,
+        {"limit": max(1, int(limit))},
+    )
+
+
+def update_scan_gate_observation_outcome(
+    *,
+    observation_id: int,
+    max_favorable_30m: float | None,
+    max_adverse_30m: float | None,
+    max_favorable_60m: float | None,
+    max_adverse_60m: float | None,
+    max_favorable_120m: float | None,
+    max_adverse_120m: float | None,
+    outcome_status: str,
+) -> None:
+    ensure_scan_gate_observations_schema()
+    execute(
+        """
+        UPDATE scan_gate_observations
+        SET
+            max_favorable_30m = %(max_favorable_30m)s,
+            max_adverse_30m = %(max_adverse_30m)s,
+            max_favorable_60m = %(max_favorable_60m)s,
+            max_adverse_60m = %(max_adverse_60m)s,
+            max_favorable_120m = %(max_favorable_120m)s,
+            max_adverse_120m = %(max_adverse_120m)s,
+            outcome_status = %(outcome_status)s,
+            updated_at = NOW()
+        WHERE id = %(observation_id)s
+        """,
+        {
+            "observation_id": int(observation_id),
+            "max_favorable_30m": max_favorable_30m,
+            "max_adverse_30m": max_adverse_30m,
+            "max_favorable_60m": max_favorable_60m,
+            "max_adverse_60m": max_adverse_60m,
+            "max_favorable_120m": max_favorable_120m,
+            "max_adverse_120m": max_adverse_120m,
+            "outcome_status": normalize_text(outcome_status).upper() or "PENDING",
+        },
+    )
 
 
 def insert_scan_run(

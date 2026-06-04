@@ -77,6 +77,21 @@ class FakeIbkrClient:
             "estimated_notional": 1000.0,
         }
 
+    def get_market_quote(self, symbol, exchange=None, primary_exchange=None, currency=None):
+        return {
+            "symbol": str(symbol).upper(),
+            "bid": 10.0,
+            "ask": 10.04,
+            "last": 10.02,
+            "market_price": 10.02,
+            "midpoint": 10.02,
+            "spread": 0.04,
+            "spread_pct": 0.003992,
+            "exchange": exchange or "SMART",
+            "primary_exchange": primary_exchange,
+            "currency": currency or "USD",
+        }
+
 
 @unittest.skipIf(app is None, "Flask is not installed in the local Python environment")
 class IbkrBridgeApiTests(unittest.TestCase):
@@ -172,6 +187,15 @@ class IbkrBridgeApiTests(unittest.TestCase):
         self.assertTrue(payload["placed"])
         self.assertEqual(payload["broker"], "IBKR")
         self.assertEqual(payload["broker_order_id"], "3001")
+
+    def test_market_quote_route_returns_quote_payload(self):
+        with patch("ibkr_bridge.app.get_ibkr_client", return_value=FakeIbkrClient()):
+            response = self.client.get("/market-data/quote?symbol=AAPL")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["symbol"], "AAPL")
+        self.assertAlmostEqual(payload["spread_pct"], 0.003992, places=6)
 
     def test_positions_route_logs_success_summary(self):
         with patch("ibkr_bridge.app.get_ibkr_client", return_value=FakeIbkrClient()):

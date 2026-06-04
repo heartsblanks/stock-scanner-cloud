@@ -23,19 +23,23 @@ from repositories.reconcile_repo import (
     insert_reconciliation_run,
 )
 from repositories.scans_repo import (
+    get_recent_failed_breakout_symbols,
     get_latest_scan_run,
     get_latest_scan_summary,
     get_paper_trade_attempt_daily_summary,
     get_paper_trade_attempt_hourly_summary,
     get_paper_trade_attempt_reason_counts,
     get_paper_trade_attempt_stage_counts,
+    get_pending_scan_gate_observations,
     get_recent_paper_trade_attempts,
     get_recent_paper_trade_rejections,
     get_recent_scan_runs,
     get_signal_log_rows,
     insert_paper_trade_attempt,
     insert_scan_run,
+    insert_scan_gate_observation,
     insert_signal_log,
+    update_scan_gate_observation_outcome,
 )
 from repositories.trades_repo import (
     get_closed_trade_events,

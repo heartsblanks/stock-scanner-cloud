@@ -280,6 +280,10 @@ def _low_price_mode_min_net_reward_risk() -> float:
     return _env_float("PAPER_LOW_PRICE_MODE_MIN_NET_REWARD_RISK", 1.5)
 
 
+def _low_price_late_min_net_reward_risk() -> float:
+    return _env_float("PAPER_LOW_PRICE_LATE_MIN_NET_REWARD_RISK", 1.35)
+
+
 def _parse_low_price_notional_tiers() -> list[tuple[float, float, float]]:
     raw_value = str(
         os.getenv("PAPER_LOW_PRICE_MODE_NOTIONAL_TIERS", "1:2:300;2:5:500;5:30:1000")
@@ -812,6 +816,10 @@ def _evaluate_low_price_mode_quality(metrics: dict[str, Any]) -> tuple[bool, str
     min_gross_target = _low_price_mode_min_gross_target_profit_dollars()
     min_net_target = _low_price_mode_min_net_target_profit_dollars()
     min_net_rr = _low_price_mode_min_net_reward_risk()
+    minutes_after_open = _to_int(metrics.get("minutes_after_open"), 0)
+    late_strict_after_minutes = _to_int(metrics.get("low_price_late_strict_after_minutes"), 99999)
+    if minutes_after_open >= late_strict_after_minutes:
+        min_net_rr = max(min_net_rr, _low_price_late_min_net_reward_risk())
 
     details = {
         **economics,
@@ -1366,6 +1374,34 @@ def execute_full_scan(
             mode=mode,
         )
 
+    try:
+        supports_failed_breakout_cooldown = "failed_breakout_cooldown_symbols" in inspect.signature(run_scan).parameters
+    except Exception:
+        supports_failed_breakout_cooldown = False
+    failed_breakout_cooldown_symbols: list[str] = []
+    if supports_failed_breakout_cooldown and paper_trade and not disable_strategy_gates:
+        try:
+            from storage import get_recent_failed_breakout_symbols
+
+            cooldown_minutes = _to_int(os.getenv("PAPER_FAILED_BREAKOUT_COOLDOWN_MINUTES", "90"), 90)
+            failed_breakout_cooldown_symbols = get_recent_failed_breakout_symbols(
+                mode=mode,
+                broker=active_broker,
+                now_utc=parse_iso_utc(timestamp_utc),
+                cooldown_minutes=cooldown_minutes,
+            )
+            run_scan_kwargs["failed_breakout_cooldown_symbols"] = failed_breakout_cooldown_symbols
+        except Exception as exc:
+            log_exception(
+                "Failed to load failed-breakout cooldown symbols",
+                exc,
+                component="scan_service",
+                operation="execute_full_scan",
+                scan_id=scan_id,
+                mode=mode,
+                broker=active_broker,
+            )
+
     all_trades, evaluations, _fetch_ok, _fetch_fail, benchmark_directions, source = run_scan(
         account_size,
         mode,
@@ -1380,7 +1416,37 @@ def execute_full_scan(
         pass
     trades = [t for t in all_trades if t["metrics"].get("direction") == "BUY"]
     paper_trade_candidates = []
+
+    def record_gate_observation(ev: dict[str, Any]) -> None:
+        try:
+            from storage import insert_scan_gate_observation
+
+            ev_metrics = ev.get("metrics") or {}
+            symbol = str(ev_metrics.get("symbol", "")).strip().upper()
+            if not symbol:
+                return
+            insert_scan_gate_observation(
+                observed_at=parse_iso_utc(timestamp_utc),
+                scan_id=scan_id,
+                mode=mode,
+                scan_source=scan_source,
+                broker=active_broker,
+                symbol=symbol,
+                decision=str(ev.get("decision", "") or ""),
+                final_reason=str(ev.get("final_reason", "") or ""),
+                metrics=ev_metrics,
+            )
+        except Exception as exc:
+            log_exception(
+                "Failed to persist scan gate observation",
+                exc,
+                component="scan_service",
+                operation="execute_full_scan",
+                scan_id=scan_id,
+            )
+
     for ev in evaluations:
+        record_gate_observation(ev)
         ev_metrics = ev.get("metrics") or {}
         rejected_symbol = str(ev_metrics.get("symbol", "")).strip().upper()
         if paper_trade and str(ev.get("decision", "")).strip().upper() != "VALID":
