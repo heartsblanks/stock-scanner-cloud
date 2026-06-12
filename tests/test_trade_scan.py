@@ -16,7 +16,7 @@ if "psycopg" not in sys.modules:
     sys.modules["psycopg"] = fake_psycopg
     sys.modules["psycopg.rows"] = fake_psycopg_rows
 
-from analytics.trade_scan import _volume_confirmation_threshold, calculate_position_sizing, evaluate_symbol
+from analytics.trade_scan import _volume_confirmation_threshold, calculate_position_sizing, evaluate_symbol, run_scan
 from core.paper_trade_config import get_paper_trade_limits
 
 
@@ -194,6 +194,39 @@ class TradeScanQualityV2Tests(unittest.TestCase):
 
         self.assertEqual(result["final_reason"], "failed_breakout_cooldown_active")
         self.assertFalse(result["checks"]["failed_breakout_cooldown"])
+
+    def test_run_scan_fetches_quotes_only_for_symbols_that_pass_candle_gates(self):
+        instruments = {
+            "Inside Range": {**self._info(), "symbol": "INSIDE", "market": "OTHER"},
+            "Valid Breakout": {**self._info(), "symbol": "VALID", "market": "OTHER"},
+        }
+
+        def fake_intraday(symbol, **_kwargs):
+            if symbol == "INSIDE":
+                return build_post_or_breakout_candles(final_close=10.20, final_volume=2500)
+            return build_post_or_breakout_candles(final_close=10.72, final_volume=2500)
+
+        quote_calls = []
+
+        def fake_quote(symbol, **_kwargs):
+            quote_calls.append(symbol)
+            return {"bid": 10.71, "ask": 10.73}
+
+        with patch.dict(os.environ, self._base_env(), clear=False):
+            with patch("analytics.trade_scan.get_mode_instruments", return_value=instruments):
+                with patch("analytics.trade_scan.get_benchmark_instruments", return_value={}):
+                    with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 10, 0, tzinfo=NY_TZ)):
+                        trades, evaluations, _ok, fetch_fail, _benchmarks, _source = run_scan(
+                            2000,
+                            "low_price",
+                            fetch_intraday_fn=fake_intraday,
+                            fetch_quote_fn=fake_quote,
+                        )
+
+        self.assertEqual(quote_calls, ["VALID"])
+        self.assertEqual(len(trades), 1)
+        self.assertEqual(len(evaluations), 2)
+        self.assertFalse([failure for failure in fetch_fail if "quote:" in failure])
 
 
 class TradeScanLateSessionTests(unittest.TestCase):

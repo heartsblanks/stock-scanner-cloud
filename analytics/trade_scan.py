@@ -1484,6 +1484,29 @@ def fetch_quotes(instruments: dict, *, fetch_quote_fn=None):
     return cache, fetch_fail
 
 
+def _fetch_quote_for_instrument(fetch_quote_fn, name: str, info: dict):
+    symbol = str(info.get("symbol", "")).strip().upper()
+    if fetch_quote_fn is None or not symbol:
+        return None, None
+
+    try:
+        try:
+            quote = fetch_quote_fn(
+                symbol,
+                exchange=(str(info.get("exchange", "")).strip().upper() or None),
+                primary_exchange=(str(info.get("primary_exchange", "")).strip().upper() or None),
+                currency=(str(info.get("currency", "")).strip().upper() or None),
+            )
+        except TypeError as exc:
+            message = str(exc)
+            if "unexpected keyword argument" not in message and "positional argument" not in message:
+                raise
+            quote = fetch_quote_fn(symbol)
+        return quote or None, None
+    except Exception as e:
+        return None, f"{name} ({symbol}) quote: {str(e)[:160]}"
+
+
 def get_benchmark_directions_from_cache(cache: dict):
     directions = {}
     failures = {}
@@ -1553,14 +1576,13 @@ def run_scan(
     non_benchmark_instruments = selected_instruments
 
     instrument_cache, instrument_ok, instrument_fail = fetch_instruments(non_benchmark_instruments, fetch_intraday_fn=fetch_intraday_fn)
-    quote_cache, quote_fail = fetch_quotes(non_benchmark_instruments, fetch_quote_fn=fetch_quote_fn)
 
     combined_cache = {}
     combined_cache.update(benchmark_cache)
     combined_cache.update(instrument_cache)
 
     fetch_ok = benchmark_ok + instrument_ok
-    fetch_fail = benchmark_fail + instrument_fail + quote_fail
+    fetch_fail = benchmark_fail + instrument_fail
 
     for k, v in benchmark_direction_fail.items():
         fetch_fail.append(f"Benchmark {k}: {v}")
@@ -1596,9 +1618,27 @@ def run_scan(
                 current_open_positions=current_open_positions,
                 current_open_exposure=current_open_exposure,
                 disable_strategy_gates=disable_strategy_gates,
-                quote=quote_cache.get(name),
                 failed_breakout_cooldown_symbols=cooldown_symbols,
             )
+            if result["decision"] == "VALID" and fetch_quote_fn is not None:
+                quote, quote_error = _fetch_quote_for_instrument(fetch_quote_fn, name, info)
+                if quote_error:
+                    fetch_fail.append(quote_error)
+                    result.setdefault("metrics", {})["spread_unavailable_proxy_used"] = True
+                    result["metrics"]["quote_fetch_error"] = quote_error
+                elif quote:
+                    result = evaluate_symbol(
+                        name,
+                        info,
+                        candles,
+                        account_size,
+                        benchmark_directions,
+                        current_open_positions=current_open_positions,
+                        current_open_exposure=current_open_exposure,
+                        disable_strategy_gates=disable_strategy_gates,
+                        quote=quote,
+                        failed_breakout_cooldown_symbols=cooldown_symbols,
+                    )
             result["info"] = info
             result["candles"] = candles
             result["benchmark_directions"] = benchmark_directions
