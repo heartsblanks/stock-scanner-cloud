@@ -16,7 +16,13 @@ if "psycopg" not in sys.modules:
     sys.modules["psycopg"] = fake_psycopg
     sys.modules["psycopg.rows"] = fake_psycopg_rows
 
-from analytics.trade_scan import _volume_confirmation_threshold, calculate_position_sizing, evaluate_symbol, run_scan
+from analytics.trade_scan import (
+    _volume_confirmation_threshold,
+    calculate_position_sizing,
+    evaluate_symbol,
+    fetch_instruments,
+    run_scan,
+)
 from core.paper_trade_config import get_paper_trade_limits
 
 
@@ -227,6 +233,29 @@ class TradeScanQualityV2Tests(unittest.TestCase):
         self.assertEqual(len(trades), 1)
         self.assertEqual(len(evaluations), 2)
         self.assertFalse([failure for failure in fetch_fail if "quote:" in failure])
+
+    def test_fetch_instruments_stops_when_market_data_budget_is_exceeded(self):
+        instruments = {
+            "First": {**self._info(), "symbol": "FIRST"},
+            "Second": {**self._info(), "symbol": "SECOND"},
+        }
+        fetch_calls = []
+
+        def fake_intraday(symbol, **_kwargs):
+            fetch_calls.append(symbol)
+            return build_post_or_breakout_candles()
+
+        with patch("analytics.trade_scan.time.monotonic", side_effect=[0.0, 0.2]):
+            cache, fetch_ok, fetch_fail = fetch_instruments(
+                instruments,
+                fetch_intraday_fn=fake_intraday,
+                time_budget_seconds=0.1,
+            )
+
+        self.assertEqual(cache, {})
+        self.assertEqual(fetch_ok, [])
+        self.assertEqual(fetch_calls, [])
+        self.assertIn("Market data time budget exceeded", fetch_fail[0])
 
 
 class TradeScanLateSessionTests(unittest.TestCase):

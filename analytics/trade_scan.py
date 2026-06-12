@@ -2,6 +2,7 @@
 import os
 import sys
 import math
+import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -1437,12 +1438,21 @@ def _fetch_intraday_for_instrument(fetch_intraday_fn, info: dict):
         return fetch_intraday_fn(symbol)
 
 
-def fetch_instruments(instruments: dict, *, fetch_intraday_fn=fetch_intraday):
+def fetch_instruments(instruments: dict, *, fetch_intraday_fn=fetch_intraday, time_budget_seconds: float | None = None):
     cache = {}
     fetch_ok = []
     fetch_fail = []
+    started_at = time.monotonic()
 
     for name, info in instruments.items():
+        if time_budget_seconds is not None and time_budget_seconds > 0:
+            elapsed = time.monotonic() - started_at
+            if elapsed >= time_budget_seconds:
+                remaining = len(instruments) - len(cache) - len(fetch_fail)
+                fetch_fail.append(
+                    f"Market data time budget exceeded after {elapsed:.1f}s; skipped {max(0, remaining)} instruments."
+                )
+                break
         try:
             candles = _fetch_intraday_for_instrument(fetch_intraday_fn, info)
             cache[name] = candles
@@ -1570,12 +1580,25 @@ def run_scan(
 
     benchmark_instruments = get_benchmark_instruments()
 
-    benchmark_cache, benchmark_ok, benchmark_fail = fetch_instruments(benchmark_instruments, fetch_intraday_fn=fetch_intraday_fn)
+    market_data_time_budget_seconds = _env_float("PAPER_SCAN_MARKET_DATA_TIME_BUDGET_SECONDS", 24.0)
+    fetch_started_at = time.monotonic()
+    benchmark_cache, benchmark_ok, benchmark_fail = fetch_instruments(
+        benchmark_instruments,
+        fetch_intraday_fn=fetch_intraday_fn,
+        time_budget_seconds=market_data_time_budget_seconds,
+    )
     benchmark_directions, benchmark_direction_fail = get_benchmark_directions_from_cache(benchmark_cache)
 
     non_benchmark_instruments = selected_instruments
 
-    instrument_cache, instrument_ok, instrument_fail = fetch_instruments(non_benchmark_instruments, fetch_intraday_fn=fetch_intraday_fn)
+    remaining_market_data_budget_seconds = None
+    if market_data_time_budget_seconds > 0:
+        remaining_market_data_budget_seconds = max(0.0, market_data_time_budget_seconds - (time.monotonic() - fetch_started_at))
+    instrument_cache, instrument_ok, instrument_fail = fetch_instruments(
+        non_benchmark_instruments,
+        fetch_intraday_fn=fetch_intraday_fn,
+        time_budget_seconds=remaining_market_data_budget_seconds,
+    )
 
     combined_cache = {}
     combined_cache.update(benchmark_cache)
