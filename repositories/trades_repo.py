@@ -1090,10 +1090,6 @@ def _symbol_ranking_demoted(row: dict[str, Any], *, min_closed_trade_count: int)
         and (win_rate_percent is None or win_rate_percent < 50.0)
     ):
         return True, "negative_pnl_low_win_rate"
-    poor_scan_count = int(row.get("poor_scan_count") or 0)
-    observation_count = int(row.get("observation_count") or 0)
-    if observation_count >= 10 and poor_scan_count >= 8:
-        return True, "persistent_scan_quality_failures"
     return False, None
 
 

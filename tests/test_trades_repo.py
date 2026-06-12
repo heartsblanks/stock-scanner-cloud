@@ -282,6 +282,51 @@ class SymbolRankingTests(unittest.TestCase):
         self.assertTrue(csco["demoted"])
         self.assertEqual(csco["demotion_reason"], "negative_pnl_low_win_rate")
 
+    @patch("repositories.trades_repo.execute")
+    @patch("repositories.trades_repo.ensure_symbol_rankings_schema")
+    @patch("repositories.trades_repo.get_rolling_symbol_performance")
+    def test_refresh_symbol_rankings_does_not_hard_demote_scan_quality_only_failures(
+        self,
+        mock_rolling,
+        mock_ensure_schema,
+        mock_execute,
+    ):
+        mock_rolling.return_value = [
+            {
+                "mode": "low_price",
+                "symbol": "SOFI",
+                "priority": 9,
+                "trade_count": 0,
+                "closed_trade_count": 0,
+                "winning_trade_count": 0,
+                "losing_trade_count": 0,
+                "realized_pnl_total": 0,
+                "average_realized_pnl": None,
+                "win_rate_percent": None,
+                "candidate_count": 0,
+                "placed_count": 0,
+                "skipped_count": 0,
+                "rejected_count": 148,
+                "observation_count": 148,
+                "poor_scan_count": 148,
+            }
+        ]
+
+        payload = refresh_symbol_rankings(
+            broker="IBKR",
+            expected_modes=["low_price"],
+            window_days=5,
+            as_of_date="2026-06-12",
+            min_closed_trade_count=2,
+        )
+
+        self.assertEqual(payload["symbol_count"], 1)
+        self.assertEqual(payload["demoted_count"], 0)
+        insert_params = [call.args[1] for call in mock_execute.call_args_list[1:]]
+        sofi = next(params for params in insert_params if params["symbol"] == "SOFI")
+        self.assertFalse(sofi["demoted"])
+        self.assertIsNone(sofi["demotion_reason"])
+
     @patch("repositories.trades_repo.fetch_all")
     @patch("repositories.trades_repo.ensure_symbol_rankings_schema")
     def test_get_latest_symbol_ranking_rows_filters_by_mode(self, mock_ensure_schema, mock_fetch_all):
