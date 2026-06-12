@@ -260,8 +260,8 @@ def _low_price_mode_min_price() -> float:
 
 
 def _low_price_mode_max_price() -> float:
-    value = _env_float("PAPER_LOW_PRICE_MODE_MAX_PRICE", 30.0)
-    return value if value > 0 else 30.0
+    value = _env_float("PAPER_LOW_PRICE_MODE_MAX_PRICE", 35.0)
+    return value if value > 0 else 35.0
 
 
 def _low_price_mode_min_relative_volume() -> float:
@@ -286,7 +286,7 @@ def _low_price_late_min_net_reward_risk() -> float:
 
 def _parse_low_price_notional_tiers() -> list[tuple[float, float, float]]:
     raw_value = str(
-        os.getenv("PAPER_LOW_PRICE_MODE_NOTIONAL_TIERS", "1:2:300;2:5:500;5:30:1000")
+        os.getenv("PAPER_LOW_PRICE_MODE_NOTIONAL_TIERS", "1:2:300;2:5:500;5:35:1000")
     ).strip()
     tiers: list[tuple[float, float, float]] = []
     for item in raw_value.replace(",", ";").split(";"):
@@ -1017,7 +1017,7 @@ def _apply_low_price_mode_notional_tier(metrics: dict[str, Any]) -> None:
     metrics["low_price_mode_notional_cap"] = round(tier_cap, 4)
     metrics["low_price_mode_notional_tiers"] = os.getenv(
         "PAPER_LOW_PRICE_MODE_NOTIONAL_TIERS",
-        "1:2:300;2:5:500;5:30:1000",
+        "1:2:300;2:5:500;5:35:1000",
     )
 
     if capped_shares <= 0:

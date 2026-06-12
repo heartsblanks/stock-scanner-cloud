@@ -18,7 +18,8 @@ class SymbolEligibilityRankingTests(unittest.TestCase):
         prices = {
             "TOO_LOW": 0.75,
             "OK": 12.0,
-            "TOO_HIGH": 31.0,
+            "OK_HIGH": 34.0,
+            "TOO_HIGH": 36.0,
         }
         return [{"close": prices.get(symbol, 12.0)}]
 
@@ -265,7 +266,7 @@ class SymbolEligibilityRankingTests(unittest.TestCase):
     @patch("services.symbol_eligibility_service.get_latest_symbol_ranking_rows")
     @patch("services.symbol_eligibility_service.get_instrument_groups")
     @patch("services.symbol_eligibility_service.sync_quality_candidate_instruments")
-    def test_low_price_mode_enforces_one_to_thirty_dollar_price_band(
+    def test_low_price_mode_enforces_one_to_thirty_five_dollar_price_band(
         self,
         mock_sync_catalog,
         mock_groups,
@@ -277,6 +278,7 @@ class SymbolEligibilityRankingTests(unittest.TestCase):
             "low_price": {
                 "Too Low": {"symbol": "TOO_LOW", "priority": 8, "currency": "USD"},
                 "Ok": {"symbol": "OK", "priority": 8, "currency": "USD"},
+                "Ok High": {"symbol": "OK_HIGH", "priority": 8, "currency": "USD"},
                 "Too High": {"symbol": "TOO_HIGH", "priority": 8, "currency": "USD"},
             }
         }
@@ -287,6 +289,7 @@ class SymbolEligibilityRankingTests(unittest.TestCase):
             {
                 "SYMBOL_ELIGIBILITY_MAX_SYMBOLS_PER_MODE": "0",
                 "SYMBOL_ELIGIBILITY_MAX_NOTIONAL": "1000",
+                "PAPER_LOW_PRICE_MODE_MAX_PRICE": "35",
             },
             clear=False,
         ):
@@ -301,12 +304,13 @@ class SymbolEligibilityRankingTests(unittest.TestCase):
         self.assertFalse(by_symbol["TOO_LOW"]["eligible"])
         self.assertEqual(by_symbol["TOO_LOW"]["ineligible_reason"], "low_price_price_below_floor")
         self.assertTrue(by_symbol["OK"]["eligible"])
+        self.assertTrue(by_symbol["OK_HIGH"]["eligible"])
         self.assertFalse(by_symbol["TOO_HIGH"]["eligible"])
         self.assertEqual(
             by_symbol["TOO_HIGH"]["ineligible_reason"],
-            "price_above_low_price_ceiling_30.00",
+            "price_above_low_price_ceiling_35.00",
         )
-        self.assertEqual(result["eligible_count"], 1)
+        self.assertEqual(result["eligible_count"], 2)
 
 
 if __name__ == "__main__":

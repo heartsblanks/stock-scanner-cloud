@@ -40,8 +40,8 @@ def _low_price_mode_min_price() -> float:
 
 
 def _low_price_mode_max_price() -> float:
-    value = _to_float(os.getenv("PAPER_LOW_PRICE_MODE_MAX_PRICE"), 30.0)
-    return value if value > 0 else 30.0
+    value = _to_float(os.getenv("PAPER_LOW_PRICE_MODE_MAX_PRICE"), 35.0)
+    return value if value > 0 else 35.0
 
 
 def _evaluate_price_eligibility(
