@@ -5,6 +5,7 @@ from typing import Any, Callable
 import os
 import math
 import inspect
+from zoneinfo import ZoneInfo
 from core.logging_utils import log_exception, log_info, log_warning
 from services.alert_service import send_telegram_alert, telegram_alerts_enabled
 from orchestration.scan_context import IBKR_SCHEDULED_MODE_ORDER
@@ -407,6 +408,46 @@ def _resolve_scan_symbol_allowlist(mode: str) -> dict[str, Any]:
         "filter_applied": False,
         "reason": "symbol_allowlist_unavailable",
         "allowed_symbols": None,
+    }
+
+
+def _scheduled_scan_slot_index(scan_started_at: datetime) -> int:
+    ny_now = scan_started_at.astimezone(ZoneInfo("America/New_York"))
+    total_minutes = (ny_now.hour * 60) + ny_now.minute
+    first_scan_minute = (9 * 60) + 45
+    return max(0, (total_minutes - first_scan_minute) // 10)
+
+
+def _scheduled_symbol_chunk(
+    symbols: list[str],
+    *,
+    scan_source: str,
+    paper_trade: bool,
+    scan_started_at: datetime,
+) -> tuple[list[str], dict[str, Any]]:
+    configured_chunk_size = _to_int(os.getenv("PAPER_SCHEDULED_MAX_SYMBOLS_PER_SCAN", "0"), 0)
+    if (
+        not paper_trade
+        or str(scan_source or "").strip().upper() != "SCHEDULED"
+        or configured_chunk_size <= 0
+        or len(symbols) <= configured_chunk_size
+    ):
+        return symbols, {"chunking_applied": False}
+
+    slot_index = _scheduled_scan_slot_index(scan_started_at)
+    chunk_count = max(1, math.ceil(len(symbols) / configured_chunk_size))
+    chunk_index = slot_index % chunk_count
+    start = chunk_index * configured_chunk_size
+    end = min(len(symbols), start + configured_chunk_size)
+    return symbols[start:end], {
+        "chunking_applied": True,
+        "chunk_size": configured_chunk_size,
+        "chunk_index": chunk_index,
+        "chunk_count": chunk_count,
+        "slot_index": slot_index,
+        "original_allowed_count": len(symbols),
+        "chunk_start": start,
+        "chunk_end": end,
     }
 
 
@@ -1345,6 +1386,29 @@ def execute_full_scan(
                     remaining_allowed_count=len(effective_allowed_symbols),
                 )
             normalized_allowed_symbols = effective_allowed_symbols
+        chunked_allowed_symbols, chunk_metadata = _scheduled_symbol_chunk(
+            normalized_allowed_symbols,
+            scan_source=scan_source,
+            paper_trade=paper_trade,
+            scan_started_at=scan_started_at,
+        )
+        if chunk_metadata.get("chunking_applied"):
+            symbol_allowlist.update(chunk_metadata)
+            symbol_allowlist["allowed_symbols"] = chunked_allowed_symbols
+            symbol_allowlist["allowed_count"] = len(chunked_allowed_symbols)
+            log_info(
+                "Applied scheduled scan symbol chunk",
+                component="scan_service",
+                operation="execute_full_scan",
+                mode=mode,
+                scan_source=scan_source,
+                chunk_index=chunk_metadata.get("chunk_index"),
+                chunk_count=chunk_metadata.get("chunk_count"),
+                chunk_size=chunk_metadata.get("chunk_size"),
+                original_allowed_count=chunk_metadata.get("original_allowed_count"),
+                selected_count=len(chunked_allowed_symbols),
+            )
+        normalized_allowed_symbols = chunked_allowed_symbols
         run_scan_kwargs["allowed_symbols"] = normalized_allowed_symbols
     elif supports_allowed_symbols and paper_trade:
         # Fail closed for paper trading when eligibility rows are unavailable.
@@ -1516,6 +1580,14 @@ def execute_full_scan(
             "excluded_count": _to_int(symbol_allowlist.get("excluded_count", 0), 0),
             "reason": symbol_allowlist.get("reason"),
             "open_symbols_excluded": list(symbol_allowlist.get("open_symbols_excluded") or []),
+            "chunking_applied": bool(symbol_allowlist.get("chunking_applied", False)),
+            "chunk_size": symbol_allowlist.get("chunk_size"),
+            "chunk_index": symbol_allowlist.get("chunk_index"),
+            "chunk_count": symbol_allowlist.get("chunk_count"),
+            "slot_index": symbol_allowlist.get("slot_index"),
+            "original_allowed_count": symbol_allowlist.get("original_allowed_count"),
+            "chunk_start": symbol_allowlist.get("chunk_start"),
+            "chunk_end": symbol_allowlist.get("chunk_end"),
         },
     }
 
