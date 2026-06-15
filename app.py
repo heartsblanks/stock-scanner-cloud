@@ -144,6 +144,11 @@ from services.ibkr_repair_service import repair_ibkr_stale_closes
 from services.ibkr_vm_journal_repair_service import repair_ibkr_stale_closes_from_bridge_journal
 from services.scan_service import execute_full_scan
 from services.scan_observation_service import refresh_scan_gate_observation_outcomes
+from services.market_data_cache_service import (
+    fetch_cached_intraday_or_live,
+    market_data_cache_summary,
+    refresh_market_data_cache,
+)
 from services.symbol_eligibility_service import (
     refresh_symbol_eligibility_for_date,
     refresh_symbol_eligibility_for_next_session,
@@ -221,18 +226,35 @@ execute_scan_pipeline = build_scan_pipeline_runner(
 
 def _run_ibkr_shadow_scan(payload: dict[str, Any]) -> dict[str, Any]:
     ibkr_payload = dict(payload)
+    use_cached_broad_data = str(os.getenv("PAPER_SCAN_USE_CACHED_BROAD_DATA", "false")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    broad_fetch_intraday = fetch_ibkr_intraday
+    if use_cached_broad_data:
+        broad_fetch_intraday = lambda symbol, interval="1min", outputsize=None, **kwargs: fetch_cached_intraday_or_live(
+            fetch_ibkr_intraday,
+            symbol,
+            interval=interval,
+            outputsize=outputsize,
+            broker="IBKR",
+            refresh_on_miss=True,
+            **kwargs,
+        )
     try:
         result = execute_scan_pipeline(
             ibkr_payload,
             broker_name="IBKR",
-            run_scan_fn=lambda account_size, mode, current_open_positions=0, current_open_exposure=0.0, disable_strategy_gates=False, allowed_symbols=None, failed_breakout_cooldown_symbols=None: run_scan(
+            run_scan_fn=lambda account_size, mode, current_open_positions=0, current_open_exposure=0.0, disable_strategy_gates=False, allowed_symbols=None, failed_breakout_cooldown_symbols=None, force_live_market_data=False: run_scan(
                 account_size,
                 mode,
                 current_open_positions=current_open_positions,
                 current_open_exposure=current_open_exposure,
                 disable_strategy_gates=disable_strategy_gates,
                 allowed_symbols=allowed_symbols,
-                fetch_intraday_fn=fetch_ibkr_intraday,
+                fetch_intraday_fn=fetch_ibkr_intraday if force_live_market_data else broad_fetch_intraday,
                 fetch_quote_fn=fetch_ibkr_quote,
                 failed_breakout_cooldown_symbols=failed_breakout_cooldown_symbols,
                 source_label=f"IBKR_{mode.upper()}",
@@ -642,6 +664,35 @@ def run_symbol_eligibility_refresh(payload: dict[str, Any] | None = None):
     )
 
 
+def run_market_data_cache_refresh(payload: dict[str, Any] | None = None):
+    request_payload = payload or {}
+    symbols = request_payload.get("symbols")
+    if not symbols:
+        from services.symbol_eligibility_service import resolve_session_symbol_allowlist
+
+        mode = str(request_payload.get("mode", "low_price")).strip().lower() or "low_price"
+        allowlist = resolve_session_symbol_allowlist(mode=mode)
+        symbols = allowlist.get("allowed_symbols") or []
+
+    try:
+        max_symbols = int(request_payload.get("max_symbols")) if request_payload.get("max_symbols") not in (None, "") else None
+    except Exception:
+        max_symbols = None
+    try:
+        outputsize = int(request_payload.get("outputsize")) if request_payload.get("outputsize") not in (None, "") else None
+    except Exception:
+        outputsize = None
+
+    return refresh_market_data_cache(
+        symbols=symbols,
+        fetch_intraday_fn=fetch_ibkr_intraday,
+        broker=str(request_payload.get("broker", "IBKR")).strip().upper() or "IBKR",
+        interval=str(request_payload.get("interval", "1min")).strip().lower() or "1min",
+        outputsize=outputsize,
+        max_symbols=max_symbols,
+    )
+
+
 register_health_routes(
     app,
     db_healthcheck=db_healthcheck,
@@ -659,6 +710,8 @@ register_health_routes(
     purge_legacy_broker_data=purge_legacy_broker_data,
     run_instrument_catalog_sync=sync_quality_candidate_instruments,
     run_symbol_eligibility_refresh=run_symbol_eligibility_refresh,
+    run_market_data_cache_refresh=run_market_data_cache_refresh,
+    get_market_data_cache_summary=market_data_cache_summary,
 )
 register_analysis_routes(
     app,

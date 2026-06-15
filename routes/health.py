@@ -23,6 +23,8 @@ def register_health_routes(
     purge_legacy_broker_data=None,
     run_instrument_catalog_sync=None,
     run_symbol_eligibility_refresh=None,
+    run_market_data_cache_refresh=None,
+    get_market_data_cache_summary=None,
 ) -> None:
     cache: dict[tuple[str, str], tuple[float, dict]] = {}
 
@@ -81,6 +83,8 @@ def register_health_routes(
                 "/admin/purge-legacy-broker-data",
                 "/admin/sync-instrument-catalog",
                 "/admin/refresh-symbol-eligibility",
+                "/admin/refresh-market-data-cache",
+                "/market-data-cache",
             ],
         })
 
@@ -234,6 +238,36 @@ def register_health_routes(
             }), status_code
         except Exception as e:
             log_exception("instrument catalog sync failed", e, route="/admin/sync-instrument-catalog")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.post("/admin/refresh-market-data-cache")
+    def admin_refresh_market_data_cache():
+        admin_token = str(os.getenv("ADMIN_API_TOKEN", "")).strip()
+        request_token = str(request.headers.get("X-Admin-Token", "")).strip()
+        if not run_market_data_cache_refresh:
+            return jsonify({"ok": False, "error": "market_data_cache_refresh_not_implemented"}), 501
+        if not admin_token:
+            return jsonify({"ok": False, "error": "admin_market_data_cache_refresh_disabled"}), 503
+        if request_token != admin_token:
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
+        try:
+            result = run_market_data_cache_refresh(request.get_json(silent=True) or {})
+            status_code = 200 if bool(result.get("ok", True)) else 500
+            return jsonify({"route": "/admin/refresh-market-data-cache", **result}), status_code
+        except Exception as e:
+            log_exception("market data cache refresh failed", e, route="/admin/refresh-market-data-cache")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.get("/market-data-cache")
+    def market_data_cache():
+        if not get_market_data_cache_summary:
+            return jsonify({"ok": False, "error": "market_data_cache_summary_not_implemented"}), 501
+        try:
+            broker = request.args.get("broker", "IBKR")
+            limit = int(request.args.get("limit", "20"))
+            return jsonify(get_market_data_cache_summary(broker=broker, limit=limit))
+        except Exception as e:
+            log_exception("market data cache summary failed", e, route="/market-data-cache")
             return jsonify({"ok": False, "error": str(e)}), 500
 
     @app.get("/db-health")

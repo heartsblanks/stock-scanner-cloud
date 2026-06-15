@@ -1112,6 +1112,124 @@ class ScanServiceSizingTests(unittest.TestCase):
         self.assertIn("PLTR:symbol_already_open", paper_result.get("skip_reasons", []))
         self.assertTrue(any(row.get("final_reason") == "symbol_already_open" for row in inserted_attempts))
 
+    def test_execute_full_scan_requires_fresh_confirmation_before_placement(self):
+        inserted_attempts = []
+        place_calls = []
+        scan_calls = []
+
+        candidate_metrics = {
+            "symbol": "SOFI",
+            "direction": "BUY",
+            "entry": 10.50,
+            "stop": 10.20,
+            "target": 11.20,
+            "shares": 10.0,
+            "per_trade_notional": 105.0,
+            "remaining_allocatable_capital": 1000.0,
+            "remaining_slots": 2,
+            "risk_per_share": 0.30,
+            "final_confidence": 110.0,
+            "priority": 10,
+            "price": 10.50,
+            "relative_volume": 2.0,
+            "three_candle_relative_volume": 1.5,
+            "gross_target_profit_dollars": 7.0,
+            "net_target_profit_dollars": 5.0,
+            "net_reward_risk": 2.0,
+        }
+
+        def fake_run_scan(
+            account_size,
+            mode,
+            current_open_positions=0,
+            current_open_exposure=0.0,
+            disable_strategy_gates=False,
+            allowed_symbols=None,
+            force_live_market_data=False,
+        ):
+            scan_calls.append({
+                "allowed_symbols": allowed_symbols,
+                "force_live_market_data": force_live_market_data,
+            })
+            if force_live_market_data:
+                rejected = {
+                    "decision": "REJECTED",
+                    "final_reason": "breakout_close_confirmation_failed",
+                    "metrics": dict(candidate_metrics),
+                }
+                return ([], [rejected], [], [], {"SP500": "BUY", "NASDAQ": "BUY"}, f"IBKR_{mode.upper()}")
+            evaluation = {
+                "decision": "VALID",
+                "final_reason": "valid_signal",
+                "metrics": dict(candidate_metrics),
+                "info": {"symbol": "SOFI", "market": "NASDAQ"},
+                "candles": [{"close": 10.50}],
+            }
+            return (
+                [{"name": "SOFI", "final_reason": "valid_signal", "metrics": dict(candidate_metrics)}],
+                [evaluation],
+                [],
+                [],
+                {"SP500": "BUY", "NASDAQ": "BUY"},
+                f"IBKR_{mode.upper()}",
+            )
+
+        def fake_candidate_from_evaluation(evaluation):
+            if evaluation.get("decision") != "VALID":
+                return None
+            return {
+                "name": "SOFI",
+                "decision": "PAPER_CANDIDATE",
+                "final_reason": evaluation.get("final_reason", "valid_signal"),
+                "metrics": dict(evaluation.get("metrics", {})),
+                "info": evaluation.get("info") or {"symbol": "SOFI", "market": "NASDAQ"},
+                "candles": evaluation.get("candles") or [{"close": 10.50}],
+            }
+
+        with patch.dict(
+            "os.environ",
+            {
+                "PAPER_ALERT_ONLY_MODES": "none",
+                "PAPER_MODE_PLACEMENT_CONFIDENCE_FLOORS": "low_price:88",
+                "PAPER_FRESH_CONFIRM_BEFORE_PLACEMENT": "true",
+            },
+            clear=False,
+        ):
+            result = execute_full_scan(
+                {"mode": "low_price", "paper_trade": True, "scan_source": "MANUAL"},
+                market_time_check=lambda: (True, "Market timing OK."),
+                build_scan_id=lambda timestamp_utc, mode: f"{mode}-scan",
+                market_phase_from_timestamp=lambda timestamp_utc: "MIDDAY",
+                append_signal_log=lambda row: None,
+                safe_insert_paper_trade_attempt=lambda **kwargs: inserted_attempts.append(kwargs),
+                safe_insert_scan_run=lambda **kwargs: None,
+                parse_iso_utc=lambda ts: ts,
+                run_scan=fake_run_scan,
+                trade_to_dict=lambda trade: trade,
+                debug_to_dict=lambda evaluation: evaluation,
+                paper_candidate_from_evaluation=fake_candidate_from_evaluation,
+                evaluate_symbol=lambda *args, **kwargs: None,
+                get_latest_open_paper_trade_for_symbol=lambda symbol: None,
+                is_symbol_in_paper_cooldown=lambda symbol, now_utc: (False, ""),
+                place_paper_orders_from_trade=lambda trade, max_notional=None: place_calls.append((trade, max_notional)) or [],
+                append_trade_log=lambda row: None,
+                safe_insert_trade_event=lambda **kwargs: None,
+                safe_insert_broker_order=lambda **kwargs: None,
+                upsert_trade_lifecycle=lambda **kwargs: None,
+                to_float_or_none=lambda value: float(value) if value not in (None, "") else None,
+                MIN_CONFIDENCE=75,
+                resolve_account_size=lambda payload: 2000.0,
+                active_broker="IBKR",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(place_calls), 0)
+        self.assertTrue(any(call["force_live_market_data"] for call in scan_calls))
+        paper_result = result.get("paper_trade_result", {})
+        self.assertFalse(paper_result.get("placed"))
+        self.assertIn("SOFI:breakout_close_confirmation_failed", paper_result.get("skip_reasons", []))
+        self.assertTrue(any(row.get("decision_stage") == "REFRESH_REJECTED" for row in inserted_attempts))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1110,6 +1110,88 @@ def execute_scheduled_scan_request(
     return handler(scheduled_payload)
 
 
+def _fresh_confirm_before_placement_enabled() -> bool:
+    value = str(os.getenv("PAPER_FRESH_CONFIRM_BEFORE_PLACEMENT", "true")).strip().lower()
+    return value in {"1", "true", "yes", "y", "on"}
+
+
+def _fresh_confirm_candidate_before_placement(
+    *,
+    candidate: dict[str, Any],
+    run_scan: Callable[..., Any],
+    paper_candidate_from_evaluation: Callable[[Any], Any],
+    account_size: float,
+    mode: str,
+    current_open_positions: int,
+    current_open_exposure: float,
+    disable_strategy_gates: bool,
+) -> tuple[dict[str, Any] | None, str, dict[str, Any] | None]:
+    metrics = candidate.get("metrics") or {}
+    symbol = str(metrics.get("symbol", "")).strip().upper()
+    if not symbol or not _fresh_confirm_before_placement_enabled():
+        return candidate, "fresh_confirmation_disabled", None
+
+    try:
+        supports_allowed_symbols = "allowed_symbols" in inspect.signature(run_scan).parameters
+    except Exception:
+        supports_allowed_symbols = False
+    if not supports_allowed_symbols:
+        # Unit-test doubles and legacy scan functions may not support a targeted
+        # live re-scan. Keep old behavior there, but production IBKR does support it.
+        candidate.setdefault("metrics", {})["fresh_confirmation"] = False
+        candidate["metrics"]["fresh_confirmation_source"] = "unavailable_run_scan_no_allowlist"
+        return candidate, "fresh_confirmation_unavailable", None
+
+    try:
+        fresh_scan_kwargs: dict[str, Any] = {
+            "current_open_positions": current_open_positions,
+            "current_open_exposure": current_open_exposure,
+            "disable_strategy_gates": disable_strategy_gates,
+            "allowed_symbols": [symbol],
+        }
+        try:
+            if "force_live_market_data" in inspect.signature(run_scan).parameters:
+                fresh_scan_kwargs["force_live_market_data"] = True
+        except Exception:
+            pass
+        _trades, evaluations, _fetch_ok, fetch_fail, benchmark_directions, _source = run_scan(
+            account_size,
+            mode,
+            **fresh_scan_kwargs,
+        )
+    except Exception as exc:
+        return None, "fresh_confirmation_fetch_failed", {
+            "decision": "REJECTED",
+            "final_reason": "fresh_confirmation_fetch_failed",
+            "metrics": {**metrics, "fresh_confirmation_error": str(exc)[:200]},
+        }
+
+    matching_evaluation = None
+    for evaluation in evaluations or []:
+        evaluation_symbol = str((evaluation.get("metrics") or {}).get("symbol", "")).strip().upper()
+        if evaluation_symbol == symbol:
+            matching_evaluation = evaluation
+            break
+    if matching_evaluation is None:
+        return None, "fresh_confirmation_missing_evaluation", {
+            "decision": "REJECTED",
+            "final_reason": "fresh_confirmation_missing_evaluation",
+            "metrics": {
+                **metrics,
+                "fresh_confirmation_fetch_failures": "|".join(str(item) for item in (fetch_fail or [])[:3]),
+            },
+        }
+
+    refreshed_candidate = paper_candidate_from_evaluation(matching_evaluation)
+    if refreshed_candidate is None:
+        return None, str(matching_evaluation.get("final_reason") or "candidate_no_longer_valid_on_fresh_data"), matching_evaluation
+
+    refreshed_candidate.setdefault("metrics", {})["fresh_confirmation"] = True
+    refreshed_candidate["metrics"]["fresh_confirmation_source"] = "live_single_symbol_scan"
+    refreshed_candidate["benchmark_directions"] = benchmark_directions
+    return refreshed_candidate, "fresh_confirmed", matching_evaluation
+
+
 def execute_full_scan(
     payload: dict[str, Any],
     *,
@@ -1953,37 +2035,38 @@ def execute_full_scan(
 
                 candidate_name = paper_trade_candidate.get("name", "")
                 candidate_info = paper_trade_candidate.get("info")
-                candidate_candles = paper_trade_candidate.get("candles")
-                candidate_benchmark_directions = paper_trade_candidate.get("benchmark_directions", benchmark_directions)
-
-                if candidate_info is not None and candidate_candles is not None:
-                    refreshed_evaluation = evaluate_symbol(
-                        candidate_name,
-                        candidate_info,
-                        candidate_candles,
-                        account_size,
-                        candidate_benchmark_directions,
+                if candidate_info is not None:
+                    refreshed_candidate, refresh_reason, refreshed_evaluation = _fresh_confirm_candidate_before_placement(
+                        candidate=paper_trade_candidate,
+                        run_scan=run_scan,
+                        paper_candidate_from_evaluation=paper_candidate_from_evaluation,
+                        account_size=account_size,
+                        mode=mode,
                         current_open_positions=current_open_positions,
                         current_open_exposure=current_open_exposure,
                         disable_strategy_gates=disable_strategy_gates,
                     )
-                    refreshed_candidate = paper_candidate_from_evaluation(refreshed_evaluation)
                     if refreshed_candidate is None:
+                        refreshed_metrics = (
+                            refreshed_evaluation.get("metrics")
+                            if isinstance(refreshed_evaluation, dict)
+                            else paper_metrics
+                        ) or paper_metrics
                         record_attempt(
                             "REFRESH_REJECTED",
                             symbol=candidate_symbol,
-                            metrics=paper_metrics,
-                            final_reason=str(refreshed_evaluation.get("final_reason", "") or "candidate_no_longer_valid"),
+                            metrics=refreshed_metrics,
+                            final_reason=refresh_reason,
                             placed=False,
                         )
                         paper_results.append({
                             "attempted": False,
                             "placed": False,
-                            "reason": refreshed_evaluation.get("final_reason", "candidate_no_longer_valid"),
+                            "reason": refresh_reason,
                             "symbol": candidate_symbol,
                         })
                         skipped_symbols.append(candidate_symbol)
-                        skip_reasons.append(f"{candidate_symbol}:{refreshed_evaluation.get('final_reason', 'candidate_no_longer_valid')}")
+                        skip_reasons.append(f"{candidate_symbol}:{refresh_reason}")
                         continue
                     paper_trade_candidate = refreshed_candidate
                     paper_metrics = paper_trade_candidate["metrics"]

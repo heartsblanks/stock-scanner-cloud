@@ -403,6 +403,25 @@ CREATE INDEX IF NOT EXISTS idx_symbol_session_eligibility_mode_session
 CREATE INDEX IF NOT EXISTS idx_symbol_session_eligibility_symbol
     ON symbol_session_eligibility(symbol);
 
+CREATE TABLE IF NOT EXISTS market_data_candles (
+    id SERIAL PRIMARY KEY,
+    broker TEXT NOT NULL DEFAULT 'IBKR',
+    symbol TEXT NOT NULL,
+    interval TEXT NOT NULL DEFAULT '1min',
+    source TEXT NOT NULL DEFAULT 'ibkr_intraday',
+    candles JSONB NOT NULL,
+    candle_count INTEGER NOT NULL DEFAULT 0,
+    last_bar_datetime TEXT,
+    fetched_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_market_data_candles_broker_symbol_interval
+    ON market_data_candles(broker, symbol, interval);
+CREATE INDEX IF NOT EXISTS idx_market_data_candles_fetched_at
+    ON market_data_candles(fetched_at DESC);
+
 ALTER TABLE paper_trade_attempts ADD COLUMN IF NOT EXISTS broker TEXT;
 ALTER TABLE trade_events ADD COLUMN IF NOT EXISTS broker TEXT;
 ALTER TABLE broker_orders ADD COLUMN IF NOT EXISTS broker TEXT;
