@@ -3,6 +3,7 @@ import os
 import sys
 import math
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -1438,27 +1439,108 @@ def _fetch_intraday_for_instrument(fetch_intraday_fn, info: dict):
         return fetch_intraday_fn(symbol)
 
 
-def fetch_instruments(instruments: dict, *, fetch_intraday_fn=fetch_intraday, time_budget_seconds: float | None = None):
+def _fetch_one_instrument(name: str, info: dict, fetch_intraday_fn):
+    candles = _fetch_intraday_for_instrument(fetch_intraday_fn, info)
+    return name, info, candles
+
+
+def _remaining_instrument_count(total_count: int, completed_count: int) -> int:
+    return max(0, total_count - completed_count)
+
+
+def fetch_instruments(
+    instruments: dict,
+    *,
+    fetch_intraday_fn=fetch_intraday,
+    time_budget_seconds: float | None = None,
+    max_workers: int = 1,
+):
     cache = {}
     fetch_ok = []
     fetch_fail = []
+    items = list(instruments.items())
+    total_count = len(items)
     started_at = time.monotonic()
 
-    for name, info in instruments.items():
+    if max_workers <= 1 or total_count <= 1:
+        for completed_count, (name, info) in enumerate(items):
+            if time_budget_seconds is not None and time_budget_seconds > 0:
+                elapsed = time.monotonic() - started_at
+                if elapsed >= time_budget_seconds:
+                    remaining = _remaining_instrument_count(total_count, completed_count)
+                    fetch_fail.append(
+                        f"Market data time budget exceeded after {elapsed:.1f}s; skipped {remaining} instruments."
+                    )
+                    break
+            try:
+                _name, _info, candles = _fetch_one_instrument(name, info, fetch_intraday_fn)
+                cache[_name] = candles
+                fetch_ok.append(f"{_name} ({_info['symbol']})")
+            except Exception as e:
+                fetch_fail.append(f"{name} ({info['symbol']}): {str(e)[:160]}")
+
+        return cache, fetch_ok, fetch_fail
+
+    max_workers = max(1, min(int(max_workers), total_count))
+    next_index = 0
+    completed_count = 0
+    pending = {}
+
+    def submit_next(executor):
+        nonlocal next_index
+        if next_index >= total_count:
+            return False
         if time_budget_seconds is not None and time_budget_seconds > 0:
             elapsed = time.monotonic() - started_at
             if elapsed >= time_budget_seconds:
-                remaining = len(instruments) - len(cache) - len(fetch_fail)
+                return False
+        name, info = items[next_index]
+        future = executor.submit(_fetch_one_instrument, name, info, fetch_intraday_fn)
+        pending[future] = (name, info)
+        next_index += 1
+        return True
+
+    executor = ThreadPoolExecutor(max_workers=max_workers)
+    try:
+        while len(pending) < max_workers and submit_next(executor):
+            pass
+
+        while pending:
+            timeout = None
+            if time_budget_seconds is not None and time_budget_seconds > 0:
+                elapsed = time.monotonic() - started_at
+                remaining_budget = time_budget_seconds - elapsed
+                if remaining_budget <= 0:
+                    remaining = _remaining_instrument_count(total_count, completed_count)
+                    fetch_fail.append(
+                        f"Market data time budget exceeded after {elapsed:.1f}s; skipped {remaining} instruments."
+                    )
+                    break
+                timeout = remaining_budget
+
+            done, _not_done = wait(set(pending.keys()), timeout=timeout, return_when=FIRST_COMPLETED)
+            if not done:
+                elapsed = time.monotonic() - started_at
+                remaining = _remaining_instrument_count(total_count, completed_count)
                 fetch_fail.append(
-                    f"Market data time budget exceeded after {elapsed:.1f}s; skipped {max(0, remaining)} instruments."
+                    f"Market data time budget exceeded after {elapsed:.1f}s; skipped {remaining} instruments."
                 )
                 break
-        try:
-            candles = _fetch_intraday_for_instrument(fetch_intraday_fn, info)
-            cache[name] = candles
-            fetch_ok.append(f"{name} ({info['symbol']})")
-        except Exception as e:
-            fetch_fail.append(f"{name} ({info['symbol']}): {str(e)[:160]}")
+
+            for future in done:
+                name, info = pending.pop(future)
+                completed_count += 1
+                try:
+                    _name, _info, candles = future.result()
+                    cache[_name] = candles
+                    fetch_ok.append(f"{_name} ({_info['symbol']})")
+                except Exception as e:
+                    fetch_fail.append(f"{name} ({info['symbol']}): {str(e)[:160]}")
+                submit_next(executor)
+    finally:
+        for future in pending:
+            future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
 
     return cache, fetch_ok, fetch_fail
 
@@ -1581,11 +1663,13 @@ def run_scan(
     benchmark_instruments = get_benchmark_instruments()
 
     market_data_time_budget_seconds = _env_float("PAPER_SCAN_MARKET_DATA_TIME_BUDGET_SECONDS", 24.0)
+    market_data_fetch_workers = max(1, _env_int("PAPER_SCAN_MARKET_DATA_FETCH_CONCURRENCY", 1))
     fetch_started_at = time.monotonic()
     benchmark_cache, benchmark_ok, benchmark_fail = fetch_instruments(
         benchmark_instruments,
         fetch_intraday_fn=fetch_intraday_fn,
         time_budget_seconds=market_data_time_budget_seconds,
+        max_workers=min(market_data_fetch_workers, max(1, len(benchmark_instruments))),
     )
     benchmark_directions, benchmark_direction_fail = get_benchmark_directions_from_cache(benchmark_cache)
 
@@ -1598,6 +1682,7 @@ def run_scan(
         non_benchmark_instruments,
         fetch_intraday_fn=fetch_intraday_fn,
         time_budget_seconds=remaining_market_data_budget_seconds,
+        max_workers=market_data_fetch_workers,
     )
 
     combined_cache = {}
