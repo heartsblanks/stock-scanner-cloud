@@ -46,21 +46,21 @@ class SchedulerOpsTests(unittest.TestCase):
 
     def test_market_ops_plan_at_1005_runs_sync_then_scan(self):
         now_ny = datetime(2026, 4, 1, 10, 5, tzinfo=NY_TZ)
-        self.assertEqual(build_market_ops_plan(now_ny), ["sync", "scan"])
+        self.assertEqual(build_market_ops_plan(now_ny), ["sync", "refresh_market_data_cache", "scan"])
 
     def test_market_ops_plan_at_955_runs_sync_then_scan(self):
         now_ny = datetime(2026, 4, 1, 9, 55, tzinfo=NY_TZ)
         self.assertFalse(should_run_market_sync(now_ny))
         self.assertTrue(should_run_market_scan(now_ny))
         self.assertFalse(should_run_eod_close(now_ny))
-        self.assertEqual(build_market_ops_plan(now_ny), ["sync", "scan"])
+        self.assertEqual(build_market_ops_plan(now_ny), ["sync", "refresh_market_data_cache", "scan"])
 
     def test_market_ops_plan_at_1055_runs_sync_then_scan(self):
         now_ny = datetime(2026, 4, 1, 10, 55, tzinfo=NY_TZ)
         self.assertFalse(should_run_market_sync(now_ny))
         self.assertTrue(should_run_market_scan(now_ny))
         self.assertFalse(should_run_eod_close(now_ny))
-        self.assertEqual(build_market_ops_plan(now_ny), ["sync", "scan"])
+        self.assertEqual(build_market_ops_plan(now_ny), ["sync", "refresh_market_data_cache", "scan"])
 
     def test_market_ops_plan_at_1000_runs_sync_and_periodic_health(self):
         now_ny = datetime(2026, 4, 1, 10, 0, tzinfo=NY_TZ)
@@ -68,18 +68,19 @@ class SchedulerOpsTests(unittest.TestCase):
         self.assertFalse(should_run_market_scan(now_ny))
         self.assertEqual(build_market_ops_plan(now_ny), ["sync", "health"])
 
-    def test_execute_market_ops_runs_sync_before_scan(self):
+    def test_execute_market_ops_runs_sync_and_cache_refresh_before_scan(self):
         now_ny = datetime(2026, 4, 1, 10, 5, tzinfo=NY_TZ)
         execution_order = []
         result = execute_market_ops(
             now_ny=now_ny,
             run_sync=lambda: execution_order.append("sync") or {"ok": True},
+            run_market_data_cache_refresh=lambda: execution_order.append("refresh_market_data_cache") or {"ok": True},
             run_scan=lambda payload: execution_order.append("scan") or {"ok": True, "payload": payload},
             run_close=lambda: {"ok": True},
         )
 
         self.assertTrue(result["ok"])
-        self.assertEqual(execution_order, ["sync", "scan"])
+        self.assertEqual(execution_order, ["sync", "refresh_market_data_cache", "scan"])
 
     def test_post_close_ops_runs_all_tasks(self):
         now_ny = datetime(2026, 4, 1, 16, 30, tzinfo=NY_TZ)

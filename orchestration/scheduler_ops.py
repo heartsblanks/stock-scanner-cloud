@@ -107,6 +107,7 @@ def build_market_ops_plan(now_ny: datetime) -> list[str]:
     actions: list[str] = []
     if should_run_market_scan(now_ny):
         actions.append("sync")
+        actions.append("refresh_market_data_cache")
         actions.append("scan")
     elif should_run_market_sync(now_ny):
         actions.append("sync")
@@ -127,6 +128,7 @@ def execute_market_ops(
     run_close: Callable[[], Any],
     run_pre_close_prep: Callable[[], Any] | None = None,
     run_health_probe: Callable[[], Any] | None = None,
+    run_market_data_cache_refresh: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
     actions = build_market_ops_plan(now_ny)
     results: dict[str, Any] = {}
@@ -134,6 +136,8 @@ def execute_market_ops(
     for action in actions:
         if action == "sync":
             results[action] = _normalize_handler_result(run_sync())
+        elif action == "refresh_market_data_cache" and run_market_data_cache_refresh is not None:
+            results[action] = _normalize_handler_result(run_market_data_cache_refresh())
         elif action == "scan":
             results[action] = _normalize_handler_result(run_scan({}))
         elif action == "close":
