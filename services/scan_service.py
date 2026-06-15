@@ -451,6 +451,23 @@ def _scheduled_symbol_chunk(
     }
 
 
+def _payload_allowed_symbols(payload: dict[str, Any]) -> list[str] | None:
+    raw_symbols = payload.get("allowed_symbols")
+    if raw_symbols is None:
+        return None
+    if not isinstance(raw_symbols, (list, tuple, set)):
+        return None
+
+    normalized_symbols: list[str] = []
+    seen_symbols: set[str] = set()
+    for symbol in raw_symbols:
+        normalized_symbol = str(symbol or "").strip().upper()
+        if normalized_symbol and normalized_symbol not in seen_symbols:
+            normalized_symbols.append(normalized_symbol)
+            seen_symbols.add(normalized_symbol)
+    return normalized_symbols
+
+
 def evaluate_symbol_performance_gate(recent_trades: list[dict[str, Any]]) -> tuple[bool, str, dict[str, float | int]]:
     normalized_trades = [trade for trade in (recent_trades or []) if isinstance(trade, dict)]
     trade_count = len(normalized_trades)
@@ -1348,7 +1365,33 @@ def execute_full_scan(
             "paper_trade_enabled": paper_trade,
         }
 
-    symbol_allowlist = _resolve_scan_symbol_allowlist(mode)
+    payload_allowed_symbols = _payload_allowed_symbols(payload)
+    payload_allowlist_override = payload_allowed_symbols is not None
+    if payload_allowlist_override:
+        payload_allowlist_metadata = payload.get("symbol_allowlist") if isinstance(payload.get("symbol_allowlist"), dict) else {}
+        symbol_allowlist = {
+            "filter_applied": True,
+            "mode": mode,
+            "requested_session_date": payload_allowlist_metadata.get("requested_session_date"),
+            "source_session_date": payload_allowlist_metadata.get("source_session_date"),
+            "fallback_used": bool(payload_allowlist_metadata.get("fallback_used", False)),
+            "symbol_count": payload_allowlist_metadata.get("symbol_count"),
+            "allowed_count": len(payload_allowed_symbols or []),
+            "excluded_count": _to_int(payload_allowlist_metadata.get("excluded_count", 0), 0),
+            "allowed_symbols": payload_allowed_symbols,
+            "excluded_symbols": list(payload_allowlist_metadata.get("excluded_symbols") or []),
+            "payload_override": True,
+            "chunking_applied": bool(payload_allowlist_metadata.get("chunking_applied", False)),
+            "chunk_size": payload_allowlist_metadata.get("chunk_size"),
+            "chunk_index": payload_allowlist_metadata.get("chunk_index"),
+            "chunk_count": payload_allowlist_metadata.get("chunk_count"),
+            "slot_index": payload_allowlist_metadata.get("slot_index"),
+            "original_allowed_count": payload_allowlist_metadata.get("original_allowed_count"),
+            "chunk_start": payload_allowlist_metadata.get("chunk_start"),
+            "chunk_end": payload_allowlist_metadata.get("chunk_end"),
+        }
+    else:
+        symbol_allowlist = _resolve_scan_symbol_allowlist(mode)
     allowed_symbols = symbol_allowlist.get("allowed_symbols")
     run_scan_kwargs: dict[str, Any] = {}
     try:
@@ -1363,6 +1406,21 @@ def execute_full_scan(
             if normalized_symbol and normalized_symbol not in seen_allowed_symbols:
                 normalized_allowed_symbols.append(normalized_symbol)
                 seen_allowed_symbols.add(normalized_symbol)
+        scheduled_cycle_placed_symbols = {
+            str(symbol or "").strip().upper()
+            for symbol in list(payload.get("scheduled_cycle_placed_symbols") or [])
+            if str(symbol or "").strip()
+        }
+        if scheduled_cycle_placed_symbols and normalized_allowed_symbols:
+            before_cycle_filter_count = len(normalized_allowed_symbols)
+            normalized_allowed_symbols = [
+                symbol
+                for symbol in normalized_allowed_symbols
+                if symbol not in scheduled_cycle_placed_symbols
+            ]
+            excluded_cycle_symbols = before_cycle_filter_count - len(normalized_allowed_symbols)
+            if excluded_cycle_symbols:
+                symbol_allowlist["scheduled_cycle_placed_symbols_excluded"] = excluded_cycle_symbols
         if paper_trade and normalized_allowed_symbols:
             open_symbols_excluded: list[str] = []
             effective_allowed_symbols: list[str] = []
@@ -1386,11 +1444,15 @@ def execute_full_scan(
                     remaining_allowed_count=len(effective_allowed_symbols),
                 )
             normalized_allowed_symbols = effective_allowed_symbols
-        chunked_allowed_symbols, chunk_metadata = _scheduled_symbol_chunk(
-            normalized_allowed_symbols,
-            scan_source=scan_source,
-            paper_trade=paper_trade,
-            scan_started_at=scan_started_at,
+        chunked_allowed_symbols, chunk_metadata = (
+            (normalized_allowed_symbols, {"chunking_applied": False})
+            if payload_allowlist_override
+            else _scheduled_symbol_chunk(
+                normalized_allowed_symbols,
+                scan_source=scan_source,
+                paper_trade=paper_trade,
+                scan_started_at=scan_started_at,
+            )
         )
         if chunk_metadata.get("chunking_applied"):
             symbol_allowlist.update(chunk_metadata)
@@ -1580,6 +1642,11 @@ def execute_full_scan(
             "excluded_count": _to_int(symbol_allowlist.get("excluded_count", 0), 0),
             "reason": symbol_allowlist.get("reason"),
             "open_symbols_excluded": list(symbol_allowlist.get("open_symbols_excluded") or []),
+            "scheduled_cycle_placed_symbols_excluded": _to_int(
+                symbol_allowlist.get("scheduled_cycle_placed_symbols_excluded", 0),
+                0,
+            ),
+            "payload_override": bool(symbol_allowlist.get("payload_override", False)),
             "chunking_applied": bool(symbol_allowlist.get("chunking_applied", False)),
             "chunk_size": symbol_allowlist.get("chunk_size"),
             "chunk_index": symbol_allowlist.get("chunk_index"),

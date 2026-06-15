@@ -2,7 +2,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from orchestration.app_runtime import close_all_paper_positions_for_broker, handle_scan_request
+from orchestration.app_runtime import close_all_paper_positions_for_broker, handle_scan_request, run_ibkr_shadow_scans
 
 
 class FakeBroker:
@@ -116,6 +116,76 @@ class AppRuntimeTests(unittest.TestCase):
         self.assertEqual(result["reason"], "ibkr_bridge_unavailable")
         self.assertEqual(result["placed_count"], 0)
         self.assertEqual(result["results"], [])
+
+    def test_run_ibkr_shadow_scans_scans_all_eligible_symbols_in_chunks(self):
+        calls = []
+        symbols = [f"S{i:02d}" for i in range(17)]
+
+        def fake_scan(payload):
+            calls.append(dict(payload))
+            return {
+                "ok": True,
+                "scan_id": f"scan-{len(calls)}",
+                "paper_trade_result": {
+                    "candidate_count": 1,
+                    "placed_count": 0,
+                    "skipped_count": 2,
+                    "reason": "no_paper_trade_candidates_at_or_above_threshold",
+                },
+            }
+
+        with patch.dict(
+            "os.environ",
+            {"PAPER_SCHEDULED_SCAN_ALL_ELIGIBLE": "true", "PAPER_SCHEDULED_MAX_SYMBOLS_PER_SCAN": "8"},
+            clear=False,
+        ), patch(
+            "services.symbol_eligibility_service.resolve_session_symbol_allowlist",
+            return_value={
+                "filter_applied": True,
+                "mode": "low_price",
+                "requested_session_date": "2026-06-15",
+                "source_session_date": "2026-06-15",
+                "allowed_symbols": symbols,
+                "excluded_symbols": ["HIGH"],
+                "excluded_count": 1,
+            },
+        ):
+            result = run_ibkr_shadow_scans(
+                {"paper_trade": True, "scan_source": "SCHEDULED", "mode": "low_price"},
+                ibkr_scheduled_mode_order=["low_price"],
+                run_single_shadow_scan=fake_scan,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["scheduled_scan_all_eligible"])
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[0]["allowed_symbols"], symbols[:8])
+        self.assertEqual(calls[1]["allowed_symbols"], symbols[8:16])
+        self.assertEqual(calls[2]["allowed_symbols"], symbols[16:])
+        self.assertEqual(result["candidate_count"], 3)
+        self.assertEqual(result["placed_count"], 0)
+        self.assertEqual(result["skipped_count"], 6)
+        mode_result = result["per_mode_results"][0]
+        self.assertEqual(mode_result["chunk_count"], 3)
+        self.assertEqual(mode_result["completed_chunk_count"], 3)
+        self.assertEqual(mode_result["original_allowed_count"], 17)
+        self.assertEqual(mode_result["symbol_allowlist"]["excluded_count"], 1)
+
+    def test_run_ibkr_shadow_scans_rollback_mode_keeps_single_rotating_scan(self):
+        calls = []
+
+        with patch.dict("os.environ", {"PAPER_SCHEDULED_SCAN_ALL_ELIGIBLE": "false"}, clear=False):
+            result = run_ibkr_shadow_scans(
+                {"paper_trade": True, "scan_source": "SCHEDULED", "mode": "low_price"},
+                ibkr_scheduled_mode_order=["low_price"],
+                run_single_shadow_scan=lambda payload: calls.append(dict(payload))
+                or {"ok": True, "scan_id": "single", "candidate_count": 0, "placed_count": 0, "skipped_count": 0},
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["scheduled_scan_all_eligible"])
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("allowed_symbols", calls[0])
 
 
 if __name__ == "__main__":
