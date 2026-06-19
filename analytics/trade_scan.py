@@ -278,6 +278,44 @@ def _is_near_breakout_watch(price: float, or_high: float, or_low: float, vwap: f
         return True, "SELL"
     return False, None
 
+
+def _is_near_breakout_promotion(
+    *,
+    price: float,
+    or_high: float,
+    or_low: float,
+    vwap: float | None,
+    direction: str | None,
+    relative_volume: float | None,
+    three_candle_relative_volume: float | None,
+) -> bool:
+    if not _env_bool("PAPER_NEAR_BREAKOUT_PROMOTION_ENABLED", False):
+        return False
+    if price <= 0 or vwap is None or direction not in {"BUY", "SELL"}:
+        return False
+
+    promotion_pct = _env_float("PAPER_NEAR_BREAKOUT_PROMOTION_PCT", 0.002)
+    min_relative_volume = _env_float("PAPER_NEAR_BREAKOUT_PROMOTION_MIN_RELATIVE_VOLUME", 1.8)
+    min_three_candle_relative_volume = _env_float("PAPER_NEAR_BREAKOUT_PROMOTION_MIN_3_CANDLE_REL_VOLUME", 1.3)
+    if relative_volume is None or relative_volume < min_relative_volume:
+        return False
+    if three_candle_relative_volume is None or three_candle_relative_volume < min_three_candle_relative_volume:
+        return False
+
+    if direction == "BUY":
+        distance_ok = or_high > 0 and price < or_high and ((or_high - price) / price) <= promotion_pct
+        return bool(distance_ok and price >= vwap)
+    distance_ok = or_low > 0 and price > or_low and ((price - or_low) / price) <= promotion_pct
+    return bool(distance_ok and price <= vwap)
+
+
+def _failed_breakout_cooldown_active(symbol: str, direction: str, cooldown_symbols: set[str]) -> bool:
+    normalized_symbol = str(symbol or "").strip().upper()
+    normalized_direction = str(direction or "").strip().upper()
+    if not normalized_symbol:
+        return False
+    return normalized_symbol in cooldown_symbols or f"{normalized_symbol}:{normalized_direction}" in cooldown_symbols
+
 def fmt(x: float) -> str:
     return f"{x:.2f}"
 
@@ -721,21 +759,36 @@ def evaluate_symbol(
         )
         metrics["near_breakout_watch"] = near_watch
         metrics["direction"] = watch_direction or ("BUY" if price >= (vwap or price) else "SELL")
+        near_promotion = _is_near_breakout_promotion(
+            price=price,
+            or_high=or_high,
+            or_low=or_low,
+            vwap=vwap,
+            direction=watch_direction,
+            relative_volume=volume_stats.get("relative_volume"),
+            three_candle_relative_volume=three_candle_volume_stats.get("three_candle_relative_volume"),
+        )
+        metrics["near_breakout_promotion"] = near_promotion
         if near_watch:
+            if near_promotion:
+                checks["outside_opening_range"] = True
+                checks["near_breakout_promotion"] = True
+            else:
+                return {
+                    "name": name,
+                    "decision": "REJECTED",
+                    "final_reason": "near_breakout_watch",
+                    "checks": checks,
+                    "metrics": metrics,
+                }
+        else:
             return {
                 "name": name,
                 "decision": "REJECTED",
-                "final_reason": "near_breakout_watch",
+                "final_reason": "Price still inside opening range.",
                 "checks": checks,
                 "metrics": metrics,
             }
-        return {
-            "name": name,
-            "decision": "REJECTED",
-            "final_reason": "Price still inside opening range.",
-            "checks": checks,
-            "metrics": metrics,
-        }
 
     checks["vwap_available"] = vwap is not None
     if vwap is None:
@@ -757,7 +810,11 @@ def evaluate_symbol(
     metrics["direction"] = direction
 
     cooldown_symbols = failed_breakout_cooldown_symbols or set()
-    checks["failed_breakout_cooldown"] = str(info.get("symbol", "")).strip().upper() not in cooldown_symbols
+    checks["failed_breakout_cooldown"] = not _failed_breakout_cooldown_active(
+        str(info.get("symbol", "")),
+        direction,
+        cooldown_symbols,
+    )
     if not checks["failed_breakout_cooldown"] and not disable_strategy_gates:
         return {
             "name": name,
@@ -768,7 +825,11 @@ def evaluate_symbol(
         }
 
     close_buffer_pct = _env_float("PAPER_BREAKOUT_CLOSE_BUFFER_PCT", 0.001)
-    if direction == "BUY":
+    if metrics.get("near_breakout_promotion"):
+        breakout_close_level = or_high if direction == "BUY" else or_low
+        checks["breakout_close_confirmation"] = True
+        metrics["breakout_close_confirmation_bypassed_by_near_promotion"] = True
+    elif direction == "BUY":
         breakout_close_level = or_high * (1 + close_buffer_pct)
         checks["breakout_close_confirmation"] = price >= breakout_close_level
     else:
@@ -862,13 +923,21 @@ def evaluate_symbol(
         stop = price - stop_distance
         target = price + (2 * stop_distance)
         breakout = price - or_high
-        setup_reason = "Price is above OR high and above VWAP."
+        setup_reason = (
+            "near_breakout_promotion"
+            if metrics.get("near_breakout_promotion")
+            else "Price is above OR high and above VWAP."
+        )
     else:
         entry = price
         stop = price + stop_distance
         target = price - (2 * stop_distance)
         breakout = or_low - price
-        setup_reason = "Price is below OR low and below VWAP."
+        setup_reason = (
+            "near_breakout_promotion"
+            if metrics.get("near_breakout_promotion")
+            else "Price is below OR low and below VWAP."
+        )
 
     metrics.update({
         "entry": entry,
@@ -906,7 +975,7 @@ def evaluate_symbol(
     max_breakout_from_or = opening_range * max_breakout_or_multiple
     metrics["max_breakout_opening_range_multiple"] = max_breakout_or_multiple
     metrics["max_breakout_from_opening_range"] = max_breakout_from_or
-    checks["anti_chase_filter"] = breakout <= max_breakout_from_or
+    checks["anti_chase_filter"] = abs(breakout) <= max_breakout_from_or
 
     if not checks["anti_chase_filter"] and not disable_strategy_gates:
         return {

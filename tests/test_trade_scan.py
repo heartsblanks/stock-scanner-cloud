@@ -144,6 +144,30 @@ class TradeScanQualityV2Tests(unittest.TestCase):
         self.assertEqual(result["final_reason"], "near_breakout_watch")
         self.assertTrue(result["metrics"]["near_breakout_watch"])
 
+    def test_strong_near_breakout_can_be_promoted_to_candidate(self):
+        env = {
+            **self._base_env(),
+            "PAPER_NEAR_BREAKOUT_PROMOTION_ENABLED": "true",
+            "PAPER_NEAR_BREAKOUT_PROMOTION_PCT": "0.002",
+            "PAPER_NEAR_BREAKOUT_PROMOTION_MIN_RELATIVE_VOLUME": "1.8",
+            "PAPER_NEAR_BREAKOUT_PROMOTION_MIN_3_CANDLE_REL_VOLUME": "1.3",
+        }
+        candles = build_post_or_breakout_candles(final_close=10.285, final_volume=2500)
+        candles[-1]["high"] = 10.45
+        with patch.dict(os.environ, env, clear=False):
+            with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 10, 0, tzinfo=NY_TZ)):
+                result = evaluate_symbol(
+                    "SoFi",
+                    self._info(),
+                    candles,
+                    2000,
+                    benchmark("BUY", "NASDAQ"),
+                )
+
+        self.assertEqual(result["decision"], "VALID")
+        self.assertEqual(result["final_reason"], "near_breakout_promotion")
+        self.assertTrue(result["metrics"]["near_breakout_promotion"])
+
     def test_three_candle_volume_pace_rejects_one_candle_fakeout(self):
         candles = build_post_or_breakout_candles(final_close=10.72, final_volume=1200)
         candles[-2]["volume"] = 100
@@ -200,6 +224,21 @@ class TradeScanQualityV2Tests(unittest.TestCase):
 
         self.assertEqual(result["final_reason"], "failed_breakout_cooldown_active")
         self.assertFalse(result["checks"]["failed_breakout_cooldown"])
+
+    def test_failed_breakout_cooldown_is_direction_aware(self):
+        with patch.dict(os.environ, self._base_env(), clear=False):
+            with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 10, 0, tzinfo=NY_TZ)):
+                result = evaluate_symbol(
+                    "SoFi",
+                    self._info(),
+                    build_post_or_breakout_candles(final_close=10.72, final_volume=2500),
+                    2000,
+                    benchmark("BUY", "NASDAQ"),
+                    failed_breakout_cooldown_symbols={"SOFI:SELL"},
+                )
+
+        self.assertNotEqual(result["final_reason"], "failed_breakout_cooldown_active")
+        self.assertTrue(result["checks"]["failed_breakout_cooldown"])
 
     def test_run_scan_fetches_quotes_only_for_symbols_that_pass_candle_gates(self):
         instruments = {

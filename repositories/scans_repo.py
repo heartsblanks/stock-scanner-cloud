@@ -157,7 +157,9 @@ def get_recent_failed_breakout_symbols(
     cutoff = (now_utc or datetime.now(timezone.utc)) - timedelta(minutes=max(1, int(cooldown_minutes)))
     rows = fetch_all(
         """
-        SELECT DISTINCT UPPER(symbol) AS symbol
+        SELECT DISTINCT
+            UPPER(symbol) AS symbol,
+            UPPER(COALESCE(direction, '')) AS direction
         FROM scan_gate_observations
         WHERE observed_at >= %(cutoff)s
           AND LOWER(mode) = %(mode)s
@@ -169,7 +171,7 @@ def get_recent_failed_breakout_symbols(
               'Move already too extended from VWAP.',
               'spread_too_wide'
           )
-        ORDER BY symbol ASC
+        ORDER BY symbol ASC, direction ASC
         """,
         {
             "cutoff": cutoff,
@@ -177,7 +179,14 @@ def get_recent_failed_breakout_symbols(
             "broker": normalize_text(broker).upper() or "IBKR",
         },
     )
-    return [normalize_text(row.get("symbol")).upper() for row in rows if normalize_text(row.get("symbol"))]
+    result: list[str] = []
+    for row in rows:
+        symbol = normalize_text(row.get("symbol")).upper()
+        if not symbol:
+            continue
+        direction = normalize_text(row.get("direction")).upper()
+        result.append(f"{symbol}:{direction}" if direction in {"BUY", "SELL"} else symbol)
+    return result
 
 
 def get_pending_scan_gate_observations(*, limit: int = 100) -> list[dict]:
