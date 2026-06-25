@@ -105,7 +105,7 @@ Architecture documentation is updated alongside implementation so the document r
 2. **Backend structure cleanup**
    - continue reducing orchestration gravity around `app.py`
    - avoid growing `storage.py`; prefer repository imports for new work
-   - either implement or remove the placeholder `services/paper_trade_service.py`
+   - keep removed placeholder services out of the runtime surface
    - reduce root-directory clutter by moving maintenance, repair, and backfill utilities into `scripts/`
    - continue the same cleanup for export-related modules by consolidating them under `exports/`
    - continue the same cleanup for trading analysis and scan logic by consolidating them under `analytics/`
@@ -305,7 +305,7 @@ Target direction:
 - `services/scan_service.py`
 - `services/sync_service.py`
 - `services/trade_service.py`
-- `services/paper_trade_service.py` *(currently placeholder / not materially implemented)*
+- placeholder paper-trade service module removed; active paper-trade behavior lives in scan/sync/trade services and orchestration helpers
 
 ### Route modules
 - `routes/health.py`
@@ -419,7 +419,7 @@ The service layer implements business workflows.
 
 Current code reality:
 - `services/scan_service.py`, `services/sync_service.py`, and `services/trade_service.py` are active and important
-- `services/paper_trade_service.py` is currently a placeholder and should not be treated as an active runtime component yet
+- the old placeholder `services/paper_trade_service.py` has been removed and should not be reintroduced without a concrete service boundary
 
 #### Scan service
 Responsible for:

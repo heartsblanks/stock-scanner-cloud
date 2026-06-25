@@ -18,6 +18,7 @@ from storage import (
     get_ops_summary,
     get_open_trade_events,
     get_closed_trade_events,
+    get_daily_dashboard_summary,
     get_recent_trade_event_rows,
     get_latest_scan_summary,
     get_recent_paper_trade_attempts,
@@ -27,6 +28,7 @@ from storage import (
     get_latest_symbol_ranking_rows,
     get_trade_lifecycles,
     get_trade_lifecycles_page,
+    get_trade_tuning_report,
     get_trade_lifecycle_summary_from_table,
     get_stale_ibkr_closed_trade_lifecycles,
     get_latest_exit_trade_event_for_parent_order_id,
@@ -781,6 +783,8 @@ register_sync_routes(
 register_dashboard_routes(
     app,
     get_dashboard_summary=get_dashboard_summary,
+    get_daily_dashboard_summary=get_daily_dashboard_summary,
+    get_trade_tuning_report=get_trade_tuning_report,
     get_risk_exposure_summary=get_risk_exposure_summary,
 )
 register_scheduler_routes(

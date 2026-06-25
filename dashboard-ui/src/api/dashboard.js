@@ -27,6 +27,22 @@ export async function fetchDashboardSummary(date, broker) {
   };
 }
 
+export async function fetchDashboardDaily(date, broker, options = {}) {
+  const params = {};
+  if (date) {
+    params.date = date;
+  }
+  if (broker) {
+    params.broker = broker;
+  }
+
+  const response = await apiClient.get("/dashboard-daily", {
+    params,
+    signal: options.signal,
+  });
+  return response.data || {};
+}
+
 function resolvePagedArgs(limitOrOptions, broker, status) {
   if (typeof limitOrOptions === "object" && limitOrOptions !== null) {
     const options = limitOrOptions;
@@ -63,9 +79,11 @@ function resolvePagedArgs(limitOrOptions, broker, status) {
 
 export async function fetchOpenTrades(limitOrOptions = 100, broker) {
   const params = resolvePagedArgs(limitOrOptions, broker);
+  const signal = typeof limitOrOptions === "object" && limitOrOptions !== null ? limitOrOptions.signal : undefined;
 
   const response = await apiClient.get("/open-trades", {
     params,
+    signal,
   });
   return response.data;
 }

@@ -423,9 +423,15 @@ CREATE INDEX IF NOT EXISTS idx_market_data_candles_fetched_at
     ON market_data_candles(fetched_at DESC);
 
 ALTER TABLE paper_trade_attempts ADD COLUMN IF NOT EXISTS broker TEXT;
+CREATE INDEX IF NOT EXISTS idx_paper_trade_attempts_broker_stage_timestamp
+    ON paper_trade_attempts(broker, decision_stage, timestamp_utc DESC);
 ALTER TABLE trade_events ADD COLUMN IF NOT EXISTS broker TEXT;
 ALTER TABLE broker_orders ADD COLUMN IF NOT EXISTS broker TEXT;
 ALTER TABLE trade_lifecycles ADD COLUMN IF NOT EXISTS broker TEXT;
+CREATE INDEX IF NOT EXISTS idx_trade_lifecycles_broker_status_entry
+    ON trade_lifecycles(broker, status, entry_time DESC);
+CREATE INDEX IF NOT EXISTS idx_trade_lifecycles_broker_exit_time
+    ON trade_lifecycles(broker, exit_time DESC);
 
 DO $$
 BEGIN

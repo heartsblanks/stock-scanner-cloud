@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 try:
     from repositories.trades_repo import (
+        get_daily_dashboard_summary,
         get_dashboard_summary,
         get_stale_ibkr_closed_trade_lifecycles,
         get_latest_mode_ranking_order,
@@ -167,6 +168,44 @@ class DashboardSummaryDateScopeTests(unittest.TestCase):
         mock_hourly_perf.assert_called_once_with(limit=24, target_date=target_date, broker=None)
         self.assertEqual(mock_hourly_quality.call_count, 2)
         self.assertEqual(mock_equity_curve.call_args.kwargs, {"limit": 5000, "target_date": target_date, "broker": None})
+
+    @patch("repositories.trades_repo.fetch_one")
+    def test_daily_dashboard_summary_uses_targeted_daily_aggregates(self, mock_fetch_one):
+        mock_fetch_one.side_effect = [
+            {
+                "closed_trade_count": 3,
+                "open_trade_count": 1,
+                "winning_trade_count": 2,
+                "losing_trade_count": 1,
+                "realized_pnl": "42.50",
+            },
+            {
+                "open_position_count": 2,
+                "open_exposure": "1250.75",
+            },
+            {
+                "placements_today": 4,
+                "resolved_attempts": 10,
+            },
+            {
+                "scan_time": "2026-04-09T14:30:00+00:00",
+                "mode": "core_one",
+                "scan_source": "SCHEDULED",
+            },
+        ]
+
+        payload = get_daily_dashboard_summary(target_date="2026-04-09", broker="IBKR")
+
+        self.assertEqual(payload["date"], "2026-04-09")
+        self.assertEqual(payload["broker"], "IBKR")
+        self.assertEqual(payload["realized_pnl"], 42.5)
+        self.assertIsNone(payload["unrealized_pnl"])
+        self.assertEqual(payload["total_day_pnl"], 42.5)
+        self.assertEqual(payload["open_position_count"], 2)
+        self.assertEqual(payload["open_exposure"], 1250.75)
+        self.assertEqual(payload["placements_today"], 4)
+        self.assertEqual(payload["placement_rate"], 40.0)
+        self.assertEqual(mock_fetch_one.call_count, 4)
 
 
 class ModeRankingTests(unittest.TestCase):

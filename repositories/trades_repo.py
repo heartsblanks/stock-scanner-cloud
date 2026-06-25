@@ -1052,6 +1052,141 @@ def get_dashboard_summary(target_date: Optional[str] = None, broker: Optional[st
     }
 
 
+def get_daily_dashboard_summary(target_date: Optional[str] = None, broker: Optional[str] = None) -> dict:
+    normalized_broker = normalize_text(broker).upper() if broker else None
+    params: dict[str, Any] = {
+        "target_date": target_date or datetime.utcnow().date().isoformat(),
+    }
+    broker_filter = ""
+    attempt_broker_filter = ""
+    if normalized_broker:
+        broker_filter = f"AND {_broker_filter_sql(normalized_broker)}"
+        attempt_broker_filter = "AND UPPER(COALESCE(broker, '')) = %(broker)s"
+        params["broker"] = normalized_broker
+
+    pnl_row = fetch_one(
+        f"""
+        SELECT
+            COUNT(*) FILTER (WHERE UPPER(COALESCE(status, '')) = 'CLOSED')::INT AS closed_trade_count,
+            COUNT(*) FILTER (WHERE UPPER(COALESCE(status, '')) = 'OPEN')::INT AS open_trade_count,
+            COUNT(*) FILTER (WHERE COALESCE(realized_pnl, 0) > 0)::INT AS winning_trade_count,
+            COUNT(*) FILTER (WHERE COALESCE(realized_pnl, 0) < 0)::INT AS losing_trade_count,
+            ROUND(COALESCE(SUM(realized_pnl) FILTER (WHERE UPPER(COALESCE(status, '')) = 'CLOSED'), 0)::numeric, 6) AS realized_pnl
+        FROM trade_lifecycles
+        WHERE (entry_time::date = %(target_date)s::date OR exit_time::date = %(target_date)s::date)
+          {broker_filter}
+        """,
+        params,
+    ) or {}
+    open_row = fetch_one(
+        f"""
+        SELECT
+            COUNT(*)::INT AS open_position_count,
+            ROUND(COALESCE(SUM(ABS(COALESCE(shares * entry_price, 0))), 0)::numeric, 6) AS open_exposure
+        FROM trade_lifecycles
+        WHERE UPPER(COALESCE(status, '')) = 'OPEN'
+          {broker_filter}
+        """,
+        params,
+    ) or {}
+    attempt_row = fetch_one(
+        f"""
+        SELECT
+            COUNT(*) FILTER (WHERE UPPER(COALESCE(decision_stage, '')) = 'PLACED')::INT AS placements_today,
+            COUNT(*) FILTER (
+                WHERE UPPER(COALESCE(decision_stage, '')) IN ('PLACED', 'SCAN_REJECTED', 'REFRESH_REJECTED', 'PLACEMENT_SKIPPED', 'PLACEMENT_REJECTED')
+            )::INT AS resolved_attempts
+        FROM paper_trade_attempts
+        WHERE timestamp_utc::date = %(target_date)s::date
+          {attempt_broker_filter}
+        """,
+        params,
+    ) or {}
+    latest_scan = fetch_one(
+        """
+        SELECT *
+        FROM scan_runs
+        ORDER BY scan_time DESC, id DESC
+        LIMIT 1
+        """,
+        {},
+    )
+    placements_today = int(attempt_row.get("placements_today") or 0)
+    resolved_attempts = int(attempt_row.get("resolved_attempts") or 0)
+
+    return {
+        "date": params["target_date"],
+        "broker": normalized_broker,
+        "realized_pnl": to_optional_float(pnl_row.get("realized_pnl")) or 0.0,
+        "unrealized_pnl": None,
+        "total_day_pnl": to_optional_float(pnl_row.get("realized_pnl")) or 0.0,
+        "open_position_count": int(open_row.get("open_position_count") or 0),
+        "open_exposure": to_optional_float(open_row.get("open_exposure")) or 0.0,
+        "closed_trade_count": int(pnl_row.get("closed_trade_count") or 0),
+        "winning_trade_count": int(pnl_row.get("winning_trade_count") or 0),
+        "losing_trade_count": int(pnl_row.get("losing_trade_count") or 0),
+        "placements_today": placements_today,
+        "resolved_attempts_today": resolved_attempts,
+        "placement_rate": round((placements_today / resolved_attempts) * 100.0, 1) if resolved_attempts else None,
+        "latest_scan": latest_scan,
+    }
+
+
+def get_trade_tuning_report(limit_days: int = 7, broker: Optional[str] = None, limit: int = 20) -> dict:
+    normalized_broker = normalize_text(broker).upper() if broker else None
+    params: dict[str, Any] = {
+        "limit_days": max(1, int(limit_days)),
+        "limit": max(1, min(100, int(limit))),
+    }
+    broker_filter = ""
+    if normalized_broker:
+        broker_filter = "AND UPPER(COALESCE(broker, '')) = %(broker)s"
+        params["broker"] = normalized_broker
+
+    blockers = fetch_all(
+        f"""
+        SELECT
+            COALESCE(final_reason, '') AS final_reason,
+            COALESCE(mode, '') AS mode,
+            COUNT(*)::INT AS count,
+            ROUND(AVG(confidence)::numeric, 2) AS average_confidence
+        FROM paper_trade_attempts
+        WHERE timestamp_utc >= NOW() - (%(limit_days)s::text || ' days')::interval
+          AND UPPER(COALESCE(decision_stage, '')) IN ('SCAN_REJECTED', 'REFRESH_REJECTED', 'PLACEMENT_SKIPPED', 'PLACEMENT_REJECTED')
+          AND COALESCE(final_reason, '') <> ''
+          {broker_filter}
+        GROUP BY COALESCE(final_reason, ''), COALESCE(mode, '')
+        ORDER BY count DESC, final_reason ASC
+        LIMIT %(limit)s
+        """,
+        params,
+    )
+    outcomes = fetch_all(
+        f"""
+        SELECT
+            COALESCE(mode, '') AS mode,
+            EXTRACT(HOUR FROM (entry_time AT TIME ZONE 'America/New_York'))::INT AS entry_hour_ny,
+            COUNT(*)::INT AS closed_trade_count,
+            ROUND(COALESCE(SUM(realized_pnl), 0)::numeric, 6) AS realized_pnl_total,
+            ROUND(AVG(realized_pnl)::numeric, 6) AS average_realized_pnl
+        FROM trade_lifecycles
+        WHERE UPPER(COALESCE(status, '')) = 'CLOSED'
+          AND entry_time >= NOW() - (%(limit_days)s::text || ' days')::interval
+          {broker_filter}
+        GROUP BY COALESCE(mode, ''), EXTRACT(HOUR FROM (entry_time AT TIME ZONE 'America/New_York'))
+        ORDER BY realized_pnl_total DESC, closed_trade_count DESC
+        LIMIT %(limit)s
+        """,
+        params,
+    )
+    return {
+        "broker": normalized_broker,
+        "limit_days": params["limit_days"],
+        "top_blockers": blockers,
+        "best_recent_outcomes": outcomes,
+    }
+
+
 def _symbol_ranking_score(row: dict[str, Any]) -> float:
     priority = int(row.get("priority") or 0)
     realized_pnl_total = to_optional_float(row.get("realized_pnl_total")) or 0.0

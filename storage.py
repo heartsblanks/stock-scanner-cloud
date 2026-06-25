@@ -49,6 +49,7 @@ from repositories.scans_repo import (
 from repositories.trades_repo import (
     get_closed_trade_events,
     get_daily_realized_pnl,
+    get_daily_dashboard_summary,
     get_dashboard_summary,
     get_equity_curve,
     get_exit_reason_breakdown,
@@ -75,6 +76,7 @@ from repositories.trades_repo import (
     get_trade_lifecycles,
     get_trade_lifecycles_page,
     get_trade_lifecycles_for_date,
+    get_trade_tuning_report,
     insert_trade_event,
     refresh_mode_rankings,
     refresh_symbol_rankings,

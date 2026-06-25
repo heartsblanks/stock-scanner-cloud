@@ -5,7 +5,14 @@ from core.logging_utils import log_exception
 
 
 
-def register_dashboard_routes(app, *, get_dashboard_summary, get_risk_exposure_summary=None) -> None:
+def register_dashboard_routes(
+    app,
+    *,
+    get_dashboard_summary,
+    get_daily_dashboard_summary=None,
+    get_trade_tuning_report=None,
+    get_risk_exposure_summary=None,
+) -> None:
     cache: dict[tuple[str, str], tuple[float, dict]] = {}
 
     def get_cached_json(cache_key: tuple[str, str], ttl_seconds: int, builder):
@@ -32,6 +39,44 @@ def register_dashboard_routes(app, *, get_dashboard_summary, get_risk_exposure_s
             return jsonify(payload)
         except Exception as e:
             log_exception("dashboard-summary failed", e, route="/dashboard-summary")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.get("/dashboard-daily")
+    def dashboard_daily():
+        try:
+            if not get_daily_dashboard_summary:
+                return jsonify({"ok": False, "error": "Not implemented"}), 501
+
+            target_date = request.args.get("date")
+            broker = str(request.args.get("broker", "")).strip().upper() or None
+            payload = get_cached_json(("dashboard-daily", f"{target_date or ''}|{broker or ''}"), 20, lambda: {
+                "ok": True,
+                **get_daily_dashboard_summary(target_date=target_date, broker=broker),
+            })
+            return jsonify(payload)
+        except Exception as e:
+            log_exception("dashboard-daily failed", e, route="/dashboard-daily")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.get("/trade-tuning-report")
+    def trade_tuning_report():
+        try:
+            if not get_trade_tuning_report:
+                return jsonify({"ok": False, "error": "Not implemented"}), 501
+
+            broker = str(request.args.get("broker", "")).strip().upper() or None
+            try:
+                limit_days = max(1, min(90, int(request.args.get("limit_days", "7"))))
+                limit = max(1, min(100, int(request.args.get("limit", "20"))))
+            except Exception:
+                return jsonify({"ok": False, "error": "limit_days and limit must be integers"}), 400
+
+            return jsonify({
+                "ok": True,
+                **get_trade_tuning_report(limit_days=limit_days, broker=broker, limit=limit),
+            })
+        except Exception as e:
+            log_exception("trade-tuning-report failed", e, route="/trade-tuning-report")
             return jsonify({"ok": False, "error": str(e)}), 500
 
     @app.get("/risk-exposure-summary")
