@@ -171,6 +171,49 @@ class AppRuntimeTests(unittest.TestCase):
         self.assertEqual(mode_result["original_allowed_count"], 17)
         self.assertEqual(mode_result["symbol_allowlist"]["excluded_count"], 1)
 
+    def test_run_ibkr_shadow_scans_prioritizes_recent_watch_ready_symbols(self):
+        symbols = ["A", "B", "C", "D", "E"]
+        calls = []
+
+        def fake_scan(payload):
+            calls.append(payload)
+            return {"ok": True, "candidate_count": 0, "placed_count": 0, "skipped_count": 0}
+
+        with patch.dict(
+            "os.environ",
+            {
+                "PAPER_SCHEDULED_SCAN_ALL_ELIGIBLE": "true",
+                "PAPER_SCHEDULED_MAX_SYMBOLS_PER_SCAN": "3",
+                "PAPER_WATCH_READY_ENABLED": "true",
+            },
+            clear=False,
+        ), patch(
+            "services.symbol_eligibility_service.resolve_session_symbol_allowlist",
+            return_value={
+                "filter_applied": True,
+                "mode": "low_price",
+                "allowed_symbols": symbols,
+                "excluded_count": 0,
+            },
+        ), patch(
+            "storage.get_recent_watch_ready_symbols",
+            return_value=["D", "B", "NOT_ALLOWED"],
+        ):
+            result = run_ibkr_shadow_scans(
+                {"paper_trade": True, "scan_source": "SCHEDULED", "mode": "low_price"},
+                ibkr_scheduled_mode_order=["low_price"],
+                run_single_shadow_scan=fake_scan,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(calls[0]["allowed_symbols"], ["D", "B", "A"])
+        self.assertEqual(calls[1]["allowed_symbols"], ["C", "E"])
+        self.assertEqual(calls[0]["symbol_allowlist"]["watch_ready_priority_symbols"], ["D", "B", "NOT_ALLOWED"])
+        self.assertEqual(
+            result["per_mode_results"][0]["symbol_allowlist"]["watch_ready_priority_symbols"],
+            ["D", "B", "NOT_ALLOWED"],
+        )
+
     def test_run_ibkr_shadow_scans_rollback_mode_keeps_single_rotating_scan(self):
         calls = []
 

@@ -189,6 +189,45 @@ def get_recent_failed_breakout_symbols(
     return result
 
 
+def get_recent_watch_ready_symbols(
+    *,
+    mode: str,
+    broker: str = "IBKR",
+    now_utc: datetime | None = None,
+    max_age_minutes: int = 20,
+    limit: int = 20,
+) -> list[str]:
+    ensure_scan_gate_observations_schema()
+    cutoff = (now_utc or datetime.now(timezone.utc)) - timedelta(minutes=max(1, int(max_age_minutes)))
+    rows = fetch_all(
+        """
+        SELECT
+            UPPER(symbol) AS symbol,
+            MAX(observed_at) AS last_observed_at
+        FROM scan_gate_observations
+        WHERE observed_at >= %(cutoff)s
+          AND LOWER(mode) = %(mode)s
+          AND UPPER(broker) = %(broker)s
+          AND final_reason = 'watch_ready_near_breakout'
+        GROUP BY UPPER(symbol)
+        ORDER BY last_observed_at DESC, symbol ASC
+        LIMIT %(limit)s
+        """,
+        {
+            "cutoff": cutoff,
+            "mode": normalize_text(mode).lower(),
+            "broker": normalize_text(broker).upper() or "IBKR",
+            "limit": max(1, int(limit)),
+        },
+    )
+    result: list[str] = []
+    for row in rows:
+        symbol = normalize_text(row.get("symbol")).upper()
+        if symbol:
+            result.append(symbol)
+    return result
+
+
 def get_pending_scan_gate_observations(*, limit: int = 100) -> list[dict]:
     ensure_scan_gate_observations_schema()
     return fetch_all(

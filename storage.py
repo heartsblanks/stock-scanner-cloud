@@ -29,6 +29,7 @@ from repositories.reconcile_repo import (
 )
 from repositories.scans_repo import (
     get_recent_failed_breakout_symbols,
+    get_recent_watch_ready_symbols,
     get_latest_scan_run,
     get_latest_scan_summary,
     get_paper_trade_attempt_daily_summary,

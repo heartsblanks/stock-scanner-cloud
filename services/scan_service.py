@@ -78,6 +78,11 @@ def _to_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = str(os.getenv(name, "true" if default else "false")).strip().lower()
+    return raw in {"1", "true", "yes", "y", "on"}
+
+
 def _to_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -1471,9 +1476,15 @@ def execute_full_scan(
             "original_allowed_count": payload_allowlist_metadata.get("original_allowed_count"),
             "chunk_start": payload_allowlist_metadata.get("chunk_start"),
             "chunk_end": payload_allowlist_metadata.get("chunk_end"),
+            "watch_ready_priority_symbols": list(payload_allowlist_metadata.get("watch_ready_priority_symbols") or []),
         }
     else:
         symbol_allowlist = _resolve_scan_symbol_allowlist(mode)
+    watch_ready_priority_symbols = {
+        str(symbol).strip().upper()
+        for symbol in list(symbol_allowlist.get("watch_ready_priority_symbols") or [])
+        if str(symbol).strip()
+    }
     allowed_symbols = symbol_allowlist.get("allowed_symbols")
     run_scan_kwargs: dict[str, Any] = {}
     try:
@@ -1625,7 +1636,17 @@ def execute_full_scan(
     trades = [t for t in all_trades if t["metrics"].get("direction") == "BUY"]
     paper_trade_candidates = []
 
-    def record_gate_observation(ev: dict[str, Any]) -> None:
+    def is_watch_ready_evaluation(ev: dict[str, Any]) -> bool:
+        if not _env_bool("PAPER_WATCH_READY_ENABLED", True):
+            return False
+        ev_metrics = ev.get("metrics") or {}
+        return (
+            str(ev.get("decision", "")).strip().upper() != "VALID"
+            and str(ev.get("final_reason", "")).strip() == "near_breakout_watch"
+            and bool(ev_metrics.get("near_breakout_watch"))
+        )
+
+    def record_gate_observation(ev: dict[str, Any], *, final_reason_override: str | None = None) -> None:
         try:
             from storage import insert_scan_gate_observation
 
@@ -1641,7 +1662,7 @@ def execute_full_scan(
                 broker=active_broker,
                 symbol=symbol,
                 decision=str(ev.get("decision", "") or ""),
-                final_reason=str(ev.get("final_reason", "") or ""),
+                final_reason=final_reason_override or str(ev.get("final_reason", "") or ""),
                 metrics=ev_metrics,
             )
         except Exception as exc:
@@ -1654,7 +1675,9 @@ def execute_full_scan(
             )
 
     for ev in evaluations:
-        record_gate_observation(ev)
+        watch_ready = is_watch_ready_evaluation(ev)
+        persisted_final_reason = "watch_ready_near_breakout" if watch_ready else str(ev.get("final_reason", "") or "")
+        record_gate_observation(ev, final_reason_override=persisted_final_reason if watch_ready else None)
         ev_metrics = ev.get("metrics") or {}
         rejected_symbol = str(ev_metrics.get("symbol", "")).strip().upper()
         if paper_trade and str(ev.get("decision", "")).strip().upper() != "VALID":
@@ -1663,17 +1686,21 @@ def execute_full_scan(
                     "SCAN_REJECTED",
                     symbol=rejected_symbol,
                     metrics=ev_metrics,
-                    final_reason=str(ev.get("final_reason", "") or "scan_rejected"),
+                    final_reason=persisted_final_reason or "scan_rejected",
                     placed=False,
                 )
         candidate = paper_candidate_from_evaluation(ev)
         if candidate is not None:
             if paper_trade:
+                candidate_symbol = str(candidate["metrics"].get("symbol", "")).strip().upper()
+                candidate_reason = str(candidate.get("final_reason", "") or "paper_candidate")
+                if candidate_symbol in watch_ready_priority_symbols:
+                    candidate_reason = "watch_ready_confirmed_breakout"
                 record_attempt(
                     "PAPER_CANDIDATE",
-                    symbol=str(candidate["metrics"].get("symbol", "")).strip().upper(),
+                    symbol=candidate_symbol,
                     metrics=candidate["metrics"],
-                    final_reason=str(candidate.get("final_reason", "") or "paper_candidate"),
+                    final_reason=candidate_reason,
                     placed=False,
                 )
             paper_trade_candidates.append(candidate)
@@ -1737,6 +1764,7 @@ def execute_full_scan(
             "original_allowed_count": symbol_allowlist.get("original_allowed_count"),
             "chunk_start": symbol_allowlist.get("chunk_start"),
             "chunk_end": symbol_allowlist.get("chunk_end"),
+            "watch_ready_priority_symbols": list(symbol_allowlist.get("watch_ready_priority_symbols") or []),
         },
     }
 
@@ -1798,6 +1826,7 @@ def execute_full_scan(
                 "candidate_count": len(paper_trade_candidates),
                 "long_candidate_count": 0,
                 "short_candidate_count": 0,
+                "placed_count": 0,
                 "placed_long_count": 0,
                 "placed_short_count": 0,
             }

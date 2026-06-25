@@ -479,6 +479,7 @@ def run_market_ops_scheduler(*, now_ny: datetime):
         run_close=close_all_paper_positions,
         run_market_data_cache_refresh=lambda: run_market_data_cache_refresh({"mode": "low_price"}),
         run_health_probe=get_ibkr_operational_status,
+        get_risk_exposure_summary=get_risk_exposure_summary,
         run_pre_close_prep=lambda: build_execute_pre_close_prep(
             now_ny=now_ny,
             get_ibkr_operational_status=get_ibkr_operational_status,

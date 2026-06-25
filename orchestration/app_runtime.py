@@ -41,6 +41,21 @@ def _chunk_symbols(symbols: list[str], chunk_size: int) -> list[list[str]]:
     return [symbols[index : index + chunk_size] for index in range(0, len(symbols), chunk_size)]
 
 
+def _prioritize_symbols(symbols: list[str], priority_symbols: list[str]) -> list[str]:
+    if not symbols or not priority_symbols:
+        return symbols
+    allowed = set(symbols)
+    prioritized: list[str] = []
+    seen: set[str] = set()
+    for symbol in priority_symbols:
+        normalized_symbol = str(symbol or "").strip().upper()
+        if normalized_symbol in allowed and normalized_symbol not in seen:
+            prioritized.append(normalized_symbol)
+            seen.add(normalized_symbol)
+    prioritized.extend(symbol for symbol in symbols if symbol not in seen)
+    return prioritized
+
+
 def _count_from_result(result: dict[str, Any], key: str) -> int:
     value = result.get(key)
     if value is None and isinstance(result.get("paper_trade_result"), dict):
@@ -91,6 +106,27 @@ def _run_all_eligible_scheduled_mode(
         mode_result["scheduled_scan_all_eligible_fallback_reason"] = str(symbol_allowlist.get("reason") or "empty_allowlist")
         return mode_result
 
+    watch_ready_symbols: list[str] = []
+    if _truthy_env("PAPER_WATCH_READY_ENABLED", True):
+        try:
+            from storage import get_recent_watch_ready_symbols
+
+            watch_ready_symbols = get_recent_watch_ready_symbols(
+                mode=mode,
+                broker="IBKR",
+                max_age_minutes=_to_int(os.getenv("PAPER_WATCH_READY_MAX_AGE_MINUTES", "20"), 20),
+                limit=_to_int(os.getenv("PAPER_WATCH_READY_PRIORITY_LIMIT", "20"), 20),
+            )
+            allowed_symbols = _prioritize_symbols(allowed_symbols, watch_ready_symbols)
+        except Exception as exc:
+            log_info(
+                "Scheduled scan watch-ready prioritization skipped",
+                component="app_runtime",
+                operation="handle_scan_request",
+                mode=mode,
+                error=str(exc),
+            )
+
     chunk_size = _scheduled_chunk_size()
     chunks = _chunk_symbols(allowed_symbols, chunk_size)
     chunk_results: list[dict[str, Any]] = []
@@ -117,6 +153,7 @@ def _run_all_eligible_scheduled_mode(
             "original_allowed_count": len(allowed_symbols),
             "chunk_start": chunk_index * chunk_size,
             "chunk_end": min(len(allowed_symbols), (chunk_index + 1) * chunk_size),
+            "watch_ready_priority_symbols": watch_ready_symbols,
         }
         if placed_symbols:
             chunk_payload["scheduled_cycle_placed_symbols"] = sorted(placed_symbols)
@@ -196,6 +233,7 @@ def _run_all_eligible_scheduled_mode(
             "chunk_size": chunk_size,
             "chunk_count": len(chunks),
             "original_allowed_count": len(allowed_symbols),
+            "watch_ready_priority_symbols": watch_ready_symbols,
         },
         "per_chunk_results": chunk_results,
         "duration_ms": int((datetime.now(UTC) - cycle_started_at).total_seconds() * 1000),

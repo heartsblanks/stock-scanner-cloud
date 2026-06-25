@@ -1022,6 +1022,157 @@ class ScanServiceSizingTests(unittest.TestCase):
         self.assertEqual(result["symbol_allowlist"]["chunk_index"], 2)
         self.assertEqual(result["symbol_allowlist"]["original_allowed_count"], 40)
 
+    def test_execute_full_scan_records_watch_ready_without_placing(self):
+        attempts = []
+        observations = []
+
+        def fake_run_scan(
+            account_size,
+            mode,
+            current_open_positions=0,
+            current_open_exposure=0.0,
+            disable_strategy_gates=False,
+            allowed_symbols=None,
+            failed_breakout_cooldown_symbols=None,
+        ):
+            return (
+                [],
+                [
+                    {
+                        "name": "SOFI",
+                        "decision": "REJECTED",
+                        "final_reason": "near_breakout_watch",
+                        "metrics": {
+                            "symbol": "SOFI",
+                            "direction": "BUY",
+                            "near_breakout_watch": True,
+                            "price": 10.25,
+                            "or_high": 10.28,
+                            "or_low": 9.90,
+                            "vwap": 10.10,
+                            "relative_volume": 1.4,
+                            "three_candle_relative_volume": 1.2,
+                        },
+                    }
+                ],
+                [],
+                [],
+                {"SP500": "BUY", "NASDAQ": "BUY"},
+                f"IBKR_{mode.upper()}",
+            )
+
+        with patch.dict(os.environ, {"PAPER_WATCH_READY_ENABLED": "true"}, clear=False), patch(
+            "storage.insert_scan_gate_observation",
+            side_effect=lambda **kwargs: observations.append(kwargs),
+        ):
+            result = execute_full_scan(
+                {
+                    "mode": "low_price",
+                    "paper_trade": True,
+                    "scan_source": "SCHEDULED",
+                    "allowed_symbols": ["SOFI"],
+                },
+                market_time_check=lambda: (True, "Market timing OK."),
+                build_scan_id=lambda timestamp_utc, mode: f"{mode}-scan",
+                market_phase_from_timestamp=lambda timestamp_utc: "OPEN",
+                append_signal_log=lambda row: None,
+                safe_insert_paper_trade_attempt=lambda **kwargs: attempts.append(kwargs),
+                safe_insert_scan_run=lambda **kwargs: None,
+                parse_iso_utc=lambda ts: ts,
+                run_scan=fake_run_scan,
+                trade_to_dict=lambda trade: trade,
+                debug_to_dict=lambda evaluation: evaluation,
+                paper_candidate_from_evaluation=lambda evaluation: None,
+                evaluate_symbol=lambda *args, **kwargs: None,
+                get_latest_open_paper_trade_for_symbol=lambda symbol: None,
+                is_symbol_in_paper_cooldown=lambda symbol, now_utc: (False, ""),
+                place_paper_orders_from_trade=lambda trade: [],
+                append_trade_log=lambda row: None,
+                safe_insert_trade_event=lambda **kwargs: None,
+                safe_insert_broker_order=lambda **kwargs: None,
+                upsert_trade_lifecycle=lambda **kwargs: None,
+                to_float_or_none=lambda value: float(value) if value not in (None, "") else None,
+                MIN_CONFIDENCE=75,
+                resolve_account_size=lambda payload: 1000.0,
+                active_broker="IBKR",
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["paper_trade_result"]["candidate_count"], 0)
+        self.assertEqual(result["paper_trade_result"]["placed_count"], 0)
+        self.assertEqual(observations[0]["final_reason"], "watch_ready_near_breakout")
+        self.assertEqual(attempts[0]["decision_stage"], "SCAN_REJECTED")
+        self.assertEqual(attempts[0]["final_reason"], "watch_ready_near_breakout")
+
+    def test_execute_full_scan_marks_watch_ready_confirmed_candidate(self):
+        attempts = []
+
+        def fake_run_scan(
+            account_size,
+            mode,
+            current_open_positions=0,
+            current_open_exposure=0.0,
+            disable_strategy_gates=False,
+            allowed_symbols=None,
+            failed_breakout_cooldown_symbols=None,
+        ):
+            evaluation = {
+                "name": "SOFI",
+                "decision": "VALID",
+                "final_reason": "valid_candidate",
+                "metrics": {
+                    "symbol": "SOFI",
+                    "direction": "BUY",
+                    "entry": 10.3,
+                    "stop": 10.0,
+                    "target": 11.2,
+                    "shares": 10,
+                    "final_confidence": 90,
+                },
+            }
+            return ([{"name": "SOFI", "metrics": evaluation["metrics"]}], [evaluation], [], [], {"SP500": "BUY", "NASDAQ": "BUY"}, "IBKR_LOW_PRICE")
+
+        with patch.dict(os.environ, {"PAPER_WATCH_READY_ENABLED": "true"}, clear=False), patch(
+            "storage.insert_scan_gate_observation",
+            return_value=None,
+        ):
+            result = execute_full_scan(
+                {
+                    "mode": "low_price",
+                    "paper_trade": True,
+                    "scan_source": "SCHEDULED",
+                    "allowed_symbols": ["SOFI"],
+                    "symbol_allowlist": {"watch_ready_priority_symbols": ["SOFI"]},
+                },
+                market_time_check=lambda: (True, "Market timing OK."),
+                build_scan_id=lambda timestamp_utc, mode: f"{mode}-scan",
+                market_phase_from_timestamp=lambda timestamp_utc: "OPEN",
+                append_signal_log=lambda row: None,
+                safe_insert_paper_trade_attempt=lambda **kwargs: attempts.append(kwargs),
+                safe_insert_scan_run=lambda **kwargs: None,
+                parse_iso_utc=lambda ts: ts,
+                run_scan=fake_run_scan,
+                trade_to_dict=lambda trade: trade,
+                debug_to_dict=lambda evaluation: evaluation,
+                paper_candidate_from_evaluation=lambda evaluation: {"metrics": evaluation["metrics"], "final_reason": "valid_candidate"},
+                evaluate_symbol=lambda *args, **kwargs: None,
+                get_latest_open_paper_trade_for_symbol=lambda symbol: None,
+                is_symbol_in_paper_cooldown=lambda symbol, now_utc: (False, ""),
+                place_paper_orders_from_trade=lambda trade: [],
+                append_trade_log=lambda row: None,
+                safe_insert_trade_event=lambda **kwargs: None,
+                safe_insert_broker_order=lambda **kwargs: None,
+                upsert_trade_lifecycle=lambda **kwargs: None,
+                to_float_or_none=lambda value: float(value) if value not in (None, "") else None,
+                MIN_CONFIDENCE=75,
+                resolve_account_size=lambda payload: 1000.0,
+                active_broker="IBKR",
+        )
+
+        self.assertTrue(result["ok"])
+        candidate_attempt = next(item for item in attempts if item["decision_stage"] == "PAPER_CANDIDATE")
+        self.assertEqual(candidate_attempt["final_reason"], "watch_ready_confirmed_breakout")
+
     def test_execute_full_scan_skips_open_symbol_before_deeper_candidate_work(self):
         inserted_attempts = []
         recent_trade_calls = []

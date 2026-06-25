@@ -83,6 +83,43 @@ class SchedulerOpsTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(execution_order, ["sync", "refresh_market_data_cache", "scan"])
 
+    def test_execute_market_ops_skips_cache_and_scan_when_position_capacity_full(self):
+        now_ny = datetime(2026, 4, 1, 10, 5, tzinfo=NY_TZ)
+        execution_order = []
+
+        result = execute_market_ops(
+            now_ny=now_ny,
+            run_sync=lambda: execution_order.append("sync") or {"ok": True},
+            get_risk_exposure_summary=lambda: execution_order.append("risk")
+            or {"ok": True, "open_position_count": 2, "max_positions": 2, "position_limit_enforced": True},
+            run_market_data_cache_refresh=lambda: execution_order.append("refresh_market_data_cache") or {"ok": True},
+            run_scan=lambda payload: execution_order.append("scan") or {"ok": True, "payload": payload},
+            run_close=lambda: {"ok": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(execution_order, ["sync", "risk"])
+        self.assertTrue(result["results"]["refresh_market_data_cache"]["body"]["skipped"])
+        self.assertTrue(result["results"]["scan"]["body"]["skipped"])
+        self.assertEqual(result["results"]["scan"]["body"]["reason"], "scan_skipped_position_capacity_full")
+
+    def test_execute_market_ops_scans_when_capacity_is_available(self):
+        now_ny = datetime(2026, 4, 1, 10, 5, tzinfo=NY_TZ)
+        execution_order = []
+
+        result = execute_market_ops(
+            now_ny=now_ny,
+            run_sync=lambda: execution_order.append("sync") or {"ok": True},
+            get_risk_exposure_summary=lambda: execution_order.append("risk")
+            or {"ok": True, "open_position_count": 1, "max_positions": 2, "position_limit_enforced": True},
+            run_market_data_cache_refresh=lambda: execution_order.append("refresh_market_data_cache") or {"ok": True},
+            run_scan=lambda payload: execution_order.append("scan") or {"ok": True, "payload": payload},
+            run_close=lambda: {"ok": True},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(execution_order, ["sync", "risk", "refresh_market_data_cache", "scan"])
+
     def test_execute_market_ops_skips_scan_when_cache_refresh_returns_zero_candles(self):
         now_ny = datetime(2026, 4, 1, 10, 5, tzinfo=NY_TZ)
         execution_order = []

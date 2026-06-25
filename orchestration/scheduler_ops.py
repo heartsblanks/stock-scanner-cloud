@@ -71,6 +71,22 @@ def _market_data_refresh_empty(refresh_result: dict[str, Any] | None) -> bool:
     return requested_count > 0 and refreshed_count == 0
 
 
+def _position_capacity_full(risk_result: dict[str, Any] | None) -> bool:
+    if not risk_result:
+        return False
+    body = risk_result.get("body") if "body" in risk_result else risk_result
+    if not isinstance(body, dict):
+        return False
+    if not bool(body.get("position_limit_enforced", True)):
+        return False
+    try:
+        open_position_count = int(body.get("open_position_count") or 0)
+        max_positions = int(body.get("max_positions") or 0)
+    except Exception:
+        return False
+    return max_positions > 0 and open_position_count >= max_positions
+
+
 def should_run_market_sync(now_ny: datetime) -> bool:
     if not is_weekday(now_ny):
         return False
@@ -148,6 +164,7 @@ def execute_market_ops(
     run_pre_close_prep: Callable[[], Any] | None = None,
     run_health_probe: Callable[[], Any] | None = None,
     run_market_data_cache_refresh: Callable[[], Any] | None = None,
+    get_risk_exposure_summary: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
     actions = build_market_ops_plan(now_ny)
     results: dict[str, Any] = {}
@@ -155,10 +172,45 @@ def execute_market_ops(
     for action in actions:
         if action == "sync":
             results[action] = _normalize_handler_result(run_sync())
-        elif action == "refresh_market_data_cache" and run_market_data_cache_refresh is not None:
-            results[action] = _normalize_handler_result(run_market_data_cache_refresh())
-        elif action == "scan":
             if (
+                _truthy_env("PAPER_SKIP_SCHEDULED_SCAN_WHEN_POSITION_FULL", True)
+                and "scan" in actions
+                and get_risk_exposure_summary is not None
+            ):
+                results["position_capacity_preflight"] = _normalize_handler_result(get_risk_exposure_summary())
+        elif action == "refresh_market_data_cache" and run_market_data_cache_refresh is not None:
+            if _position_capacity_full(results.get("position_capacity_preflight")):
+                preflight_body = results["position_capacity_preflight"].get("body", {})
+                results[action] = {
+                    "ok": True,
+                    "status_code": 200,
+                    "body": {
+                        "ok": True,
+                        "skipped": True,
+                        "reason": "scan_skipped_position_capacity_full",
+                        "message": "Skipping market-data cache refresh because max open positions are already filled.",
+                        "open_position_count": preflight_body.get("open_position_count"),
+                        "max_positions": preflight_body.get("max_positions"),
+                    },
+                }
+            else:
+                results[action] = _normalize_handler_result(run_market_data_cache_refresh())
+        elif action == "scan":
+            if _position_capacity_full(results.get("position_capacity_preflight")):
+                preflight_body = results["position_capacity_preflight"].get("body", {})
+                results[action] = {
+                    "ok": True,
+                    "status_code": 200,
+                    "body": {
+                        "ok": True,
+                        "skipped": True,
+                        "reason": "scan_skipped_position_capacity_full",
+                        "message": "Skipping scheduled scan because max open positions are already filled.",
+                        "open_position_count": preflight_body.get("open_position_count"),
+                        "max_positions": preflight_body.get("max_positions"),
+                    },
+                }
+            elif (
                 _truthy_env("PAPER_SKIP_SCAN_ON_EMPTY_CACHE_REFRESH", True)
                 and _market_data_refresh_empty(results.get("refresh_market_data_cache"))
             ):
