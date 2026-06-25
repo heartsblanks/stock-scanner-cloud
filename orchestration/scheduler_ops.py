@@ -52,6 +52,25 @@ def _low_call_mode_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _truthy_env(name: str, default: bool = False) -> bool:
+    raw = str(os.getenv(name, "true" if default else "false")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _market_data_refresh_empty(refresh_result: dict[str, Any] | None) -> bool:
+    if not refresh_result or not bool(refresh_result.get("ok", False)):
+        return False
+    body = refresh_result.get("body")
+    if not isinstance(body, dict):
+        return False
+    try:
+        requested_count = int(body.get("requested_count") or 0)
+        refreshed_count = int(body.get("refreshed_count") or 0)
+    except Exception:
+        return False
+    return requested_count > 0 and refreshed_count == 0
+
+
 def should_run_market_sync(now_ny: datetime) -> bool:
     if not is_weekday(now_ny):
         return False
@@ -139,7 +158,26 @@ def execute_market_ops(
         elif action == "refresh_market_data_cache" and run_market_data_cache_refresh is not None:
             results[action] = _normalize_handler_result(run_market_data_cache_refresh())
         elif action == "scan":
-            results[action] = _normalize_handler_result(run_scan({}))
+            if (
+                _truthy_env("PAPER_SKIP_SCAN_ON_EMPTY_CACHE_REFRESH", True)
+                and _market_data_refresh_empty(results.get("refresh_market_data_cache"))
+            ):
+                refresh_body = results["refresh_market_data_cache"].get("body", {})
+                results[action] = {
+                    "ok": False,
+                    "status_code": 503,
+                    "body": {
+                        "ok": False,
+                        "skipped": True,
+                        "reason": "market_data_cache_refresh_empty",
+                        "message": "Skipping scheduled scan because market-data cache refresh returned zero candles.",
+                        "requested_count": refresh_body.get("requested_count"),
+                        "refreshed_count": refresh_body.get("refreshed_count"),
+                        "failed_count": refresh_body.get("failed_count"),
+                    },
+                }
+            else:
+                results[action] = _normalize_handler_result(run_scan({}))
         elif action == "close":
             results[action] = _normalize_handler_result(run_close())
         elif action == "health" and run_health_probe is not None:

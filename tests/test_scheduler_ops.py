@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from orchestration.scheduler_ops import (
@@ -78,6 +79,51 @@ class SchedulerOpsTests(unittest.TestCase):
             run_scan=lambda payload: execution_order.append("scan") or {"ok": True, "payload": payload},
             run_close=lambda: {"ok": True},
         )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(execution_order, ["sync", "refresh_market_data_cache", "scan"])
+
+    def test_execute_market_ops_skips_scan_when_cache_refresh_returns_zero_candles(self):
+        now_ny = datetime(2026, 4, 1, 10, 5, tzinfo=NY_TZ)
+        execution_order = []
+
+        result = execute_market_ops(
+            now_ny=now_ny,
+            run_sync=lambda: execution_order.append("sync") or {"ok": True},
+            run_market_data_cache_refresh=lambda: execution_order.append("refresh_market_data_cache")
+            or {
+                "ok": True,
+                "requested_count": 89,
+                "refreshed_count": 0,
+                "failed_count": 89,
+            },
+            run_scan=lambda payload: execution_order.append("scan") or {"ok": True, "payload": payload},
+            run_close=lambda: {"ok": True},
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(execution_order, ["sync", "refresh_market_data_cache"])
+        self.assertTrue(result["results"]["scan"]["body"]["skipped"])
+        self.assertEqual(result["results"]["scan"]["body"]["reason"], "market_data_cache_refresh_empty")
+
+    def test_execute_market_ops_can_disable_empty_cache_scan_skip(self):
+        now_ny = datetime(2026, 4, 1, 10, 5, tzinfo=NY_TZ)
+        execution_order = []
+
+        with patch.dict("os.environ", {"PAPER_SKIP_SCAN_ON_EMPTY_CACHE_REFRESH": "false"}, clear=False):
+            result = execute_market_ops(
+                now_ny=now_ny,
+                run_sync=lambda: execution_order.append("sync") or {"ok": True},
+                run_market_data_cache_refresh=lambda: execution_order.append("refresh_market_data_cache")
+                or {
+                    "ok": True,
+                    "requested_count": 89,
+                    "refreshed_count": 0,
+                    "failed_count": 89,
+                },
+                run_scan=lambda payload: execution_order.append("scan") or {"ok": True, "payload": payload},
+                run_close=lambda: {"ok": True},
+            )
 
         self.assertTrue(result["ok"])
         self.assertEqual(execution_order, ["sync", "refresh_market_data_cache", "scan"])

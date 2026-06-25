@@ -148,11 +148,34 @@ class TradeScanQualityV2Tests(unittest.TestCase):
         env = {
             **self._base_env(),
             "PAPER_NEAR_BREAKOUT_PROMOTION_ENABLED": "true",
-            "PAPER_NEAR_BREAKOUT_PROMOTION_PCT": "0.002",
+            "PAPER_NEAR_BREAKOUT_PROMOTION_PCT": "0.004",
             "PAPER_NEAR_BREAKOUT_PROMOTION_MIN_RELATIVE_VOLUME": "1.8",
             "PAPER_NEAR_BREAKOUT_PROMOTION_MIN_3_CANDLE_REL_VOLUME": "1.3",
         }
         candles = build_post_or_breakout_candles(final_close=10.285, final_volume=2500)
+        candles[-1]["high"] = 10.45
+        with patch.dict(os.environ, env, clear=False):
+            with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 10, 0, tzinfo=NY_TZ)):
+                result = evaluate_symbol(
+                    "SoFi",
+                    self._info(),
+                    candles,
+                    2000,
+                    benchmark("BUY", "NASDAQ"),
+                )
+
+        self.assertEqual(result["decision"], "VALID")
+        self.assertEqual(result["final_reason"], "near_breakout_promotion")
+        self.assertTrue(result["metrics"]["near_breakout_promotion"])
+
+    def test_default_near_breakout_promotion_allows_four_tenths_pct_distance(self):
+        env = {
+            **self._base_env(),
+            "PAPER_NEAR_BREAKOUT_PROMOTION_ENABLED": "true",
+            "PAPER_NEAR_BREAKOUT_PROMOTION_MIN_RELATIVE_VOLUME": "1.8",
+            "PAPER_NEAR_BREAKOUT_PROMOTION_MIN_3_CANDLE_REL_VOLUME": "1.3",
+        }
+        candles = build_post_or_breakout_candles(final_close=10.265, final_volume=2500)
         candles[-1]["high"] = 10.45
         with patch.dict(os.environ, env, clear=False):
             with patch("analytics.trade_scan.get_ny_now", return_value=datetime(2026, 4, 1, 10, 0, tzinfo=NY_TZ)):

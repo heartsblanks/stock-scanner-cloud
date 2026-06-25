@@ -294,7 +294,7 @@ def _is_near_breakout_promotion(
     if price <= 0 or vwap is None or direction not in {"BUY", "SELL"}:
         return False
 
-    promotion_pct = _env_float("PAPER_NEAR_BREAKOUT_PROMOTION_PCT", 0.002)
+    promotion_pct = _env_float("PAPER_NEAR_BREAKOUT_PROMOTION_PCT", 0.004)
     min_relative_volume = _env_float("PAPER_NEAR_BREAKOUT_PROMOTION_MIN_RELATIVE_VOLUME", 1.8)
     min_three_candle_relative_volume = _env_float("PAPER_NEAR_BREAKOUT_PROMOTION_MIN_3_CANDLE_REL_VOLUME", 1.3)
     if relative_volume is None or relative_volume < min_relative_volume:

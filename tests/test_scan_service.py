@@ -880,7 +880,7 @@ class ScanServiceSizingTests(unittest.TestCase):
         self.assertEqual(captured_allowed_symbols[0], all_symbols[chunk_start:chunk_end])
         self.assertTrue(result["symbol_allowlist"]["chunking_applied"])
         self.assertEqual(result["symbol_allowlist"]["original_allowed_count"], 7)
-        self.assertEqual(result["symbol_allowlist"]["allowed_count"], 3)
+        self.assertEqual(result["symbol_allowlist"]["allowed_count"], chunk_end - chunk_start)
 
     def test_execute_full_scan_does_not_chunk_manual_symbol_allowlist(self):
         captured_allowed_symbols = []
