@@ -54,7 +54,6 @@ _DEFAULT_INSTRUMENT_GROUPS: dict[str, dict[str, dict[str, object]]] = {
         "Grab": {"symbol": "GRAB", "type": "stock", "priority": 6, "market": "NASDAQ"},
     },
     "third": {
-        "Bitfarms": {"symbol": "BITF", "type": "stock", "priority": 7, "market": "NASDAQ"},
         "Clover Health": {"symbol": "CLOV", "type": "stock", "priority": 6, "market": "NASDAQ"},
         "TAL Education": {"symbol": "TAL", "type": "stock", "priority": 6, "market": "NASDAQ"},
         "Telefonica Brasil": {"symbol": "VIV", "type": "stock", "priority": 5, "market": "NASDAQ"},
@@ -204,7 +203,6 @@ LOW_PRICE_CANDIDATE_INSTRUMENTS: tuple[dict[str, object], ...] = (
     _quality_candidate(mode="low_price", display_name="QuantumScape", symbol="QS", priority=7, market="NYSE"),
     _quality_candidate(mode="low_price", display_name="Plug Power", symbol="PLUG", priority=7, market="NASDAQ"),
     _quality_candidate(mode="low_price", display_name="Grab", symbol="GRAB", priority=7, market="NASDAQ"),
-    _quality_candidate(mode="low_price", display_name="Bitfarms", symbol="BITF", priority=7, market="NASDAQ"),
     _quality_candidate(mode="low_price", display_name="Clover Health", symbol="CLOV", priority=7, market="NASDAQ"),
     _quality_candidate(mode="low_price", display_name="TAL Education", symbol="TAL", priority=7, market="NYSE"),
     _quality_candidate(mode="low_price", display_name="Telefonica Brasil", symbol="VIV", priority=6, market="NYSE"),
