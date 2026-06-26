@@ -53,6 +53,7 @@ def register_internal_routes(app) -> None:
                     failed.append({"symbol": symbol, "reason": "no_candles"})
                     continue
                 try:
+                    contract_id = entry.get("contract_id")
                     upsert_market_data_candles(
                         broker="IBKR",
                         symbol=symbol,
@@ -60,6 +61,7 @@ def register_internal_routes(app) -> None:
                         candles=list(candles),
                         fetched_at=now,
                         source="ibkr_mcp_connector",
+                        ibkr_contract_id=int(contract_id) if contract_id else None,
                     )
                     stored.append(symbol)
                 except Exception as e:
@@ -172,4 +174,132 @@ def register_internal_routes(app) -> None:
 
         except Exception as e:
             log_exception("internal-scan failed", e, route="/internal/scan")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.get("/internal/market-ops-context")
+    def market_ops_context():
+        """
+        Returns everything the Claude market-ops agent needs at the start of a tick:
+        - All scan symbols with known IBKR contract_ids (from cache)
+        - Open positions from Neon (trade_lifecycles)
+        - NYSE trading day status
+        - Current ET time and whether it's EOD tick
+        """
+        try:
+            from analytics.instruments import get_instrument_groups
+            from analytics.trade_scan import holiday_and_early_close_status
+            from repositories.market_data_cache_repo import get_known_contract_ids
+            from repositories.trades_repo import get_trade_lifecycles
+            from zoneinfo import ZoneInfo
+            from datetime import datetime
+
+            ny_tz = ZoneInfo("America/New_York")
+            now_ny = datetime.now(ny_tz)
+
+            # NYSE trading day check
+            is_trading_day, is_early_close, market_open, market_close, calendar_msg = holiday_and_early_close_status(now_ny)
+
+            # All scan symbols
+            groups = get_instrument_groups()
+            all_symbols: list[str] = []
+            seen: set[str] = set()
+            for group_instruments in groups.values():
+                for info in group_instruments.values():
+                    sym = str(info.get("symbol") or "").strip().upper()
+                    if sym and sym not in seen:
+                        all_symbols.append(sym)
+                        seen.add(sym)
+
+            # Known contract_ids from Neon cache
+            known_ids = get_known_contract_ids(broker="IBKR")
+
+            # Symbol list with contract_ids
+            symbols = [
+                {"symbol": sym, "contract_id": known_ids.get(sym)}
+                for sym in sorted(all_symbols)
+            ]
+
+            # Open positions from Neon
+            try:
+                lifecycle_rows = get_trade_lifecycles(status="OPEN", limit=50, broker=None)
+                open_trades = lifecycle_rows if isinstance(lifecycle_rows, list) else []
+            except Exception:
+                open_trades = []
+
+            current_time_str = now_ny.strftime("%H:%M")
+            is_eod_tick = now_ny.hour == 15 and now_ny.minute == 55
+
+            return jsonify({
+                "ok": True,
+                "current_ny_time": current_time_str,
+                "is_trading_day": is_trading_day,
+                "is_early_close": is_early_close,
+                "calendar_message": calendar_msg,
+                "is_eod_tick": is_eod_tick,
+                "symbol_count": len(symbols),
+                "symbols": symbols,
+                "known_contract_id_count": len(known_ids),
+                "open_trade_count": len(open_trades),
+                "open_trades": [
+                    {
+                        "symbol": t.get("symbol"),
+                        "side": t.get("side"),
+                        "entry_price": t.get("entry_price"),
+                        "stop_price": t.get("stop_price"),
+                        "target_price": t.get("target_price"),
+                        "shares": t.get("shares"),
+                        "broker_parent_order_id": t.get("broker_parent_order_id"),
+                    }
+                    for t in open_trades
+                ],
+            })
+
+        except Exception as e:
+            log_exception("market-ops-context failed", e, route="/internal/market-ops-context")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.post("/internal/record-attempts")
+    def record_attempts():
+        """Record paper_trade_attempts for candidates the Claude agent evaluated."""
+        try:
+            from repositories.scans_repo import insert_paper_trade_attempt
+            from datetime import datetime, timezone
+
+            body = request.get_json(silent=True) or {}
+            candidates = body.get("candidates") or []
+            scan_id = body.get("scan_id") or ""
+            mode = body.get("mode") or ""
+            account_size = float(body.get("account_size") or 0)
+            open_positions = int(body.get("open_positions") or 0)
+            open_exposure = float(body.get("open_exposure") or 0.0)
+            now_utc = datetime.now(timezone.utc)
+
+            stored = 0
+            for c in candidates:
+                try:
+                    insert_paper_trade_attempt(
+                        timestamp_utc=now_utc,
+                        scan_id=scan_id,
+                        mode=mode,
+                        scan_source="claude_mcp_agent",
+                        symbol=str(c.get("symbol") or ""),
+                        decision_stage=str(c.get("decision", "PLACED")),
+                        final_reason=str(c.get("final_reason") or "mcp_instruction_created"),
+                        direction=str(c.get("side") or ""),
+                        entry=float(c["entry_price"]) if c.get("entry_price") else None,
+                        stop=float(c["stop_price"]) if c.get("stop_price") else None,
+                        target=float(c["target_price"]) if c.get("target_price") else None,
+                        confidence=float(c["confidence"]) if c.get("confidence") else None,
+                        shares=float(c["shares"]) if c.get("shares") else None,
+                        account_size=account_size or None,
+                        current_open_positions=open_positions or None,
+                        current_open_exposure=open_exposure or None,
+                    )
+                    stored += 1
+                except Exception:
+                    pass
+
+            return jsonify({"ok": True, "stored": stored})
+        except Exception as e:
+            log_exception("record-attempts failed", e, route="/internal/record-attempts")
             return jsonify({"ok": False, "error": str(e)}), 500

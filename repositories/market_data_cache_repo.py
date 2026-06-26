@@ -20,10 +20,18 @@ def ensure_market_data_candles_schema() -> None:
             candles JSONB NOT NULL,
             candle_count INTEGER NOT NULL DEFAULT 0,
             last_bar_datetime TEXT,
+            ibkr_contract_id INTEGER,
             fetched_at TIMESTAMPTZ NOT NULL,
             created_at TIMESTAMPTZ DEFAULT NOW(),
             updated_at TIMESTAMPTZ DEFAULT NOW()
         )
+        """
+    )
+    # Add ibkr_contract_id column to existing tables if missing
+    execute(
+        """
+        ALTER TABLE market_data_candles
+        ADD COLUMN IF NOT EXISTS ibkr_contract_id INTEGER
         """
     )
     execute(
@@ -48,6 +56,7 @@ def upsert_market_data_candles(
     candles: list[dict[str, Any]],
     fetched_at: datetime,
     source: str = "ibkr_intraday",
+    ibkr_contract_id: int | None = None,
 ) -> None:
     ensure_market_data_candles_schema()
     normalized_candles = list(candles or [])
@@ -57,10 +66,12 @@ def upsert_market_data_candles(
     execute(
         """
         INSERT INTO market_data_candles (
-            broker, symbol, interval, source, candles, candle_count, last_bar_datetime, fetched_at, updated_at
+            broker, symbol, interval, source, candles, candle_count, last_bar_datetime,
+            ibkr_contract_id, fetched_at, updated_at
         ) VALUES (
             %(broker)s, %(symbol)s, %(interval)s, %(source)s, %(candles)s::jsonb,
-            %(candle_count)s, %(last_bar_datetime)s, %(fetched_at)s, NOW()
+            %(candle_count)s, %(last_bar_datetime)s,
+            %(ibkr_contract_id)s, %(fetched_at)s, NOW()
         )
         ON CONFLICT (broker, symbol, interval)
         DO UPDATE SET
@@ -68,6 +79,7 @@ def upsert_market_data_candles(
             candles = EXCLUDED.candles,
             candle_count = EXCLUDED.candle_count,
             last_bar_datetime = EXCLUDED.last_bar_datetime,
+            ibkr_contract_id = COALESCE(EXCLUDED.ibkr_contract_id, market_data_candles.ibkr_contract_id),
             fetched_at = EXCLUDED.fetched_at,
             updated_at = NOW()
         """,
@@ -79,6 +91,7 @@ def upsert_market_data_candles(
             "candles": json.dumps(normalized_candles, default=str),
             "candle_count": len(normalized_candles),
             "last_bar_datetime": last_bar_datetime,
+            "ibkr_contract_id": int(ibkr_contract_id) if ibkr_contract_id else None,
             "fetched_at": fetched_at,
         },
     )
@@ -106,6 +119,21 @@ def get_market_data_candles(
         },
     )
     return dict(row) if row else None
+
+
+def get_known_contract_ids(*, broker: str = "IBKR") -> dict[str, int]:
+    """Returns {symbol: ibkr_contract_id} for all symbols with a stored contract_id."""
+    ensure_market_data_candles_schema()
+    rows = fetch_all(
+        """
+        SELECT symbol, ibkr_contract_id
+        FROM market_data_candles
+        WHERE broker = %(broker)s
+          AND ibkr_contract_id IS NOT NULL
+        """,
+        {"broker": normalize_text(broker).upper() or "IBKR"},
+    )
+    return {row["symbol"]: int(row["ibkr_contract_id"]) for row in rows}
 
 
 def get_market_data_cache_summary(*, broker: str = "IBKR", limit: int = 20) -> list[dict[str, Any]]:
