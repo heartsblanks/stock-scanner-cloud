@@ -25,17 +25,15 @@ from storage import (
     get_recent_paper_trade_rejections,
     get_recent_reconciliation_mismatches,
     get_recent_trade_event_rows,
-    get_risk_exposure_summary,
     get_trade_lifecycle_summary_from_table,
     get_trade_lifecycles,
     get_trade_lifecycles_page,
-    get_trade_tuning_report,
-    get_latest_scan_summary,
     purge_all_test_data,
     purge_legacy_broker_data,
     safe_insert_reconciliation_detail,
     safe_insert_reconciliation_run,
 )
+from repositories.trades_repo import get_trade_tuning_report
 from repositories.trades_repo import upsert_trade_lifecycle
 from routes.health import register_health_routes
 from routes.reconcile import register_reconcile_routes
@@ -116,7 +114,7 @@ register_dashboard_routes(
     get_dashboard_summary=get_dashboard_summary,
     get_daily_dashboard_summary=get_daily_dashboard_summary,
     get_trade_tuning_report=get_trade_tuning_report,
-    get_risk_exposure_summary=get_risk_exposure_summary,
+    get_risk_exposure_summary=lambda *_a, **_k: {"summary": {}},
 )
 
 
