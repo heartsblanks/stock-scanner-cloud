@@ -303,3 +303,31 @@ def register_internal_routes(app) -> None:
         except Exception as e:
             log_exception("record-attempts failed", e, route="/internal/record-attempts")
             return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.post("/internal/send-alert")
+    def send_alert():
+        """Send a Telegram alert using the backend's bot credentials."""
+        try:
+            import os
+            import requests as _requests
+
+            body = request.get_json(silent=True) or {}
+            message = str(body.get("message") or "").strip()
+            if not message:
+                return jsonify({"ok": False, "error": "message required"}), 400
+
+            bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+            chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+
+            if not bot_token or not chat_id:
+                return jsonify({"ok": False, "reason": "telegram_not_configured"})
+
+            resp = _requests.post(
+                f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                json={"chat_id": chat_id, "text": message, "disable_web_page_preview": False},
+                timeout=10,
+            )
+            return jsonify({"ok": resp.ok, "status_code": resp.status_code})
+        except Exception as e:
+            log_exception("send-alert failed", e, route="/internal/send-alert")
+            return jsonify({"ok": False, "error": str(e)}), 500
