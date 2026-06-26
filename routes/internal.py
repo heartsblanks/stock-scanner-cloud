@@ -69,10 +69,9 @@ def register_internal_routes(app) -> None:
 
             return jsonify({
                 "ok": len(failed) == 0,
-                "stored_count": len(stored),
-                "failed_count": len(failed),
-                "stored": stored,
-                "failed": failed,
+                "stored": len(stored),
+                "failed": len(failed),
+                "errors": failed[:3],
             })
         except Exception as e:
             log_exception("cache-candles failed", e, route="/internal/cache-candles")
@@ -157,18 +156,15 @@ def register_internal_routes(app) -> None:
             return jsonify({
                 "ok": True,
                 "mode": mode,
-                "account_size": account_size,
-                "open_positions": open_positions,
-                "open_exposure": open_exposure,
                 "candidate_count": len(candidates),
                 "returned_count": len(top_candidates),
-                "max_candidates": max_candidates,
                 "candidates": top_candidates,
                 "scan_summary": {
-                    "fetch_ok": fetch_ok,
-                    "fetch_fail": fetch_fail,
                     "evaluated_count": len(evaluations),
                     "valid_count": len(valid_trades),
+                    "fetch_ok_count": len(fetch_ok),
+                    "fetch_fail_count": len(fetch_fail),
+                    "fetch_fail": fetch_fail[:5],
                 },
             })
 
@@ -231,24 +227,18 @@ def register_internal_routes(app) -> None:
 
             return jsonify({
                 "ok": True,
-                "current_ny_time": current_time_str,
-                "is_trading_day": is_trading_day,
-                "is_early_close": is_early_close,
-                "calendar_message": calendar_msg,
-                "is_eod_tick": is_eod_tick,
-                "symbol_count": len(symbols),
+                "t": current_time_str,
+                "trading": is_trading_day,
+                "eod": is_eod_tick,
                 "symbols": symbols,
-                "known_contract_id_count": len(known_ids),
-                "open_trade_count": len(open_trades),
                 "open_trades": [
                     {
-                        "symbol": t.get("symbol"),
+                        "sym": t.get("symbol"),
                         "side": t.get("side"),
-                        "entry_price": t.get("entry_price"),
-                        "stop_price": t.get("stop_price"),
-                        "target_price": t.get("target_price"),
+                        "entry": t.get("entry_price"),
+                        "stop": t.get("stop_price"),
+                        "target": t.get("target_price"),
                         "shares": t.get("shares"),
-                        "broker_parent_order_id": t.get("broker_parent_order_id"),
                     }
                     for t in open_trades
                 ],

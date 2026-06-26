@@ -4,4 +4,3 @@ pandas_market_calendars==5.1.1
 gunicorn==23.0.0
 psycopg[binary]
 flask-cors
-ib-insync==0.9.86
