@@ -1,0 +1,32 @@
+name: Maintenance
+
+on:
+  schedule:
+    # 18:00 ET = 22:00 UTC (23:00 during EDT); run at both to cover DST shifts
+    - cron: '0 22 * * *'
+    - cron: '0 23 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  maintenance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Trigger maintenance
+        env:
+          BACKEND_BASE_URL: ${{ secrets.BACKEND_BASE_URL }}
+        run: |
+          echo "Triggering maintenance at $(date -u '+%Y-%m-%d %H:%M UTC')"
+          response=$(curl -s -w "\n%{http_code}" \
+            -X POST "${BACKEND_BASE_URL}/scheduler/maintenance" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            --max-time 120)
+          http_code=$(echo "$response" | tail -1)
+          body=$(echo "$response" | head -n -1)
+          echo "HTTP status: $http_code"
+          echo "Response: $body"
+          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+            echo "::error::Maintenance failed with HTTP $http_code"
+            exit 1
+          fi

@@ -1,0 +1,38 @@
+name: Daily Post-Close
+
+on:
+  schedule:
+    # 16:30 ET = 20:30 UTC (21:30 during EDT, but UTC cron doesn't adjust for DST)
+    # Run at both 20:30 and 21:30 UTC; the Flask endpoint is idempotent for same-day calls
+    - cron: '30 20 * * 1-5'
+    - cron: '30 21 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Log only, do not execute'
+        required: false
+        default: 'false'
+
+jobs:
+  post-close:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Trigger daily-post-close
+        env:
+          BACKEND_BASE_URL: ${{ secrets.BACKEND_BASE_URL }}
+        run: |
+          echo "Triggering daily-post-close at $(date -u '+%Y-%m-%d %H:%M UTC')"
+          response=$(curl -s -w "\n%{http_code}" \
+            -X POST "${BACKEND_BASE_URL}/scheduler/daily-post-close" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            --max-time 900)
+          http_code=$(echo "$response" | tail -1)
+          body=$(echo "$response" | head -n -1)
+          echo "HTTP status: $http_code"
+          echo "Response: $body"
+          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+            echo "::error::Post-close failed with HTTP $http_code"
+            exit 1
+          fi
