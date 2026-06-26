@@ -222,6 +222,7 @@ def register_internal_routes(app) -> None:
             known_ids = get_known_contract_ids(broker="IBKR")
 
             # Price filter using last cached candle close (no extra MCP calls)
+            from repositories.market_data_cache_repo import get_market_data_candles
             price_filtered: list[str] = []
             for sym in ranked_symbols:
                 row = get_market_data_candles(broker="IBKR", symbol=sym, interval="1min")
