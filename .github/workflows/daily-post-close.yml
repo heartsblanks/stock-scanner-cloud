@@ -2,37 +2,32 @@ name: Daily Post-Close
 
 on:
   schedule:
-    # 16:30 ET = 20:30 UTC (21:30 during EDT, but UTC cron doesn't adjust for DST)
-    # Run at both 20:30 and 21:30 UTC; the Flask endpoint is idempotent for same-day calls
+    # 16:30 ET = 20:30 UTC (summer/EDT). Also run 21:30 UTC to cover winter/EST.
     - cron: '30 20 * * 1-5'
     - cron: '30 21 * * 1-5'
-  workflow_dispatch:
-    inputs:
-      dry_run:
-        description: 'Log only, do not execute'
-        required: false
-        default: 'false'
+  workflow_dispatch: {}
 
 jobs:
   post-close:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Trigger daily-post-close
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run post-close
         env:
-          BACKEND_BASE_URL: ${{ secrets.BACKEND_BASE_URL }}
-        run: |
-          echo "Triggering daily-post-close at $(date -u '+%Y-%m-%d %H:%M UTC')"
-          response=$(curl -s -w "\n%{http_code}" \
-            -X POST "${BACKEND_BASE_URL}/scheduler/daily-post-close" \
-            -H "Content-Type: application/json" \
-            -d '{}' \
-            --max-time 900)
-          http_code=$(echo "$response" | tail -1)
-          body=$(echo "$response" | head -n -1)
-          echo "HTTP status: $http_code"
-          echo "Response: $body"
-          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
-            echo "::error::Post-close failed with HTTP $http_code"
-            exit 1
-          fi
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GITHUB_TOKEN: ${{ secrets.GH_EXPORT_TOKEN }}
+          GITHUB_OWNER: ${{ secrets.GITHUB_OWNER }}
+          GITHUB_REPO: ${{ secrets.GITHUB_REPO }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scripts/run_post_close.py
