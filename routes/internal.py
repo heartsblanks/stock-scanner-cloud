@@ -195,16 +195,31 @@ def register_internal_routes(app) -> None:
             # NYSE trading day check
             is_trading_day, is_early_close, market_open, market_close, calendar_msg = holiday_and_early_close_status(now_ny)
 
-            # All scan symbols
-            groups = get_instrument_groups()
-            all_symbols: list[str] = []
-            seen: set[str] = set()
-            for group_instruments in groups.values():
-                for info in group_instruments.values():
-                    sym = str(info.get("symbol") or "").strip().upper()
-                    if sym and sym not in seen:
-                        all_symbols.append(sym)
-                        seen.add(sym)
+            # Ranked symbols — top N only to limit candle fetch token cost
+            fetch_limit = int(os.getenv("MARKET_OPS_SYMBOL_FETCH_LIMIT", "25"))
+
+            # Get symbol rankings from Neon (sorted by performance)
+            from repositories.trades_repo import get_latest_symbol_ranking_rows
+            ranked_rows = get_latest_symbol_ranking_rows(broker="IBKR", window_days=5)
+            ranked_symbols: list[str] = [
+                str(r.get("symbol") or "").strip().upper()
+                for r in ranked_rows
+                if str(r.get("symbol") or "").strip()
+            ]
+
+            # Fall back to full instrument list if rankings empty
+            if not ranked_symbols:
+                groups = get_instrument_groups()
+                seen: set[str] = set()
+                for group_instruments in groups.values():
+                    for info in group_instruments.values():
+                        sym = str(info.get("symbol") or "").strip().upper()
+                        if sym and sym not in seen:
+                            ranked_symbols.append(sym)
+                            seen.add(sym)
+
+            # Cap at fetch_limit
+            fetch_symbols = ranked_symbols[:fetch_limit]
 
             # Known contract_ids from Neon cache
             known_ids = get_known_contract_ids(broker="IBKR")
@@ -212,7 +227,7 @@ def register_internal_routes(app) -> None:
             # Symbol list with contract_ids
             symbols = [
                 {"symbol": sym, "contract_id": known_ids.get(sym)}
-                for sym in sorted(all_symbols)
+                for sym in fetch_symbols
             ]
 
             # Open positions from Neon
