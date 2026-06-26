@@ -195,8 +195,8 @@ def register_internal_routes(app) -> None:
             # NYSE trading day check
             is_trading_day, is_early_close, market_open, market_close, calendar_msg = holiday_and_early_close_status(now_ny)
 
-            # Ranked symbols — top N only to limit candle fetch token cost
             fetch_limit = int(os.getenv("MARKET_OPS_SYMBOL_FETCH_LIMIT", "25"))
+            price_max = float(os.getenv("PRICE_FILTER_MAX_USD", "10.0"))
 
             # Get symbol rankings from Neon (sorted by performance)
             from repositories.trades_repo import get_latest_symbol_ranking_rows
@@ -218,11 +218,23 @@ def register_internal_routes(app) -> None:
                             ranked_symbols.append(sym)
                             seen.add(sym)
 
-            # Cap at fetch_limit
-            fetch_symbols = ranked_symbols[:fetch_limit]
-
             # Known contract_ids from Neon cache
             known_ids = get_known_contract_ids(broker="IBKR")
+
+            # Price filter using last cached candle close (no extra MCP calls)
+            price_filtered: list[str] = []
+            for sym in ranked_symbols:
+                row = get_market_data_candles(broker="IBKR", symbol=sym, interval="1min")
+                if row:
+                    candles = row.get("candles") or []
+                    if candles:
+                        last_close = float(candles[-1].get("close") or candles[-1].get("c") or 999)
+                        if last_close > price_max:
+                            continue  # skip above-$10 symbols
+                price_filtered.append(sym)
+
+            # Cap at fetch_limit
+            fetch_symbols = price_filtered[:fetch_limit]
 
             # Symbol list with contract_ids
             symbols = [
