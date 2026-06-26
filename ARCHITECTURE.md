@@ -1012,10 +1012,13 @@ The dashboard UI currently includes:
 ### 13.2 Remaining UI work
 
 Pending dashboard UI enhancements:
-- improved non-blocking toast component instead of inline message banner where still applicable
-- per-widget loading and error states in every remaining dense section
-- richer status indicators for backend jobs and sync health
 - final verification that all reconciliation and risk widgets are fed by production-complete backend data during live sessions
+
+Implemented this pass:
+- toast is now a fixed-position overlay with slide-in animation (no longer inline flow)
+- per-section loading and error states wired for risk, execution attempts, scheduler, IBKR, and reconciliation panels
+- `RiskExposurePanel`, `ExecutionInsightsSection`, and `SchedulerHealthSection` are now rendered in `DashboardPage` and fed live data from their respective endpoints
+- `GET /analyze-confidence-calibration` endpoint added for confidence bucket analytics
 
 ### 13.3 UI next implementation order
 
@@ -1161,9 +1164,11 @@ Reconciliation compares local trade data and broker-side order/exit data.
 - lifecycle handling for delayed broker-side close fills outside the original bracket order tree
 - Artifact Registry retention hardening; a repository cleanup policy file now exists in `scripts/artifact_registry_cleanup_policy.json`, but production cleanup policy application and validation should be treated as an operational follow-up item
 
+### Partially implemented
+- ATR-aware position sizing: `PAPER_ATR_RISK_BUDGET_PCT` env var caps shares so a 1-ATR adverse move costs at most that fraction of account equity; disabled (0.0) by default
+- confidence calibration analytics: `GET /analyze-confidence-calibration` endpoint returns win rate and PnL grouped by 5-point confidence buckets over a configurable look-back window
+
 ### Missing
-- deeper ATR-aware sizing beyond the current trade-quality filter
-- confidence calibration analytics
 - export artifact retention outside the current GitHub snapshot history model
 - deeper verification/repair path for the rare case where multiple broker exits remain plausible for the exact parent trade even after ambiguity detection
 

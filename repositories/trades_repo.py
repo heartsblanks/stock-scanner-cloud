@@ -1791,3 +1791,39 @@ def get_latest_mode_ranking_order(*, broker: str, expected_modes: Optional[list[
     ordered_modes = [mode for mode in ranked_modes if mode in normalized_expected_modes]
     ordered_modes.extend(mode for mode in normalized_expected_modes if mode not in ordered_modes)
     return ordered_modes
+
+
+def get_confidence_calibration(limit_days: int = 90, broker: Optional[str] = None) -> list[dict]:
+    normalized_broker = normalize_text(broker).upper() if broker else ""
+    broker_clause = f"AND {_broker_filter_sql(normalized_broker)}" if normalized_broker else ""
+    params: dict[str, Any] = {"limit_days": max(1, int(limit_days))}
+    if normalized_broker:
+        params["broker"] = normalized_broker
+    rows = fetch_all(
+        f"""
+        SELECT
+            (floor(signal_confidence / 5) * 5)::int AS bucket_floor,
+            (floor(signal_confidence / 5) * 5 + 4)::int AS bucket_ceil,
+            count(*)::int AS trades,
+            sum(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END)::int AS wins,
+            sum(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END)::int AS losses,
+            round(sum(realized_pnl)::numeric, 4) AS gross_pnl,
+            round(avg(realized_pnl)::numeric, 4) AS avg_pnl
+        FROM trade_lifecycles
+        WHERE UPPER(COALESCE(status, '')) = 'CLOSED'
+          AND signal_confidence IS NOT NULL
+          AND exit_time >= NOW() - (%(limit_days)s::text || ' days')::interval
+          {broker_clause}
+        GROUP BY bucket_floor
+        ORDER BY bucket_floor
+        """,
+        params,
+    )
+    result = []
+    for row in rows:
+        d = dict(row)
+        trades = int(d.get("trades") or 0)
+        wins = int(d.get("wins") or 0)
+        d["win_rate_pct"] = round((wins / trades) * 100, 2) if trades else 0.0
+        result.append(d)
+    return result

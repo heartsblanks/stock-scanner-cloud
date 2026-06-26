@@ -1,7 +1,8 @@
 from pathlib import Path
 
-from flask import jsonify
+from flask import jsonify, request
 from core.logging_utils import log_exception, log_warning
+from repositories.trades_repo import get_confidence_calibration
 
 
 def register_analysis_routes(
@@ -104,3 +105,14 @@ def register_analysis_routes(
             log_exception("Scan observation analysis failed", e, route="/analyze-scan-observations")
             return jsonify({"ok": False, "error": str(e)}), 500
         return jsonify(result)
+
+    @app.get("/analyze-confidence-calibration")
+    def analyze_confidence_calibration():
+        try:
+            limit_days = int(request.args.get("limit_days", 90))
+            broker = request.args.get("broker") or None
+            rows = get_confidence_calibration(limit_days=limit_days, broker=broker)
+        except Exception as e:
+            log_exception("Confidence calibration analysis failed", e, route="/analyze-confidence-calibration")
+            return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": True, "rows": rows, "count": len(rows), "limit_days": limit_days})

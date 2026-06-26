@@ -1,5 +1,8 @@
 import DashboardFilters from "../components/DashboardFilters";
 import OpenTradesTable from "../components/OpenTradesTable";
+import ExecutionInsightsSection from "../components/dashboard/ExecutionInsightsSection";
+import RiskExposurePanel from "../components/dashboard/RiskExposurePanel";
+import SchedulerHealthSection from "../components/dashboard/SchedulerHealthSection";
 import { useDashboardData } from "../hooks/useDashboardData";
 
 function formatCurrency(value) {
@@ -44,6 +47,36 @@ function getPnlTone(value) {
   return numeric > 0 ? "dashboard-daily-positive" : "dashboard-daily-negative";
 }
 
+function getPanelFreshness(lastUpdated) {
+  if (!lastUpdated) {
+    return { label: "No data", tone: "dashboard-badge-neutral" };
+  }
+  const ageMs = Date.now() - new Date(lastUpdated).getTime();
+  const ageMinutes = Math.round(ageMs / 60000);
+  const label =
+    ageMinutes < 1
+      ? "Just updated"
+      : ageMinutes < 60
+        ? `Updated ${ageMinutes}m ago`
+        : `Updated ${Math.round(ageMinutes / 60)}h ago`;
+  const tone = ageMinutes <= 10 ? "dashboard-badge-ok" : "dashboard-badge-warn";
+  return { label, tone };
+}
+
+function deriveTopAttemptReasons(rejectionRows) {
+  if (!Array.isArray(rejectionRows) || rejectionRows.length === 0) {
+    return [];
+  }
+  const counts = {};
+  for (const row of rejectionRows) {
+    const reason = row.final_reason || "Unknown";
+    counts[reason] = (counts[reason] || 0) + 1;
+  }
+  return Object.entries(counts)
+    .map(([final_reason, count]) => ({ final_reason, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
 function DailyMetric({ label, value, tone = "dashboard-daily-neutral", note }) {
   return (
     <article className={`dashboard-daily-card ${tone}`}>
@@ -68,6 +101,18 @@ export default function DashboardPage() {
     handleApplyFilters,
     refreshData,
     syncPaperTrades,
+    sectionLoading,
+    sectionErrors,
+    opsSummary,
+    riskExposureSummary,
+    paperTradeAttempts,
+    paperTradeAttemptRejections,
+    paperTradeAttemptDailySummary,
+    paperTradeAttemptHourlySummary,
+    dashboardSummary,
+    ibkrStatus,
+    retryRisk,
+    retryScheduler,
   } = useDashboardData();
 
   const realizedPnl = Number(daily?.realized_pnl || 0);
@@ -82,6 +127,10 @@ export default function DashboardPage() {
   if (!latestScan?.scan_time) {
     urgentItems.push("No scan has been recorded yet.");
   }
+
+  const { label: panelFreshnessLabel, tone: panelFreshnessTone } = getPanelFreshness(lastUpdated);
+  const ibkrRecentAttempts = paperTradeAttempts?.rows || [];
+  const topAttemptReasons = deriveTopAttemptReasons(paperTradeAttemptRejections?.rows);
 
   return (
     <div className="dashboard-shell dashboard-shell-daily">
@@ -183,6 +232,45 @@ export default function DashboardPage() {
             </div>
           </div>
         </section>
+
+        <RiskExposurePanel
+          sectionLoading={sectionLoading}
+          sectionErrors={sectionErrors}
+          riskExposureSummary={riskExposureSummary}
+          panelFreshnessLabel={panelFreshnessLabel}
+          panelFreshnessTone={panelFreshnessTone}
+          onRetry={retryRisk}
+          isRetrying={sectionLoading.risk}
+        />
+
+        <ExecutionInsightsSection
+          sectionLoading={sectionLoading}
+          sectionErrors={sectionErrors}
+          paperTradePlacementRate={daily?.placement_rate}
+          stageCounts={paperTradeAttempts?.rows || []}
+          topAttemptReasons={topAttemptReasons}
+          paperTradeAttemptRejections={paperTradeAttemptRejections?.rows || []}
+          paperTradeAttemptDailySummary={paperTradeAttemptDailySummary?.rows || []}
+          paperTradeAttemptHourlySummary={paperTradeAttemptHourlySummary?.rows || []}
+          ibkrRecentAttempts={ibkrRecentAttempts}
+          ibkrStatus={ibkrStatus}
+          hourlyOutcomeQuality={dashboardSummary?.hourly_outcome_quality}
+          externalExitSummary={dashboardSummary?.external_exit_summary}
+          panelFreshnessLabel={panelFreshnessLabel}
+          panelFreshnessTone={panelFreshnessTone}
+          onRetry={retryScheduler}
+          isRetrying={sectionLoading.attempts}
+        />
+
+        <SchedulerHealthSection
+          opsSummary={opsSummary}
+          ibkrRecentAttempts={ibkrRecentAttempts}
+          ibkrStatus={ibkrStatus}
+          panelFreshnessLabel={panelFreshnessLabel}
+          panelFreshnessTone={panelFreshnessTone}
+          onRetry={retryScheduler}
+          isRetrying={sectionLoading.scheduler}
+        />
       </div>
     </div>
   );

@@ -1885,12 +1885,19 @@ h3 {
 }
 
 .dashboard-toast {
+  position: fixed;
   top: 12px;
   right: 12px;
   min-width: 220px;
   padding: 9px 12px;
   border-radius: 10px;
   font-size: 0.76rem;
+  animation: toast-in 0.2s ease;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @media (max-width: 1220px) {

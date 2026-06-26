@@ -1173,6 +1173,20 @@ def evaluate_symbol(
     actual_risk = sizing["actual_risk"]
     take_profit_dollars = calculate_take_profit_dollars(entry, target, shares)
 
+    atr_risk_budget_pct = _env_float("PAPER_ATR_RISK_BUDGET_PCT", 0.0)
+    if atr_risk_budget_pct > 0 and recent_atr and recent_atr > 0 and entry > 0:
+        atr_risk_budget = account_size * atr_risk_budget_pct
+        atr_sized_shares = _normalize_share_quantity(atr_risk_budget / recent_atr)
+        if atr_sized_shares < shares and atr_sized_shares > 0:
+            shares = atr_sized_shares
+            actual_position_cost = shares * entry
+            actual_risk = shares * risk_per_share
+            take_profit_dollars = calculate_take_profit_dollars(entry, target, shares)
+            metrics["atr_risk_budget_pct"] = atr_risk_budget_pct
+            metrics["atr_risk_budget"] = atr_risk_budget
+            metrics["atr_sized_shares"] = atr_sized_shares
+            metrics["atr_cap_applied"] = True
+
     metrics.update({
         "max_positions": sizing["max_positions"],
         "position_limit_enforced": sizing["position_limit_enforced"],

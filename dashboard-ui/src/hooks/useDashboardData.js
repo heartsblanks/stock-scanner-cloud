@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   fetchDashboardDaily,
+  fetchDashboardSummary,
+  fetchIbkrStatus,
   fetchOpenTrades,
+  fetchOpsSummary,
+  fetchPaperTradeAttemptDailySummary,
+  fetchPaperTradeAttemptHourlySummary,
+  fetchPaperTradeAttemptRecent,
+  fetchPaperTradeAttemptRejections,
+  fetchReconciliationSummary,
+  fetchRiskExposureSummary,
   runSyncPaperTrades,
 } from "../api/dashboard";
 
@@ -19,6 +28,22 @@ const INITIAL_DAILY = {
   latest_scan: null,
 };
 
+const INITIAL_SECTION_LOADING = {
+  risk: false,
+  attempts: false,
+  scheduler: false,
+  ibkr: false,
+  reconciliation: false,
+};
+
+const INITIAL_SECTION_ERRORS = {
+  risk: null,
+  attempts: null,
+  scheduler: null,
+  ibkr: null,
+  reconciliation: null,
+};
+
 function isCanceled(error) {
   return error?.name === "CanceledError" || error?.message === "canceled";
 }
@@ -34,7 +59,22 @@ export function useDashboardData() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRunningSync, setIsRunningSync] = useState(false);
   const [toast, setToast] = useState(null);
+
+  // Section state
+  const [sectionLoading, setSectionLoading] = useState(INITIAL_SECTION_LOADING);
+  const [sectionErrors, setSectionErrors] = useState(INITIAL_SECTION_ERRORS);
+  const [opsSummary, setOpsSummary] = useState(null);
+  const [riskExposureSummary, setRiskExposureSummary] = useState(null);
+  const [paperTradeAttempts, setPaperTradeAttempts] = useState(null);
+  const [paperTradeAttemptRejections, setPaperTradeAttemptRejections] = useState(null);
+  const [paperTradeAttemptDailySummary, setPaperTradeAttemptDailySummary] = useState(null);
+  const [paperTradeAttemptHourlySummary, setPaperTradeAttemptHourlySummary] = useState(null);
+  const [dashboardSummary, setDashboardSummary] = useState(null);
+  const [reconciliationSummary, setReconciliationSummary] = useState(null);
+  const [ibkrStatus, setIbkrStatus] = useState(null);
+
   const abortRef = useRef(null);
+  const sectionAbortRef = useRef(null);
   const requestIdRef = useRef(0);
   const filtersRef = useRef(filters);
 
@@ -81,14 +121,115 @@ export function useDashboardData() {
     }
   }, []);
 
+  const loadSectionData = useCallback(async () => {
+    sectionAbortRef.current?.abort();
+    const controller = new AbortController();
+    sectionAbortRef.current = controller;
+
+    setSectionLoading({ risk: true, attempts: true, scheduler: true, ibkr: true, reconciliation: true });
+    setSectionErrors(INITIAL_SECTION_ERRORS);
+
+    const settled = await Promise.allSettled([
+      fetchRiskExposureSummary(),
+      fetchPaperTradeAttemptRecent(25, "IBKR"),
+      fetchPaperTradeAttemptRejections(25),
+      fetchPaperTradeAttemptDailySummary(7),
+      fetchPaperTradeAttemptHourlySummary(7),
+      fetchDashboardSummary(null, "IBKR"),
+      fetchOpsSummary(),
+      fetchReconciliationSummary(),
+      fetchIbkrStatus(),
+    ]);
+
+    if (controller.signal.aborted) {
+      return;
+    }
+
+    const [
+      riskRes,
+      attemptsRes,
+      rejectionsRes,
+      dailySummaryRes,
+      hourlySummaryRes,
+      dashboardSummaryRes,
+      opsSummaryRes,
+      reconcileRes,
+      ibkrStatusRes,
+    ] = settled;
+
+    if (riskRes.status === "fulfilled") setRiskExposureSummary(riskRes.value);
+    if (attemptsRes.status === "fulfilled") setPaperTradeAttempts(attemptsRes.value);
+    if (rejectionsRes.status === "fulfilled") setPaperTradeAttemptRejections(rejectionsRes.value);
+    if (dailySummaryRes.status === "fulfilled") setPaperTradeAttemptDailySummary(dailySummaryRes.value);
+    if (hourlySummaryRes.status === "fulfilled") setPaperTradeAttemptHourlySummary(hourlySummaryRes.value);
+    if (dashboardSummaryRes.status === "fulfilled") setDashboardSummary(dashboardSummaryRes.value);
+    if (opsSummaryRes.status === "fulfilled") setOpsSummary(opsSummaryRes.value);
+    if (reconcileRes.status === "fulfilled") setReconciliationSummary(reconcileRes.value);
+    if (ibkrStatusRes.status === "fulfilled") setIbkrStatus(ibkrStatusRes.value);
+
+    const attemptsGroupFailed =
+      attemptsRes.status === "rejected" ||
+      rejectionsRes.status === "rejected" ||
+      dailySummaryRes.status === "rejected" ||
+      hourlySummaryRes.status === "rejected" ||
+      dashboardSummaryRes.status === "rejected";
+
+    setSectionErrors({
+      risk: riskRes.status === "rejected" ? (riskRes.reason?.message || "Failed to load risk exposure") : null,
+      attempts: attemptsGroupFailed ? "Failed to load execution attempt data" : null,
+      scheduler: opsSummaryRes.status === "rejected" ? (opsSummaryRes.reason?.message || "Failed to load ops summary") : null,
+      ibkr: ibkrStatusRes.status === "rejected" ? (ibkrStatusRes.reason?.message || "Failed to load IBKR status") : null,
+      reconciliation: reconcileRes.status === "rejected" ? (reconcileRes.reason?.message || "Failed to load reconciliation data") : null,
+    });
+
+    setSectionLoading({ risk: false, attempts: false, scheduler: false, ibkr: false, reconciliation: false });
+  }, []);
+
+  const retryRisk = useCallback(async () => {
+    setSectionLoading((prev) => ({ ...prev, risk: true }));
+    setSectionErrors((prev) => ({ ...prev, risk: null }));
+    try {
+      const result = await fetchRiskExposureSummary();
+      setRiskExposureSummary(result);
+    } catch (err) {
+      setSectionErrors((prev) => ({ ...prev, risk: err?.message || "Failed to load risk exposure" }));
+    } finally {
+      setSectionLoading((prev) => ({ ...prev, risk: false }));
+    }
+  }, []);
+
+  const retryScheduler = useCallback(async () => {
+    setSectionLoading((prev) => ({ ...prev, scheduler: true, ibkr: true }));
+    setSectionErrors((prev) => ({ ...prev, scheduler: null, ibkr: null }));
+    try {
+      const [opsResult, ibkrResult] = await Promise.allSettled([fetchOpsSummary(), fetchIbkrStatus()]);
+      if (opsResult.status === "fulfilled") {
+        setOpsSummary(opsResult.value);
+      } else {
+        setSectionErrors((prev) => ({ ...prev, scheduler: opsResult.reason?.message || "Failed to load ops summary" }));
+      }
+      if (ibkrResult.status === "fulfilled") {
+        setIbkrStatus(ibkrResult.value);
+      } else {
+        setSectionErrors((prev) => ({ ...prev, ibkr: ibkrResult.reason?.message || "Failed to load IBKR status" }));
+      }
+    } finally {
+      setSectionLoading((prev) => ({ ...prev, scheduler: false, ibkr: false }));
+    }
+  }, []);
+
   useEffect(() => {
     filtersRef.current = filters;
   }, [filters]);
 
   useEffect(() => {
     loadDailyDashboard(filtersRef.current);
-    return () => abortRef.current?.abort();
-  }, [loadDailyDashboard]);
+    loadSectionData();
+    return () => {
+      abortRef.current?.abort();
+      sectionAbortRef.current?.abort();
+    };
+  }, [loadDailyDashboard, loadSectionData]);
 
   useEffect(() => {
     const intervalId = setInterval(() => {
@@ -145,5 +286,19 @@ export function useDashboardData() {
     handleApplyFilters,
     refreshData,
     syncPaperTrades,
+    // Section state
+    sectionLoading,
+    sectionErrors,
+    opsSummary,
+    riskExposureSummary,
+    paperTradeAttempts,
+    paperTradeAttemptRejections,
+    paperTradeAttemptDailySummary,
+    paperTradeAttemptHourlySummary,
+    dashboardSummary,
+    reconciliationSummary,
+    ibkrStatus,
+    retryRisk,
+    retryScheduler,
   };
 }
