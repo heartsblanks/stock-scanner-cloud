@@ -40,6 +40,7 @@ from repositories.scans_repo import (
 from repositories.maintenance_repo import purge_all_test_data, purge_legacy_broker_data
 from repositories.trades_repo import upsert_trade_lifecycle
 from routes.health import register_health_routes
+from routes.internal import register_internal_routes
 from routes.reconcile import register_reconcile_routes
 from routes.trades import register_trade_routes
 from routes.dashboard import register_dashboard_routes
@@ -121,6 +122,8 @@ register_dashboard_routes(
     get_risk_exposure_summary=lambda *_a, **_k: {"summary": {}},
 )
 
+
+register_internal_routes(app)
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))
