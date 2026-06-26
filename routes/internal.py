@@ -129,7 +129,8 @@ def register_internal_routes(app) -> None:
                     candles = list(candles)[-int(outputsize):]
                 return list(candles)
 
-            scan_result = run_scan(
+            # run_scan returns (valid_trades, evaluations, fetch_ok, fetch_fail, benchmark_directions, source_label)
+            valid_trades, evaluations, fetch_ok, fetch_fail, _benchmark_directions, _source_label = run_scan(
                 account_size=account_size,
                 mode=mode,
                 current_open_positions=open_positions,
@@ -139,7 +140,6 @@ def register_internal_routes(app) -> None:
             )
 
             # Extract and rank valid candidates
-            evaluations = scan_result.get("evaluations") or []
             candidates: list[dict[str, Any]] = []
             for eval_result in evaluations:
                 if eval_result.get("decision") != "VALID":
@@ -163,9 +163,10 @@ def register_internal_routes(app) -> None:
                 "max_candidates": max_candidates,
                 "candidates": top_candidates,
                 "scan_summary": {
-                    "fetch_ok": scan_result.get("fetch_ok", []),
-                    "fetch_fail": scan_result.get("fetch_fail", []),
+                    "fetch_ok": fetch_ok,
+                    "fetch_fail": fetch_fail,
                     "evaluated_count": len(evaluations),
+                    "valid_count": len(valid_trades),
                 },
             })
 
