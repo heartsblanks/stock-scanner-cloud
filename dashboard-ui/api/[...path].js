@@ -1,15 +1,22 @@
 const BACKEND_BASE_URL = String(
   process.env.BACKEND_BASE_URL || "https://stock-scanner-cloud.vercel.app"
-).replace(/\/$/, "");
+).trim().replace(/\/$/, "");
 
 export default async function handler(request, response) {
-  const path = "/" + (request.query.path || []).join("/");
+  // Vercel catch-all uses "...path" key (with dots), not "path"
+  const rawPath = request.query["...path"] || request.query.path;
+  const segments = Array.isArray(rawPath)
+    ? rawPath
+    : rawPath
+    ? rawPath.split("/").filter(Boolean)
+    : [];
+  const path = "/" + segments.join("/");
 
   try {
     const url = new URL(BACKEND_BASE_URL + path);
 
     for (const [key, value] of Object.entries(request.query)) {
-      if (key !== "path" && value !== undefined && value !== null) {
+      if (key !== "...path" && key !== "path" && value !== undefined) {
         url.searchParams.set(key, String(value));
       }
     }
