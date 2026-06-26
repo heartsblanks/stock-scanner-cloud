@@ -221,18 +221,24 @@ def register_internal_routes(app) -> None:
             # Known contract_ids from Neon cache
             known_ids = get_known_contract_ids(broker="IBKR")
 
-            # Price filter using last cached candle close (no extra MCP calls)
-            from repositories.market_data_cache_repo import get_market_data_candles
-            price_filtered: list[str] = []
-            for sym in ranked_symbols:
-                row = get_market_data_candles(broker="IBKR", symbol=sym, interval="1min")
-                if row:
-                    candles = row.get("candles") or []
-                    if candles:
-                        last_close = float(candles[-1].get("close") or candles[-1].get("c") or 999)
-                        if last_close > price_max:
-                            continue  # skip above-$10 symbols
-                price_filtered.append(sym)
+            # Price filter using last cached candle close — single query for all symbols
+            from core.db import fetch_all as _fetch_all
+            price_rows = _fetch_all(
+                """
+                SELECT symbol,
+                       (candles->-1->>'close')::float AS last_close
+                FROM market_data_candles
+                WHERE broker = 'IBKR' AND interval = '1min'
+                  AND candle_count > 0
+                """,
+                {},
+            )
+            cached_prices = {r["symbol"]: float(r["last_close"] or 999) for r in price_rows if r.get("last_close")}
+
+            price_filtered: list[str] = [
+                sym for sym in ranked_symbols
+                if cached_prices.get(sym, 0) <= price_max or sym not in cached_prices
+            ]
 
             # Cap at fetch_limit
             fetch_symbols = price_filtered[:fetch_limit]
