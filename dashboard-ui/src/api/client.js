@@ -2,7 +2,9 @@
 
 import axios from "axios";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
+// In production (Vercel), all API calls go through /api/* Vercel Functions which proxy to the backend.
+// In local dev, set VITE_API_BASE_URL=http://localhost:8080 in .env.local to hit Flask directly.
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,

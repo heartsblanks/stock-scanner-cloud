@@ -10,8 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from google.cloud import storage
-
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
@@ -24,9 +22,6 @@ CORE_MODES = {"core_one", "core_two", "core_three"}
 
 ANALYSIS_SUMMARY_OUTPUT = Path("trade_analysis_summary.csv")
 ANALYSIS_PAIRED_OUTPUT = Path("trade_analysis_paired_trades.csv")
-ANALYSIS_GCS_BUCKET = os.getenv("TRADE_ANALYSIS_BUCKET", "stock-scanner-490821-logs")
-ANALYSIS_SUMMARY_OBJECT = os.getenv("TRADE_ANALYSIS_SUMMARY_OBJECT", "reports/trade_analysis_summary.csv")
-ANALYSIS_PAIRED_OBJECT = os.getenv("TRADE_ANALYSIS_PAIRED_OBJECT", "reports/trade_analysis_paired_trades.csv")
 
 def stringify_db_row(row: dict[str, Any]) -> dict[str, str]:
     normalized: dict[str, str] = {}
@@ -165,11 +160,7 @@ def infer_side(open_row: dict[str, str]) -> str:
 
 
 def upload_file_to_gcs(local_path: Path, bucket_name: str, object_name: str) -> str:
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob(object_name)
-    blob.upload_from_filename(str(local_path))
-    return f"gs://{bucket_name}/{object_name}"
+    return ""
 
 
 def normalize_signal_timestamp(timestamp_utc: str) -> str:

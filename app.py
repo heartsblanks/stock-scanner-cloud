@@ -8,8 +8,8 @@ from flask import Flask
 from flask_cors import CORS
 import requests
 from core.logging_utils import log_info
-from analytics.trade_analysis import run_trade_analysis, upload_file_to_gcs as upload_analysis_file_to_gcs
-from analytics.signal_analysis import run_signal_analysis, upload_file_to_gcs as upload_signal_analysis_file_to_gcs
+from analytics.trade_analysis import run_trade_analysis
+from analytics.signal_analysis import run_signal_analysis
 from brokers.ibkr_bridge_client import ibkr_bridge_enabled, ibkr_bridge_get
 from core.db import healthcheck as db_healthcheck
 from storage import (
@@ -188,15 +188,8 @@ def find_instrument_by_symbol(symbol: str) -> tuple[str, str] | tuple[None, None
     return None, None
 
 
-LOG_BUCKET = os.getenv("LOG_BUCKET", "stock-scanner-490821-logs")
-RECONCILIATION_BUCKET = os.getenv("RECONCILIATION_BUCKET", "stock-scanner-490821-logs")
-RECONCILIATION_OBJECT = os.getenv("RECONCILIATION_OBJECT", "reports/reconciliation.csv")
-TRADE_ANALYSIS_BUCKET = os.getenv("TRADE_ANALYSIS_BUCKET", "stock-scanner-490821-logs")
-TRADE_ANALYSIS_SUMMARY_OBJECT = os.getenv("TRADE_ANALYSIS_SUMMARY_OBJECT", "reports/trade_analysis_summary.csv")
-TRADE_ANALYSIS_PAIRED_OBJECT = os.getenv("TRADE_ANALYSIS_PAIRED_OBJECT", "reports/trade_analysis_paired_trades.csv")
-SIGNAL_ANALYSIS_BUCKET = os.getenv("SIGNAL_ANALYSIS_BUCKET", "stock-scanner-490821-logs")
-SIGNAL_ANALYSIS_SUMMARY_OBJECT = os.getenv("SIGNAL_ANALYSIS_SUMMARY_OBJECT", "reports/signal_analysis_summary.csv")
-SIGNAL_ANALYSIS_ROWS_OBJECT = os.getenv("SIGNAL_ANALYSIS_ROWS_OBJECT", "reports/signal_analysis_rows.csv")
+RECONCILIATION_BUCKET = ""
+RECONCILIATION_OBJECT = ""
 
 
 def paper_candidate_from_evaluation(eval_result: dict, min_confidence: float = IBKR_PAPER_TRADE_MIN_CONFIDENCE) -> dict | None:
@@ -720,16 +713,16 @@ register_health_routes(
 register_analysis_routes(
     app,
     run_trade_analysis=run_trade_analysis,
-    upload_analysis_file_to_gcs=upload_analysis_file_to_gcs,
-    trade_analysis_bucket=TRADE_ANALYSIS_BUCKET,
-    trade_analysis_summary_object=TRADE_ANALYSIS_SUMMARY_OBJECT,
-    trade_analysis_paired_object=TRADE_ANALYSIS_PAIRED_OBJECT,
+    upload_analysis_file_to_gcs=lambda *_a, **_k: "",
+    trade_analysis_bucket="",
+    trade_analysis_summary_object="",
+    trade_analysis_paired_object="",
     run_signal_analysis=run_signal_analysis,
-    upload_signal_analysis_file_to_gcs=upload_signal_analysis_file_to_gcs,
-    signal_analysis_bucket=SIGNAL_ANALYSIS_BUCKET,
-    signal_analysis_summary_object=SIGNAL_ANALYSIS_SUMMARY_OBJECT,
-    signal_analysis_rows_object=SIGNAL_ANALYSIS_ROWS_OBJECT,
-    run_scan_observation_analysis=lambda: refresh_scan_gate_observation_outcomes(fetch_intraday_fn=fetch_ibkr_intraday),
+    upload_signal_analysis_file_to_gcs=lambda *_a, **_k: "",
+    signal_analysis_bucket="",
+    signal_analysis_summary_object="",
+    signal_analysis_rows_object="",
+    run_scan_observation_analysis=None,
 )
 register_reconcile_routes(
     app,

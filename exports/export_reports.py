@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import csv
-import os
 import sys
 from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable, Optional
 
-from google.cloud import storage
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -16,12 +14,6 @@ if str(ROOT_DIR) not in sys.path:
 from core.db import fetch_all
 
 
-LOG_BUCKET = os.getenv("LOG_BUCKET", "stock-scanner-490821-logs")
-TRADE_ANALYSIS_SUMMARY_OBJECT = os.getenv("TRADE_ANALYSIS_SUMMARY_OBJECT", "reports/trade_analysis_summary.csv")
-TRADE_ANALYSIS_PAIRED_OBJECT = os.getenv("TRADE_ANALYSIS_PAIRED_OBJECT", "reports/trade_analysis_paired_trades.csv")
-SIGNAL_ANALYSIS_SUMMARY_OBJECT = os.getenv("SIGNAL_ANALYSIS_SUMMARY_OBJECT", "reports/signal_analysis_summary.csv")
-SIGNAL_ANALYSIS_ROWS_OBJECT = os.getenv("SIGNAL_ANALYSIS_ROWS_OBJECT", "reports/signal_analysis_rows.csv")
-RECONCILIATION_OBJECT = os.getenv("RECONCILIATION_OBJECT", "reports/reconciliation.csv")
 
 
 def _ensure_dir(path: Path) -> None:
@@ -37,42 +29,16 @@ def _write_csv(file_path: Path, rows: list[dict], fieldnames: Iterable[str]) -> 
             writer.writerow(row)
 
 
-def _download_gcs_file(storage_client: storage.Client, bucket_name: str, source_path: str, local_path: Path) -> Optional[Path]:
-    bucket = storage_client.bucket(bucket_name)
-    blob = bucket.blob(source_path)
-
-    if not blob.exists():
-        print(f"GCS file not found: gs://{bucket_name}/{source_path}")
-        return None
-
-    _ensure_dir(local_path.parent)
-    blob.download_to_filename(str(local_path))
-    return local_path
-
 def export_analysis_files(output_dir: str | Path, for_date: Optional[date] = None) -> list[Path]:
-    target_date = for_date or datetime.utcnow().date()
-    base_dir = Path(output_dir) / str(target_date) / "analysis"
-    storage_client = storage.Client()
-
-    exported: list[Path] = []
-
-    for source_path, filename in [
-        (TRADE_ANALYSIS_SUMMARY_OBJECT, "trade_analysis_summary.csv"),
-        (TRADE_ANALYSIS_PAIRED_OBJECT, "trade_analysis_paired_trades.csv"),
-        (SIGNAL_ANALYSIS_SUMMARY_OBJECT, "signal_analysis_summary.csv"),
-        (SIGNAL_ANALYSIS_ROWS_OBJECT, "signal_analysis_rows.csv"),
-        (RECONCILIATION_OBJECT, "reconciliation.csv"),
-    ]:
-        exported_path = _download_gcs_file(
-            storage_client,
-            LOG_BUCKET,
-            source_path,
-            base_dir / filename,
-        )
-        if exported_path is not None:
-            exported.append(exported_path)
-
-    return exported
+    # Analysis CSVs are generated locally by run_trade_analysis / run_signal_analysis.
+    # Collect whichever files exist in the working directory.
+    candidates = [
+        Path("trade_analysis_summary.csv"),
+        Path("trade_analysis_paired_trades.csv"),
+        Path("signal_analysis_summary.csv"),
+        Path("signal_analysis_rows.csv"),
+    ]
+    return [p for p in candidates if p.exists()]
 
 
 

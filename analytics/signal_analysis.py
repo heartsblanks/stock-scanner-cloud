@@ -7,8 +7,6 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from google.cloud import storage
-
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
@@ -18,9 +16,6 @@ from core.db import fetch_all
 
 ANALYSIS_SUMMARY_OUTPUT = Path("signal_analysis_summary.csv")
 ANALYSIS_SIGNAL_ROWS_OUTPUT = Path("signal_analysis_rows.csv")
-ANALYSIS_GCS_BUCKET = os.getenv("TRADE_ANALYSIS_BUCKET", "stock-scanner-490821-logs")
-ANALYSIS_SUMMARY_OBJECT = os.getenv("SIGNAL_ANALYSIS_SUMMARY_OBJECT", "reports/signal_analysis_summary.csv")
-ANALYSIS_ROWS_OBJECT = os.getenv("SIGNAL_ANALYSIS_ROWS_OBJECT", "reports/signal_analysis_rows.csv")
 CORE_MODES = {"core_one", "core_two", "core_three"}
 
 
@@ -71,11 +66,7 @@ def get_signal_rows() -> list[dict[str, str]]:
 
 
 def upload_file_to_gcs(local_path: Path, bucket_name: str, object_name: str) -> str:
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob(object_name)
-    blob.upload_from_filename(str(local_path))
-    return f"gs://{bucket_name}/{object_name}"
+    return ""
 
 
 def to_int(value: Any) -> int:
