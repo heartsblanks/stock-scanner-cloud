@@ -12,6 +12,35 @@ from flask import jsonify, request
 from core.logging_utils import log_exception
 
 
+def _run_scan_on_candles(candle_map: dict, account_size: float, open_positions: int, open_exposure: float) -> tuple:
+    """Shared logic: run scan using provided candle_map {instrument_name: [bars]}. Returns (valid_trades, evaluations, fetch_ok, fetch_fail, benchmark_dirs, source)."""
+    from analytics.trade_scan import run_scan
+    from orchestration.scan_context import scheduled_round_robin_mode
+    from services.symbol_eligibility_service import resolve_session_symbol_allowlist
+
+    mode = scheduled_round_robin_mode()
+    if not mode:
+        mode = "low_price"
+
+    try:
+        allowlist_row = resolve_session_symbol_allowlist(mode=mode)
+        allowed_symbols = allowlist_row.get("allowed_symbols") if allowlist_row else None
+    except Exception:
+        allowed_symbols = None
+
+    def fetch_from_provided(symbol: str, **_kw):
+        return list(candle_map.get(symbol.upper().strip()) or [])
+
+    return run_scan(
+        account_size=account_size,
+        mode=mode,
+        current_open_positions=open_positions,
+        current_open_exposure=open_exposure,
+        allowed_symbols=allowed_symbols,
+        fetch_intraday_fn=fetch_from_provided,
+    ), mode
+
+
 def _min_confidence() -> int:
     return int(os.getenv("IBKR_PAPER_TRADE_MIN_CONFIDENCE", os.getenv("PAPER_TRADE_MIN_CONFIDENCE", "70")))
 
@@ -354,4 +383,99 @@ def register_internal_routes(app) -> None:
             return jsonify({"ok": resp.ok, "status_code": resp.status_code})
         except Exception as e:
             log_exception("send-alert failed", e, route="/internal/send-alert")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.post("/internal/run-scan")
+    def run_scan_combined():
+        """
+        Combined endpoint: cache candles + run scan + record attempts in one call.
+        Replaces the separate cache-candles → scan → record-attempts chain.
+
+        Body: {
+          "account_size": float,
+          "open_positions": int,
+          "open_exposure": float,
+          "entries": [{"symbol": str, "contract_id": int|null, "candles": [...]}]
+        }
+        """
+        try:
+            from repositories.market_data_cache_repo import upsert_market_data_candles
+            from repositories.scans_repo import insert_paper_trade_attempt
+            from orchestration.scan_context import paper_candidate_from_evaluation as build_paper_candidate
+
+            body = request.get_json(silent=True) or {}
+            account_size = float(body.get("account_size") or 50000)
+            open_positions = int(body.get("open_positions") or 0)
+            open_exposure = float(body.get("open_exposure") or 0.0)
+            entries = body.get("entries") or []
+            max_candidates = _max_candidates()
+            min_confidence = _min_confidence()
+            now = datetime.now(UTC)
+
+            if not entries:
+                return jsonify({"ok": False, "error": "entries required"}), 400
+
+            # 1. Cache candles and build candle map for scan
+            candle_map: dict[str, list] = {}
+            for entry in entries:
+                symbol = str(entry.get("symbol") or "").strip().upper()
+                candles = entry.get("candles") or []
+                contract_id = entry.get("contract_id")
+                if not symbol or not candles:
+                    continue
+                candle_map[symbol] = candles
+                try:
+                    upsert_market_data_candles(
+                        broker="IBKR", symbol=symbol, interval="1min",
+                        candles=candles, fetched_at=now, source="ibkr_mcp_connector",
+                        ibkr_contract_id=int(contract_id) if contract_id else None,
+                    )
+                except Exception:
+                    pass
+
+            # 2. Run scan on provided candles
+            (valid_trades, evaluations, fetch_ok, fetch_fail, _dirs, _src), mode = _run_scan_on_candles(
+                candle_map, account_size, open_positions, open_exposure
+            )
+
+            # 3. Build ranked candidates
+            candidates: list[dict[str, Any]] = []
+            for eval_result in evaluations:
+                if eval_result.get("decision") != "VALID":
+                    continue
+                candidate = build_paper_candidate(eval_result, min_confidence)
+                if candidate:
+                    candidates.append(candidate)
+            candidates.sort(key=lambda c: float(c.get("confidence") or 0), reverse=True)
+            top = candidates[:max_candidates]
+
+            # 4. Record attempts
+            for c in top:
+                try:
+                    insert_paper_trade_attempt(
+                        timestamp_utc=now, mode=mode, scan_source="claude_mcp_agent",
+                        symbol=str(c.get("symbol") or ""), decision_stage="PLACED",
+                        final_reason="mcp_instruction_created",
+                        direction=str(c.get("side") or ""),
+                        entry=float(c["entry_price"]) if c.get("entry_price") else None,
+                        stop=float(c["stop_price"]) if c.get("stop_price") else None,
+                        target=float(c["target_price"]) if c.get("target_price") else None,
+                        confidence=float(c["confidence"]) if c.get("confidence") else None,
+                        shares=float(c["shares"]) if c.get("shares") else None,
+                        account_size=account_size or None,
+                        current_open_positions=open_positions or None,
+                        current_open_exposure=open_exposure or None,
+                    )
+                except Exception:
+                    pass
+
+            return jsonify({
+                "ok": True,
+                "mode": mode,
+                "candidate_count": len(candidates),
+                "candidates": top,
+            })
+
+        except Exception as e:
+            log_exception("run-scan failed", e, route="/internal/run-scan")
             return jsonify({"ok": False, "error": str(e)}), 500
